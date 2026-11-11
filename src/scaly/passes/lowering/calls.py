@@ -1,4 +1,4 @@
-"""Lower ConcreteFunction calls, mapped calls and carried loops, including solver oracle dependencies."""
+"""Lower calls, maps, carried loops and conditionals, including solver oracle dependencies."""
 
 from __future__ import annotations
 
@@ -131,6 +131,44 @@ def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
   del ctx.statements[before:]
   ctx.statements.extend(statement for statement in body if statement.op == ProgramOp.BUFFER)
   ctx.statements.append(p.for_(rng, [statement for statement in body if statement.op != ProgramOp.BUFFER]))
+
+
+@lowers(ExprOp.COND)
+def _lower_cond(ctx: LowerCtx, node: Expr) -> None:
+  branches = node.attrs["branches"]
+  used = {int(sibling.attrs["output"]): sibling for sibling in ctx.used_results[invocation_key(node)]}
+  buffers = [
+    ctx.alloc_tmp(used[i]) if i in used else ctx.new_private(out.type.dtype, out.type.storage_shape) for i, out in enumerate(branches[0].outputs)
+  ]
+  bodies = []
+  for branch in branches:
+    _ensure_callee(ctx, branch)
+    before = len(ctx.statements)
+    ins = [
+      ctx.buf_of(arg) if layout is None else ctx.reorder(ctx.buf_of(arg), arg, layout.permutation)
+      for arg, layout in zip(node.args[1:], branch.input_tree.layouts, strict=True)
+    ]
+    outs = [
+      buf if layout is None else ctx.new_private(out.type.dtype, out.type.storage_shape)
+      for buf, out, layout in zip(buffers, branch.outputs, branch.output_tree.layouts, strict=True)
+    ]
+    ctx.statements.append(_call(ctx, branch, ins, _proc_results(ctx, branch, outs)))
+    for i, layout in enumerate(branch.output_tree.layouts):
+      if layout is not None:
+        ctx.reorder(outs[i], branch.outputs[i], layout.inverse_permutation, buffers[i])
+    body = ctx.statements[before:]
+    del ctx.statements[before:]
+    ctx.statements.extend(stmt for stmt in body if stmt.op == ProgramOp.BUFFER)
+    bodies.append([stmt for stmt in body if stmt.op != ProgramOp.BUFFER])
+  selector = p.load(p.view(ctx.buf_of(node.args[0]), [p.const_int(0)]))
+  body = bodies[-1]
+  for i in reversed(range(len(branches) - 1)):
+    if node.args[0].type.dtype.is_bool:
+      flag = ProgramNode(ProgramOp.NOT, (selector,), dtype=dtypes.bool_)
+    else:
+      flag = ProgramNode(ProgramOp.LE, (selector, ProgramNode(ProgramOp.CONST_INT, attrs={"value": i}, dtype=selector.dtype)), dtype=dtypes.bool_)
+    body = [p.if_(flag, bodies[i], body)]
+  ctx.statements.extend(body)
 
 
 def _zero(dtype: DType) -> ProgramNode:

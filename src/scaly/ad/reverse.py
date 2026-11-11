@@ -9,7 +9,7 @@ import numpy as np
 from ..ir.expr import Expr, ExprOp, _uniform, gather, matmul, pack, scatter, topo, to_dense, values, zeros_like
 from ..ir.support import slice_indices, support_indices
 from ..ir.types import stored_indices
-from .calls import _call_vjp, _vmap_vjp
+from .calls import _call_vjp, _cond_vjp, _vmap_vjp
 from .rules import ELEMENTWISE, _masked, accumulate, carry_mask, cotangent, _unbroadcast, reduction_partial, times_partial, zero_partial
 from .sparsity import _check_wrt, _depends_on, _prunable_support
 
@@ -60,7 +60,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
       continue
     active = (
       tuple(i for i, arg in enumerate(expr.args) if arg.type.dtype.is_floating and needed(arg))
-      if expr.op in {ExprOp.CALL, *ELEMENTWISE} or (expr.op == ExprOp.MATMUL and any(arg.type.pattern is not None for arg in expr.args))
+      if expr.op in {ExprOp.CALL, ExprOp.COND, *ELEMENTWISE} or (expr.op == ExprOp.MATMUL and any(arg.type.pattern is not None for arg in expr.args))
       else None
     )
     transpose = lambda c: _local_vjp(expr, c, active)  # noqa: E731
@@ -147,6 +147,9 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
     return _call_vjp(expr, cot, active, pullback=vjp)
   if expr.op == ExprOp.EXTERN:
     raise NotImplementedError(f"active derivative through extern {expr.attrs['callee'].name!r} needs sc.custom_derivative on a wrapping Function")
+  if expr.op == ExprOp.COND:
+    assert active is not None
+    return _cond_vjp(expr, cot, active, pullback=vjp)
   if expr.op == ExprOp.LOOP:
     raise NotImplementedError("derivatives through scan and while_loop are not implemented yet")
   if expr.op == ExprOp.SOLVER_CALL:

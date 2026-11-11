@@ -78,6 +78,12 @@ def _prunable_support(expr: Expr) -> Support:
         object.__setattr__(node, "_custom_derivative_cache", True)
         continue
       children = (*children, *node.attrs["callee"].results)
+    elif node.op == ExprOp.COND:
+      output = node.attrs["output"]
+      if not visited and any(_declared(branch, output) for branch in callees_of(node)):
+        object.__setattr__(node, "_custom_derivative_cache", True)
+        continue
+      children = (*children, *(branch.outputs[output] for branch in callees_of(node)))
     elif callees_of(node):
       callee, output = node.attrs["callee"], node.attrs["output"]
       if not visited and _declared(callee, output):
@@ -232,6 +238,9 @@ def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_arra
       stack.append((node, variable, 1, context))
       if node.op != ExprOp.STOP_GRADIENT and (node.op != ExprOp.VMAP or node.attrs["length"]):
         stack.extend((arg, variable, 0, context) for arg in reversed(node.args) if (arg.id, variable.id) not in masks)
+    elif phase == 1 and node.op == ExprOp.COND:
+      stack.append((node, variable, 2, context))
+      stack.extend((call, variable, 0, context) for call in _cond_calls(node))
     elif phase == 1 and callees_of(node) and node.op not in (ExprOp.EXTERN, ExprOp.LOOP):
       stack.append((node, variable, 2, context))
       callee = node.attrs["callee"]
@@ -330,6 +339,11 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_a
       dense = _incidence((expr.size, arg.size), np.repeat(rows, len(cols)), np.tile(cols, len(rows)))
       ret = _or(ret, _compose(dense, mask))
     return ret
+  if expr.op == ExprOp.COND:
+    result = _empty((expr.size, wrt.size))
+    for call in _cond_calls(expr):
+      result = _or(result, _jac_mask(call, wrt, memo))
+    return result
   if expr.op == ExprOp.LOOP:
     return _loop_mask(expr, wrt, memo)
   if expr.op == ExprOp.SOLVER_CALL:
@@ -485,6 +499,13 @@ def _callee_mask(callee: Any, output: int, k: int, memo: dict[tuple[int, int], s
   if formal.type.pattern is not None:
     keep &= np.isin(cols, stored_indices(formal.type))
   return _incidence(pattern.shape, rows[keep], cols[keep])
+
+
+def _cond_calls(expr: Expr) -> tuple[Expr, ...]:
+  return tuple(
+    Expr(ExprOp.CALL, expr.args[1:], branch.outputs[expr.attrs["output"]].type, attrs={"callee": branch, "output": expr.attrs["output"]})
+    for branch in expr.attrs["branches"]
+  )
 
 
 def _call_mask(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_array:

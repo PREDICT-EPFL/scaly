@@ -77,6 +77,11 @@ def _piece(x):
   return x.sin() + x * x
 
 
+@sc.function(sc.arg("differential_x", 2), outputs=sc.arg("y"), name="differential_other")
+def _other_piece(x):
+  return x.cos() - x
+
+
 def _scatter_numpy(x):
   result = np.zeros((2, 3))
   np.add.at(result.reshape(-1), [4, 1, 4, 0, 1, 5], x.reshape(-1))
@@ -333,6 +338,16 @@ def _cases() -> list[Case]:
       Case("vmap", ExprOp.VMAP, (np.linspace(0.1, 0.8, 6),), lambda x: _mapped_call(_piece, 3, [(x, 0, 2)]), lambda x: np.sin(x) + x * x),
     ]
   )
+  for value in (0.2, -0.2):
+    cases.append(
+      Case(
+        f"cond-{value}",
+        ExprOp.COND,
+        (np.array([value, -0.7]),),
+        lambda x: sc.cond(x[0] < 0, (_piece, _other_piece), x),
+        lambda x: np.cos(x) - x if x[0] < 0 else np.sin(x) + x * x,
+      )
+    )
   return cases
 
 

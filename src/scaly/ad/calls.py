@@ -1,4 +1,4 @@
-"""Call and map derivative rules, helper construction, and mapped seed layout."""
+"""Call, map and branch derivative rules, helper construction, and mapped seed layout."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import numpy as np
 from scipy.sparse import csr_array
 
 from ..function.concrete import ConcreteFunction, _JVP, _JVPMany, _VmapAdjoint
-from ..function.sugar import _mapped_call
+from ..function.sugar import _mapped_call, _cond_node
 from ..ir.expr import (
   Expr,
   ExprOp,
@@ -90,6 +90,9 @@ def _reads(callee: Any, output: int) -> tuple[bool, ...]:
 
 def read_args(expr: Expr) -> tuple[Expr, ...]:
   """The arguments of a call or map whose tangents its callee's derivative reads."""
+  if expr.op == ExprOp.COND:
+    reads = tuple(any(items) for items in zip(*(_reads(branch, expr.attrs["output"]) for branch in expr.attrs["branches"]), strict=True))
+    return tuple(arg for arg, read in zip(expr.args[1:], reads, strict=True) if read)
   return tuple(arg for arg, read in zip(expr.args, _reads(expr.attrs["callee"], expr.attrs["output"]), strict=True) if read)
 
 
@@ -107,6 +110,54 @@ def body_cotangents(callee: Any, output: int, wrts: Sequence[int], cotangent: Ex
   cotangents = tuple(cotangent if j == output else zeros_like(out) for j, out in enumerate(callee.outputs))
   grads = rules.bwd._call((*residuals, *cotangents))
   return tuple(grads[k] for k in wrts)
+
+
+def _cond_jvp_many(expr: Expr, tangents: Sequence[Expr | None], nseed: int, *, pushforward: _Pushforward) -> Expr:
+  branches = expr.attrs["branches"]
+  active = tuple(i for i, tangent in enumerate(tangents[1:]) if tangent is not None)
+  outputs = (expr.attrs["output"],)
+  helpers = []
+  for branch in branches:
+    key = HelperKey.of(branch, "forward", outputs, active, nseed=nseed, conditional=True)
+    if key not in branch._memo.helpers:
+      seeds = {i: _tangent_symbol(f"fwd:{branch.input_names[i]}", branch.inputs[i], (nseed,)) for i in active}
+      results = body_tangents(branch, outputs, seeds, nseed, pushforward)
+      assert all(result is not None for result in results)
+      fn = ConcreteFunction._from_exprs(
+        helper_name(branch, key),
+        (*branch.inputs, *seeds.values()),
+        tuple(branch._inherit_lowering(simplify_cse_fixpoint(result)) for result in results if result is not None),
+        (*branch.input_names, *(f"fwd:{branch.input_names[i]}" for i in active)),
+        tuple(f"fwd:{branch.output_names[i]}" for i in outputs),
+        role="forward",
+      )
+      branch._memo.helpers[key] = fn
+    helpers.append(cast(ConcreteFunction, branch._memo.helpers[key]))
+  args = (*expr.args, *(tangents[i + 1] for i in active))
+  return _cond_node(tuple(helpers), cast(tuple[Expr, ...], args), 0)
+
+
+def _cond_vjp(expr: Expr, cot: Expr, active: tuple[int, ...], *, pullback: _Pullback) -> tuple[Expr | None, ...]:
+  output = expr.attrs["output"]
+  formals = tuple(i - 1 for i in active)
+  if not formals:
+    return (None,) * len(expr.args)
+  helpers = []
+  for branch in expr.attrs["branches"]:
+    key = HelperKey.of(branch, "adjoint", (output,), formals, conditional=True)
+    if key not in branch._memo.helpers:
+      seed = _tangent_symbol(f"lam:{branch.output_names[output]}", branch.outputs[output])
+      results = body_cotangents(branch, output, formals, seed, pullback)
+      branch._memo.helpers[key] = ConcreteFunction._from_exprs(
+        helper_name(branch, key),
+        (*branch.inputs, seed),
+        tuple(branch._inherit_lowering(simplify_cse_fixpoint(result)) for result in results),
+        (*branch.input_names, f"lam:{branch.output_names[output]}"),
+        tuple(f"adj:{branch.input_names[i]}" for i in formals),
+        role="adjoint",
+      )
+    helpers.append(cast(ConcreteFunction, branch._memo.helpers[key]))
+  return tuple(_cond_node(tuple(helpers), (*expr.args, cot), active.index(i)) if i in active else None for i in range(len(expr.args)))
 
 
 def _is_zero_const(expr: Expr) -> bool:

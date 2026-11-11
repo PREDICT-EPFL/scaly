@@ -530,6 +530,8 @@ tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[concat-d
 tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[concat-distinct-0-(2, 3)]
 tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[concat-distinct-1-(2, 0)]
 tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[concat-distinct-1-(2, 3)]
+tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[cond--0.2]
+tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[cond-0.2]
 tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[const-2x0]
 tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[const-2x3]
 tests/ad/test_differential.py::test_baked_seeds_differences_and_duality[const-3]
@@ -1353,6 +1355,12 @@ tests/ad/test_differential.py::test_many_seed_differences_and_duality[concat-dis
 tests/ad/test_differential.py::test_many_seed_differences_and_duality[concat-distinct-1-(2, 3)-0]
 tests/ad/test_differential.py::test_many_seed_differences_and_duality[concat-distinct-1-(2, 3)-1]
 tests/ad/test_differential.py::test_many_seed_differences_and_duality[concat-distinct-1-(2, 3)-3]
+tests/ad/test_differential.py::test_many_seed_differences_and_duality[cond--0.2-0]
+tests/ad/test_differential.py::test_many_seed_differences_and_duality[cond--0.2-1]
+tests/ad/test_differential.py::test_many_seed_differences_and_duality[cond--0.2-3]
+tests/ad/test_differential.py::test_many_seed_differences_and_duality[cond-0.2-0]
+tests/ad/test_differential.py::test_many_seed_differences_and_duality[cond-0.2-1]
+tests/ad/test_differential.py::test_many_seed_differences_and_duality[cond-0.2-3]
 tests/ad/test_differential.py::test_many_seed_differences_and_duality[const-2x0-0]
 tests/ad/test_differential.py::test_many_seed_differences_and_duality[const-2x0-1]
 tests/ad/test_differential.py::test_many_seed_differences_and_duality[const-2x0-3]
@@ -2059,6 +2067,8 @@ tests/ad/test_differential.py::test_single_seed_differences_and_duality[concat-d
 tests/ad/test_differential.py::test_single_seed_differences_and_duality[concat-distinct-0-(2, 3)]
 tests/ad/test_differential.py::test_single_seed_differences_and_duality[concat-distinct-1-(2, 0)]
 tests/ad/test_differential.py::test_single_seed_differences_and_duality[concat-distinct-1-(2, 3)]
+tests/ad/test_differential.py::test_single_seed_differences_and_duality[cond--0.2]
+tests/ad/test_differential.py::test_single_seed_differences_and_duality[cond-0.2]
 tests/ad/test_differential.py::test_single_seed_differences_and_duality[const-2x0]
 tests/ad/test_differential.py::test_single_seed_differences_and_duality[const-2x3]
 tests/ad/test_differential.py::test_single_seed_differences_and_duality[const-3]
@@ -3891,6 +3901,34 @@ tests/function/test_api.py::test_print_unreachable_from_the_outputs_raises_at_tr
 tests/function/test_api.py::test_prints_are_recorded_per_thread
 tests/function/test_api.py::test_scoped_function_decorator_builds_fresh_named_function
 tests/function/test_api.py::test_seeded_factory_outputs_require_seed_inputs
+tests/function/test_cond.py::test_boolean_false_selects_first_branch[False]
+tests/function/test_cond.py::test_boolean_false_selects_first_branch[True]
+tests/function/test_cond.py::test_both_ad_modes_match_finite_differences[-2]
+tests/function/test_cond.py::test_both_ad_modes_match_finite_differences[0]
+tests/function/test_cond.py::test_both_ad_modes_match_finite_differences[1]
+tests/function/test_cond.py::test_both_ad_modes_match_finite_differences[2]
+tests/function/test_cond.py::test_both_ad_modes_match_finite_differences[7]
+tests/function/test_cond.py::test_builder_rejects_invalid_selectors_and_branches[0-branches2-tuple]
+tests/function/test_cond.py::test_builder_rejects_invalid_selectors_and_branches[0-branches3-tuple]
+tests/function/test_cond.py::test_builder_rejects_invalid_selectors_and_branches[0.0-branches0-selector]
+tests/function/test_cond.py::test_builder_rejects_invalid_selectors_and_branches[True-branches1-two branches]
+tests/function/test_cond.py::test_cond_inside_scan_and_map
+tests/function/test_cond.py::test_custom_branch_rules_preserve_derivatives_outside_primal_support
+tests/function/test_cond.py::test_derivatives_of_a_mapped_conditional_with_multiple_operands[0.0]
+tests/function/test_cond.py::test_derivatives_of_a_mapped_conditional_with_multiple_operands[1.0]
+tests/function/test_cond.py::test_forward_does_not_differentiate_an_unused_loop_result
+tests/function/test_cond.py::test_integer_selection_clamps_and_groups_results[-9]
+tests/function/test_cond.py::test_integer_selection_clamps_and_groups_results[0]
+tests/function/test_cond.py::test_integer_selection_clamps_and_groups_results[1]
+tests/function/test_cond.py::test_integer_selection_clamps_and_groups_results[20]
+tests/function/test_cond.py::test_integer_selection_clamps_and_groups_results[2]
+tests/function/test_cond.py::test_only_selected_branch_prints
+tests/function/test_cond.py::test_only_selected_derivative_branch_recomputes_its_primal
+tests/function/test_cond.py::test_selected_multioutput_branch_runs_once
+tests/function/test_cond.py::test_sparse_branch_layouts_and_both_derivatives
+tests/function/test_cond.py::test_support_and_sparsity_union_specialize_all_branches
+tests/function/test_cond.py::test_verifier_rejects_mismatched_branch_results
+tests/function/test_cond.py::test_zero_operand_and_single_branch_calls
 tests/function/test_dense_layout.py::test_dense_column_major_maps_do_not_reorder_scalar_or_vector_batches[shape0]
 tests/function/test_dense_layout.py::test_dense_column_major_maps_do_not_reorder_scalar_or_vector_batches[shape1]
 tests/function/test_dense_layout.py::test_dense_layout_calls_maps_and_derivatives
@@ -5277,6 +5315,30 @@ tests/passes/test_carried_ranges.py::test_unrolling_keeps_exit_variable_even_wit
 tests/passes/test_carried_ranges.py::test_unrolling_keeps_exit_variable_even_without_a_break[1]
 tests/passes/test_carried_ranges.py::test_widening_refuses_carried_trips_and_enclosing_ranges[False]
 tests/passes/test_carried_ranges.py::test_widening_refuses_carried_trips_and_enclosing_ranges[True]
+tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[coalesce_stores]
+tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[combine_scatter_sums]
+tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[fold_arith]
+tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[fold_arith_after_unroll]
+tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[fold_tiles]
+tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[fuse_elementwise]
+tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[fuse_ranges]
+tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[hoist_invariant]
+tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[hoist_reciprocals]
+tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[hoist_scalar_invariant]
+tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[pack_masks]
+tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[pack_workspace]
+tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[prepare_scalar]
+tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[prune_procedures]
+tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[scalarize]
+tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[unroll_unit_loops]
+tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[widen_ranges]
+tests/passes/test_conditionals.py::test_if_does_not_hide_an_invalid_break
+tests/passes/test_conditionals.py::test_if_verifier_rejects_bad_condition_or_blocks[args0]
+tests/passes/test_conditionals.py::test_if_verifier_rejects_bad_condition_or_blocks[args1]
+tests/passes/test_conditionals.py::test_if_verifier_rejects_bad_condition_or_blocks[args2]
+tests/passes/test_conditionals.py::test_if_verifier_rejects_bad_condition_or_blocks[args3]
+tests/passes/test_conditionals.py::test_preparation_bounds_branch_values_and_the_condition
+tests/passes/test_conditionals.py::test_widening_keeps_a_conditional_body_scalar
 tests/passes/test_expr.py::test_constant_mask_of_the_result_shape_folds_when_uniform
 tests/passes/test_expr.py::test_cse_merges_equivalent_subgraphs
 tests/passes/test_expr.py::test_gather_with_identity_indices_is_a_reshape
@@ -5619,6 +5681,14 @@ tests/solvers/test_qp.py::test_qp_proof_rejects_stopped_derivatives[call-ineq]
 tests/solvers/test_qp.py::test_qp_proof_rejects_stopped_derivatives[call-lb]
 tests/solvers/test_qp.py::test_qp_proof_rejects_stopped_derivatives[call-parameter]
 tests/solvers/test_qp.py::test_qp_proof_rejects_stopped_derivatives[call-ub]
+tests/solvers/test_qp.py::test_qp_proof_rejects_stopped_derivatives[cond-cost]
+tests/solvers/test_qp.py::test_qp_proof_rejects_stopped_derivatives[cond-eq]
+tests/solvers/test_qp.py::test_qp_proof_rejects_stopped_derivatives[cond-ineq-hi]
+tests/solvers/test_qp.py::test_qp_proof_rejects_stopped_derivatives[cond-ineq-lo]
+tests/solvers/test_qp.py::test_qp_proof_rejects_stopped_derivatives[cond-ineq]
+tests/solvers/test_qp.py::test_qp_proof_rejects_stopped_derivatives[cond-lb]
+tests/solvers/test_qp.py::test_qp_proof_rejects_stopped_derivatives[cond-parameter]
+tests/solvers/test_qp.py::test_qp_proof_rejects_stopped_derivatives[cond-ub]
 tests/solvers/test_qp.py::test_qp_proof_rejects_stopped_derivatives[direct-cost]
 tests/solvers/test_qp.py::test_qp_proof_rejects_stopped_derivatives[direct-eq]
 tests/solvers/test_qp.py::test_qp_proof_rejects_stopped_derivatives[direct-ineq-hi]
@@ -5785,6 +5855,26 @@ tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_n
 tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[select-map-ineq-hi]
 tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[select-map-ineq]
 tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[select-map-lb]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[call-cost]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[call-eq]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[call-ineq-hi]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[call-ineq]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[call-lb]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[cond-cost]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[cond-eq]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[cond-ineq-hi]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[cond-ineq]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[cond-lb]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[direct-cost]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[direct-eq]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[direct-ineq-hi]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[direct-ineq]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[direct-lb]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[map-cost]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[map-eq]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[map-ineq-hi]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[map-ineq]
+tests/solvers/test_qp.py::test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear[map-lb]
 tests/solvers/test_qp.py::test_sparse_qp_dependency_mask_keeps_entries_that_probe_to_zero
 tests/solvers/test_qp.py::test_sparse_qp_keeps_matrix_entries_a_parameter_condition_can_switch_on
 tests/solvers/test_registry.py::test_broken_path_provider_does_not_hide_other_plugins

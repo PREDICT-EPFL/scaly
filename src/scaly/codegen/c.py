@@ -407,6 +407,13 @@ def _emit_statement(
       integer_data=integer_data,
     )
     lines.append(f"{pad}}}")
+  elif stmt.op == ProgramOp.IF:
+    lines.append(f"{pad}if ({_emit_scalar(stmt.args[0], ptr_expr)}) {{")
+    _emit_body(list(stmt.args[1].args), ptr_expr, lines, indent + 2, dialect=dialect, solver_callees=solver_callees, options_name=options_name)
+    if stmt.args[2].args:
+      lines.append(f"{pad}}} else {{")
+      _emit_body(list(stmt.args[2].args), ptr_expr, lines, indent + 2, dialect=dialect, solver_callees=solver_callees, options_name=options_name)
+    lines.append(f"{pad}}}")
   elif stmt.op == ProgramOp.BREAK_IF:
     lines.append(f"{pad}if ({_emit_scalar(stmt.args[0], ptr_expr)}) break;")
   elif stmt.op == ProgramOp.STORE:

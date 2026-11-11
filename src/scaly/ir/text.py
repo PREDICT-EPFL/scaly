@@ -143,6 +143,8 @@ def _render_expr_region(outputs: Iterable[Expr], *, name: str | None = None) -> 
       attrs = {**attrs, "name": e.name, "lowering": e.lowering}
     elif op == ExprOp.CONST:
       attrs = {**attrs, "value": e.value, "lowering": e.lowering}
+    elif op == ExprOp.COND:
+      attrs["branches"] = tuple(fn.name for fn in callees_of(e))
     elif callees_of(e):
       callee = attrs.get("callee")
       attrs = {**attrs, "callee": getattr(callee, "name", callee)}
@@ -223,6 +225,12 @@ def _render_stmt(n: ProgramNode, indent: int, lines: list[str]) -> None:
     lines.append(f"{pad}{ret_prefix}prog.call @{n.attrs['callee']}({args}){_attrs_asm(n.attrs, skip={'callee', 'returns'})}")
   elif n.op == ProgramOp.PRINT:
     lines.append(f"{pad}prog.print({', '.join(_render_scalar(a) for a in n.args)}){_attrs_asm(n.attrs)}")
+  elif n.op == ProgramOp.IF:
+    lines.append(f"{pad}prog.if {_render_scalar(n.args[0])} {{")
+    _render_stmt(n.args[1], indent + 1, lines)
+    lines.append(f"{pad}}} else {{")
+    _render_stmt(n.args[2], indent + 1, lines)
+    lines.append(f"{pad}}}")
   elif n.op == ProgramOp.BREAK_IF:
     lines.append(f"{pad}prog.break_if {_render_scalar(n.args[0])}")
   else:
@@ -324,6 +332,11 @@ def _format_node(n: ProgramNode, indent: int, lines: list[str]) -> None:
     pieces = n.attrs["pieces"]
     parts = [json.dumps(pieces[0]), *(f"{_format_scalar(a)} {json.dumps(piece)}" for a, piece in zip(n.args, pieces[1:], strict=True))]
     lines.append(f"{pad}print {' '.join(parts)}")
+  elif n.op == ProgramOp.IF:
+    lines.append(f"{pad}if {_format_scalar(n.args[0])}:")
+    _format_node(n.args[1], indent + 1, lines)
+    lines.append(f"{pad}else:")
+    _format_node(n.args[2], indent + 1, lines)
   elif n.op == ProgramOp.BREAK_IF:
     lines.append(f"{pad}break_if {_format_scalar(n.args[0])}")
   else:

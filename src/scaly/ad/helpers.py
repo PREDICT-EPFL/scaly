@@ -33,6 +33,7 @@ class HelperKey:
   members: tuple[ConcreteFunction, ...] = ()
   rules: tuple[str, ...] = ()
   masked: bool = False
+  conditional: bool = False
 
   @classmethod
   def of(cls, callee: ConcreteFunction, role: Role, outputs: tuple[int, ...], active: tuple[int, ...], **fields: Any) -> HelperKey:
@@ -50,4 +51,5 @@ def helper_name(callee: ConcreteFunction, key: HelperKey) -> str:
   fields = (key.role, key.outputs, key.active, key.lowering, key.nseed, key.constants, tuple(fn.name for fn in key.members))
   fields += (key.rules,) if key.rules else ()
   fields += (key.masked,) if key.masked else ()
+  fields += ("cond",) if key.conditional else ()
   return f"{callee.name}_{stem}_{hashlib.sha1(repr(fields).encode()).hexdigest()[:10]}"

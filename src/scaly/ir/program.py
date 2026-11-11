@@ -57,6 +57,7 @@ class ProgramOp(StrEnum):
   CALL = "call"
   PRINT = "print"
   BREAK_IF = "break_if"
+  IF = "if"
 
   # Scalar/index-level
   CONST_INT = "const_int"
@@ -399,6 +400,11 @@ def for_(rng: ProgramNode, body: Sequence[ProgramNode], *, exit_var: bool = Fals
   if rng.op != ProgramOp.RANGE:
     raise TypeError(f"for_ requires a RANGE, got {rng.op}")
   return ProgramNode(ProgramOp.FOR, (rng, *body), attrs={"body_len": len(body), **({"exit_var": exit_var} if exit_var else {})}, dtype=dtypes.float64)
+
+
+def if_(cond: ProgramNode, then: Sequence[ProgramNode], otherwise: Sequence[ProgramNode] = ()) -> ProgramNode:
+  """Execute one of two blocks according to a boolean scalar."""
+  return ProgramNode(ProgramOp.IF, (cond, block(*then), block(*otherwise)))
 
 
 def break_if(cond: ProgramNode) -> ProgramNode:

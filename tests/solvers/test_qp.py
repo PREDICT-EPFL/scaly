@@ -18,7 +18,7 @@ def test_sparse_qp_dependency_mask_keeps_entries_that_probe_to_zero() -> None:
 
 
 @pytest.mark.parametrize("location", ["cost", "eq", "ineq", "lb", "ub", "ineq-lo", "ineq-hi", "parameter"])
-@pytest.mark.parametrize("form", ["direct", "call", "map"])
+@pytest.mark.parametrize("form", ["direct", "call", "map", "cond"])
 def test_qp_proof_rejects_stopped_derivatives(location: str, form: str) -> None:
   @sc.function(sc.arg("value"), outputs=sc.arg("frozen"))
   def freeze(value: sc.Expr) -> sc.Expr:
@@ -26,7 +26,15 @@ def test_qp_proof_rejects_stopped_derivatives(location: str, form: str) -> None:
 
   def terms(x: sc.Expr, p: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     source = p if location == "parameter" else x
-    frozen = sc.stop_gradient(source) if form == "direct" else freeze(source) if form == "call" else sc.vmap(freeze, 2)(source)
+    frozen = (
+      sc.stop_gradient(source)
+      if form == "direct"
+      else freeze(source)
+      if form == "call"
+      else sc.cond(False, (freeze, freeze), source)
+      if form == "cond"
+      else sc.vmap(freeze, 2)(source)
+    )
     cost = (
       (x * x * frozen * frozen).sum() - 4 * x[0] + p.sum()
       if location == "cost"
@@ -68,7 +76,7 @@ def test_qp_proof_rejects_stopped_derivatives(location: str, form: str) -> None:
 
 
 @pytest.mark.parametrize("location", ["cost", "eq", "ineq", "lb", "ineq-hi"])
-@pytest.mark.parametrize("form", ["direct", "call", "map"])
+@pytest.mark.parametrize("form", ["direct", "call", "map", "cond"])
 @pytest.mark.parametrize("operation", ["select", "maximum", "minimum", "abs", "floor", "ceil", "reduce_max", "reduce_min", "norm_1", "norm_inf"])
 def test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear(location: str, form: str, operation: str) -> None:
   """``where(x > 0, x, -x)`` has a zero Hessian but is not quadratic, and a bound of ``x > 0`` has a
@@ -92,7 +100,15 @@ def test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear(location: str
   absolute = sc.function(sc.arg("value"), outputs=sc.arg("absolute"))(bare)
 
   def kink(x: sc.Expr) -> sc.Expr:
-    return absolute(x) if form == "call" else sc.vmap(absolute, 2)(x) if form == "map" else bare(x)
+    return (
+      absolute(x)
+      if form == "call"
+      else sc.vmap(absolute, 2)(x)
+      if form == "map"
+      else sc.cond(False, (absolute, absolute), x)
+      if form == "cond"
+      else bare(x)
+    )
 
   @sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", 2))
   def kinked(x: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
