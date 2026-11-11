@@ -83,7 +83,7 @@ def _prunable_support(expr: Expr) -> Support:
       object.__setattr__(node, "_custom_derivative_cache", False)
       continue
     children = node.args
-    if node.op == ExprOp.LOOP:
+    if node.op == ExprOp.LOOP and not is_map(node):
       if not visited and node.attrs["callee"].rules is not None:
         object.__setattr__(node, "_custom_derivative_cache", True)
         continue

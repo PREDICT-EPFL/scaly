@@ -351,7 +351,7 @@ even stages and the odd stages, scatters each group into a vector the size of
   }
 ```
 
-`%11` holds the adjoints from stages 0 and 2, and `%15` those from stages 1 and 3.
+`%12` holds the adjoints from stages 0 and 2, and `%16` those from stages 1 and 3.
 For the shared weight, every stage reads the same slice, so the adjoint is the
 sum over stages. The outer function of `sc.gradient(chain, "cost", "p")` writes
 that sum as a product with a vector of ones:

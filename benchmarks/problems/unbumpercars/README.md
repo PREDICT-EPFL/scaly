@@ -2,7 +2,7 @@
 
 This directory is a *representative reproduction* of the centralized safety filter in
 the `bumper_car_simulator` project, kept only so Scaly has a realistic workload to be fast on: a
-neural model inside pairwise constraints, exact sparse Lagrangian Hessians through `ExprOp.VMAP`,
+neural model inside pairwise constraints, exact sparse Lagrangian Hessians through `sc.vmap`,
 and a CasADi implementation of the same NLP to compare against.
 
 **It is not the development center for the safety filter itself.** Controller research —
@@ -696,7 +696,7 @@ generated oracles. This README does not retain copied timing tables. See the
 The original prototype exposed the following gaps; all are now closed on the
 Scaly path.
 
-### 1. Exact sparse Hessian through `ExprOp.VMAP` (closed)
+### 1. Exact sparse Hessian through `sc.vmap` (closed)
 
 IPOPT's exact Hessian path would require the sparse Hessian of the Lagrangian
 with respect to `z` through the mapped RK4 neural dynamics:
@@ -706,7 +706,7 @@ sphess:lagrangian:z:z
 ```
 
 The oracle deliberately uses `sc.vmap` to evaluate the per-car neural RK4 model.
-Scaly now propagates reverse and sparse second-order AD through `ExprOp.VMAP` while
+Scaly now propagates reverse and sparse second-order AD through `sc.vmap` while
 preserving the compact mapped representation. The filter builds
 `sphess:gamma:z:z`, passes its lower-triangular sparsity to IPOPT, and evaluates
 it from IPOPT's objective factor and constraint multipliers.

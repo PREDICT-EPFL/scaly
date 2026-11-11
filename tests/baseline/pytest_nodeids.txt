@@ -2705,6 +2705,8 @@ tests/ad/test_sparsity.py::test_dependency_composition_keeps_exactly_256_shared_
 tests/ad/test_sparsity.py::test_jacobian_sparsity_for_matmul_and_call_chain_rule
 tests/ad/test_sparsity.py::test_jacobian_sparsity_for_structural_ops
 tests/ad/test_sparsity.py::test_jacobian_sparsity_tracks_concat_axis_layout
+tests/ad/test_sparsity.py::test_map_support_pruning_checks_only_the_selected_result[residual]
+tests/ad/test_sparsity.py::test_map_support_pruning_checks_only_the_selected_result[sibling]
 tests/ad/test_sparsity.py::test_mapped_coefficient_support_uses_stage_windows[False-0]
 tests/ad/test_sparsity.py::test_mapped_coefficient_support_uses_stage_windows[False-1]
 tests/ad/test_sparsity.py::test_mapped_coefficient_support_uses_stage_windows[False-2]

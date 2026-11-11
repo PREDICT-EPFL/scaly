@@ -209,7 +209,6 @@ class OpInfo:
       "stack",
       "concat",
       "call",
-      "vmap",
       "loop",
       "cond",
     ]

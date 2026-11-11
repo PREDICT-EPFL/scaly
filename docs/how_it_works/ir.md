@@ -126,11 +126,11 @@ Arity is the number of operands.
 | Indexing        | `slice`, `gather`, `scatter`                  | 1, 2 or 3 | Gather and scatter take int64 index operands |
 | Assembly        | `stack`, `concat`                             | Variable | Along one axis                            |
 | Linear algebra  | `matmul`                                      | 2        | NumPy's rules, leading axes broadcast     |
-| Function calls  | `call`, `loop`                                | Variable | An ordinary or a mapped call              |
+| Function calls  | `call`, `loop`                                | Variable | An ordinary call or a loop              |
 
 `dot`, `sumsqr`, `norm_1`, `norm_2`, `norm_inf`, `argmin`, `argmax`, `mean`,
-`diag` and `vec` are builders that expand into these operations. There are no matrix decompositions, interpolation tables or
-data-dependent control flow yet, and no `expm1` or `log1p`.
+`diag` and `vec` are builders that expand into these operations. There are no matrix decompositions
+or interpolation tables, and no `expm1` or `log1p`.
 
 ### Calls and mapped calls
 

@@ -1170,7 +1170,8 @@ including the residuals of a custom rule ([#22]). This replaces the name-keyed
 packs derivative outputs into one today. Regenerates snapshots for the merged loops. Derived
 callees come from [#17]'s cache so that siblings stay grouped.
 
-The key also excludes `VMAP.slice_size`, replacing the output-only exclusion because siblings can have different result sizes.
+`LOOP` derives each selected result's stored size from the callee, so the invocation key has no
+result-size attribute to exclude.
 
 **[#29]. Carried loops in the program dialect.** A `carried` attribute on a range marks a loop whose
 trips depend on earlier trips. It is not `SERIAL`, which `widen_ranges` already emits for its chunk
