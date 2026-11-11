@@ -187,7 +187,7 @@ def test_reverse_mode_carries_the_mask_into_a_function_call(mapped: bool) -> Non
     grad = sc.gradient(chosen.sum(), x)
     return grad, sc.jacobian(chosen, x), sc.hessian(chosen.sum(), x), sc.gradient(grad.sum(), x)
 
-  grad, jac, hess, reverse_twice = derivatives(np.tile([0.0, 4.0], size // 2))
+  grad, jac, hess, reverse_twice = (np.asarray(v) for v in derivatives(np.tile([0.0, 4.0], size // 2)))
   expected = np.tile([0.0, 0.25], size // 2)
   second = np.tile([0.0, -1.0 / 32.0], size // 2)
   np.testing.assert_array_equal(grad, expected)
@@ -224,7 +224,7 @@ def test_nested_calls_keep_the_callers_condition_with_shared_formal_symbols(mapp
   for pair in ([-1.0, 3.0], [-0.5, 3.0], [-1.0, 8.0]):
     point = np.tile(pair, 2 if mapped else 1)
     expected = np.tile([0.0, 0.25 if pair[1] == 3.0 else 0.0], 2 if mapped else 1)
-    grad, jac = derivatives(point)
+    grad, jac = (np.asarray(v) for v in derivatives(point))
     np.testing.assert_array_equal(grad, expected)
     np.testing.assert_array_equal(jac, np.diag(expected))
 
@@ -239,7 +239,7 @@ def test_mapped_adjoint_cache_separates_masked_and_unmasked_calls_and_reuses_con
     roots = sc.vmap(root, 2)(x.reshape((2, 2))).vec()
     return tuple(sc.gradient(cost, x) for cost in (roots.sum(), sc.where(x > 0.0, roots, 0.0).sum(), sc.where(x > 4.0, roots, 0.0).sum()))
 
-  plain, positive, large = derivatives(np.array([0.0, 4.0, 0.0, 4.0]))
+  plain, positive, large = (np.asarray(v) for v in derivatives(np.array([0.0, 4.0, 0.0, 4.0])))
   np.testing.assert_array_equal(plain, [np.inf, 0.25, np.inf, 0.25])
   np.testing.assert_array_equal(positive, [0.0, 0.25, 0.0, 0.25])
   np.testing.assert_array_equal(large, np.zeros(4))
@@ -263,7 +263,7 @@ def test_called_mask_survives_a_mapped_call_before_a_singular_partial() -> None:
     chosen = sc.where(x > 0.0, roots(x), 0.0)
     return sc.gradient(chosen.sum(), x), sc.jacobian(chosen, x)
 
-  grad, jac = derivatives(np.array([0.0, 4.0, -1.0, 9.0]))
+  grad, jac = (np.asarray(v) for v in derivatives(np.array([0.0, 4.0, -1.0, 9.0])))
   expected = np.array([0.0, 0.5, 0.0, 1.0 / 3.0])
   np.testing.assert_array_equal(grad, expected)
   np.testing.assert_array_equal(jac, np.diag(expected))
@@ -284,7 +284,7 @@ def test_mapped_masks_accumulate_through_shared_and_overlapping_arguments(stride
     chosen = sc.where(sc.gather(x, indices) > 0.0, roots, 0.0)
     return sc.gradient(chosen.sum(), x), sc.jacobian(chosen, x)
 
-  grad, jac = derivatives(point)
+  grad, jac = (np.asarray(v) for v in derivatives(point))
   expected = np.array([0.0, 1.0, 2.0 / 3.0, 0.0]) if stride else np.array([0.0, 1.5])
   np.testing.assert_array_equal(grad, expected)
   np.testing.assert_array_equal(grad, jac.sum(axis=0))
@@ -305,7 +305,7 @@ def test_two_mapped_calls_merge_their_masks_before_a_singular_partial() -> None:
     chosen = sc.where(x > 0.0, sc.vmap(twice, 2)(roots).vec(), 0.0) + sc.where(x > 4.0, sc.vmap(thrice, 2)(roots).vec(), 0.0)
     return sc.gradient(chosen.sum(), x), sc.jacobian(chosen, x)
 
-  grad, jac = derivatives(np.array([0.0, 4.0, -1.0, 9.0]))
+  grad, jac = (np.asarray(v) for v in derivatives(np.array([0.0, 4.0, -1.0, 9.0])))
   np.testing.assert_allclose(grad, [0.0, 0.5, 0.0, 5.0 / 6.0], rtol=1e-15)
   np.testing.assert_allclose(grad, jac.sum(axis=0), rtol=1e-15)
 
@@ -328,7 +328,7 @@ def test_called_masks_use_stored_coordinates_for_sparse_outputs(mapped: bool, si
     return sc.gradient(chosen.sum(), x), sc.jacobian(chosen, x)
 
   point = np.array([0.0, 4.0, -1.0, 9.0]) if mapped else np.array([0.0, 4.0])
-  grad, jac = derivatives(point)
+  grad, jac = (np.asarray(v) for v in derivatives(point))
   expected = np.zeros_like(point)
   active = point > 0.0
   expected[active] = 0.5 / np.sqrt(point[active]) if singular else np.cos(point[active])
