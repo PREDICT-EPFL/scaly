@@ -372,14 +372,13 @@ def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> 
       return combined
     entries = np.arange(node.size) if combined is None else support_indices(combined)
     chosen = _constant_condition(condition, entries, node.shape)
-    if chosen is not None:
-      return _make_support(
-        entries[
-          (chosen & (True if a is None else np.isin(entries, support_indices(a))))
-          | (~chosen & (True if b is None else np.isin(entries, support_indices(b))))
-        ]
-      )
-    return combined
+    assert chosen is not None
+    return _make_support(
+      entries[
+        (chosen & (True if a is None else np.isin(entries, support_indices(a))))
+        | (~chosen & (True if b is None else np.isin(entries, support_indices(b))))
+      ]
+    )
   if op == "numerator":
     return _broadcast_support(node.args[0], node.shape, support_of(node.args[0]))
   if op == "reduce":
