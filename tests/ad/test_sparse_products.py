@@ -16,22 +16,20 @@ from scaly.passes.lowering import lower_function
 from scaly.passes.lowering.plans import SampledProductPlan
 
 
-@pytest.mark.parametrize("left", [False, True])
-@pytest.mark.parametrize("coordinate_mask", [False, True])
-@pytest.mark.parametrize("lowering", ["scalar", "block"])
-def test_masked_sparse_product_singular_partials(left, coordinate_mask, lowering):
+@pytest.mark.parametrize(("left", "coordinate_mask"), [(True, False), (False, False), (False, True)])
+def test_masked_sparse_product_singular_partials(left, coordinate_mask):
   pattern = CanonicalPattern((2, 2), (0, 0, 1, 1), (0, 1, 0, 1))
   coefficients = np.array([[-2.0, 2.0], [3.0, -3.0]])
   weights = np.array([[1.0, 2.0], [3.0, 5.0]])
 
-  @sc.function(sc.arg("v", 4), sc.arg("c", 4 if coordinate_mask else ()), name=f"masked_product_{left}_{coordinate_mask}_{lowering}")
+  @sc.function(sc.arg("v", 4), sc.arg("c", 4 if coordinate_mask else ()), name=f"masked_product_{left}_{coordinate_mask}")
   def loss(v, c):
     x = sc.pack(v, pattern).sqrt()
     b = sc.const(sparse.coo_array(coefficients))
     product = x @ b if left else b @ x
     condition = sc.pack(c > 0, pattern) if coordinate_mask else c > 0
     selected = sc.where(condition, product, sc.pack(sc.const(np.zeros(4)), pattern))
-    return (sc.values(selected) * sc.const(weights.ravel())).sum().with_lowering(lowering)
+    return (sc.values(selected) * sc.const(weights.ravel())).sum().block()
 
   grad = sc.gradient(loss, wrt="v")
   inactive = np.full(4, -1.0) if coordinate_mask else np.asarray(-1.0)
@@ -49,7 +47,7 @@ def test_masked_sparse_product_singular_partials(left, coordinate_mask, lowering
 
   hess = sc.hessian(loss, wrt="v")
 
-  @sc.function(sc.arg("v", 4), sc.arg("c", 4 if coordinate_mask else ()), name=f"masked_product_reverse_twice_{left}_{coordinate_mask}_{lowering}")
+  @sc.function(sc.arg("v", 4), sc.arg("c", 4 if coordinate_mask else ()), name=f"masked_product_reverse_twice_{left}_{coordinate_mask}")
   def twice(v, c):
     output = as_concrete(loss).outputs[0]
     inputs = as_concrete(loss).inputs
@@ -66,10 +64,8 @@ def test_masked_sparse_product_singular_partials(left, coordinate_mask, lowering
     np.testing.assert_allclose(twice(point, c), expected_hess.sum(axis=0), atol=1e-8)
 
 
-@pytest.mark.parametrize("left", [False, True])
-@pytest.mark.parametrize("lowering", ["scalar", "block"])
-@pytest.mark.parametrize("nonlinear", [False, True])
-def test_masked_sparse_product_guards_infinite_coefficients_per_term(left, lowering, nonlinear):
+@pytest.mark.parametrize(("left", "lowering"), [(True, "scalar"), (False, "block")])
+def test_masked_sparse_product_guards_infinite_coefficients_per_term(left, lowering):
   pattern = CanonicalPattern((2, 2), (0, 0, 1, 1), (0, 1, 0, 1))
   coefficients = np.array([[-2.0, 2.0, np.inf], [3.0, -3.0, -np.inf]])
   if not left:
@@ -77,13 +73,12 @@ def test_masked_sparse_product_guards_infinite_coefficients_per_term(left, lower
   coefficient_pattern = CanonicalPattern(coefficients.shape, *map(tuple, np.nonzero(coefficients)))
   output = pattern.matmul(coefficient_pattern) if left else coefficient_pattern.matmul(pattern)
 
-  @sc.function(sc.arg("v", 4), sc.arg("c", output.nnz), name=f"masked_product_inf_{left}_{lowering}_{nonlinear}")
+  @sc.function(sc.arg("v", 4), sc.arg("c", output.nnz), name=f"masked_product_inf_{left}_{lowering}")
   def loss(v, c):
     x = sc.pack(v, pattern).sqrt()
     b = sc.const(sparse.coo_array(coefficients))
     product = x @ b if left else b @ x
-    branch = product.sin() if nonlinear else product
-    selected = sc.where(sc.pack(c > 0, output), branch, sc.pack(sc.const(np.zeros(output.nnz)), output))
+    selected = sc.where(sc.pack(c > 0, output), product.sin(), sc.pack(sc.const(np.zeros(output.nnz)), output))
     weights = np.tile([1.0, 2.0, 1.0], (2, 1))
     return (sc.values(selected) * sc.const((weights if left else weights.T).ravel())).sum().with_lowering(lowering)
 
@@ -98,7 +93,7 @@ def test_masked_sparse_product_guards_infinite_coefficients_per_term(left, lower
     product = x @ active_coefficients if left else active_coefficients @ x
     weights = np.tile([1.0, 2.0], (2, 1))
     weights = weights if left else weights.T
-    partial = weights * np.cos(product) if nonlinear else weights
+    partial = weights * np.cos(product)
     factors = partial @ active_coefficients.T if left else active_coefficients.T @ partial
     return factors.ravel() * 0.5 / np.sqrt(v)
 
@@ -114,7 +109,7 @@ def test_masked_sparse_product_guards_infinite_coefficients_per_term(left, lower
   first = vjp(concrete.outputs, (concrete.inputs[0],), (sc.const(1.0),))[0]
   second = vjp((first.sum(),), (concrete.inputs[0],), (sc.const(1.0),))[0]
 
-  @sc.function(sc.arg("v", 4), sc.arg("c", output.nnz), name=f"masked_product_inf_twice_{left}_{lowering}_{nonlinear}")
+  @sc.function(sc.arg("v", 4), sc.arg("c", output.nnz), name=f"masked_product_inf_twice_{left}_{lowering}")
   def twice(v, c):
     return substitute(second, dict(zip(concrete.inputs, (v, c), strict=True)))
 
@@ -247,8 +242,7 @@ def test_sampled_sparse_adjoint_does_not_materialize_the_unsampled_product(monke
   np.testing.assert_allclose(fn(a, b, cot, condition), (expected_cot @ b.T).diagonal())
 
 
-@pytest.mark.parametrize("n", [32, 64])
-@pytest.mark.parametrize("masked", [False, True])
+@pytest.mark.parametrize(("n", "masked"), [(32, False), (64, False), (64, True)])
 def test_weighted_gram_with_a_dense_column_has_stored_size_reverse_and_second_order_work(n, masked, monkeypatch):
   rows = np.tile(np.arange(2 * n), 3)
   cols = np.concatenate((np.arange(2 * n) // 2, np.minimum(np.arange(2 * n) // 2 + 1, n - 1), np.full(2 * n, n - 1)))

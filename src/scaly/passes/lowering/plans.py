@@ -176,26 +176,35 @@ def _guard_sampled_term(ctx: LowerCtx, operand: Expr, slot: ProgramNode, term: P
   # Guard the multiply itself: selecting a zero operand still evaluates 0 * inf.
   current = operand
   while True:
+    slots = stored_slots(current, logical)
+    valid = slots >= 0
+    if not np.any(valid):
+      break
+    logical[~valid] = -1
     if current.op == ExprOp.PACK:
-      logical = np.searchsorted(stored_indices(current.type), logical)
+      logical = slots
     elif current.op == ExprOp.VALUES:
-      logical = stored_indices(current.args[0].type)[logical]
+      logical[valid] = stored_indices(current.args[0].type)[logical[valid]]
     elif current.op == ExprOp.SLICE:
-      logical = slice_indices(current.args[0].shape, current.attrs["index"], logical)
+      logical[valid] = slice_indices(current.args[0].shape, current.attrs["index"], logical[valid])
     elif current.op == ExprOp.TRANSPOSE:
-      logical = transpose_entries(logical, current.shape, tuple(map(int, np.argsort(current.attrs["axes"]))))
+      logical[valid] = transpose_entries(logical[valid], current.shape, tuple(map(int, np.argsort(current.attrs["axes"]))))
     elif current.op != ExprOp.RESHAPE:
       mask = _mask_of(current)
       if mask is None:
         break
       condition, inner = mask
-      reads = stored_slots(condition, project_entries(logical, condition.shape, current.shape))
+      reads = np.full(len(logical), -1, dtype=np.int64)
+      reads[valid] = stored_slots(condition, project_entries(logical[valid], condition.shape, current.shape))
       reads = ctx.physical_slots(condition, reads)
       index = ctx.index_at(reads, slot, shared=True)
       keep = p.load(p.view(ctx.raw_buf_of(condition), [index]))
       if np.any(reads < 0):
         present = ProgramNode(ProgramOp.LE, (p.const_int(0), index), dtype=dtypes.bool_)
         keep = ProgramNode(ProgramOp.SELECT, (present, keep, constant(False, dtypes.bool_)), dtype=dtypes.bool_)
+      if not np.all(valid):
+        applies = ProgramNode(ProgramOp.NE, (ctx.index_at(valid.astype(np.int64), slot, shared=True), p.const_int(0)), dtype=dtypes.bool_)
+        keep = ProgramNode(ProgramOp.SELECT, (applies, keep, constant(True, dtypes.bool_)), dtype=dtypes.bool_)
       term = ProgramNode(ProgramOp.SELECT, (keep, term, p.const_float(0, dtype=operand.type.dtype)), dtype=operand.type.dtype)
       current = inner
       continue

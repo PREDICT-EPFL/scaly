@@ -20,6 +20,24 @@ def _layout(pattern, layout):
   return sc.SparsityPattern(pattern.shape, pattern.rows[::-1], pattern.cols[::-1]) if layout == "coordinates" else layout
 
 
+def test_sampled_mask_guard_stops_at_structural_holes():
+  small = CanonicalPattern((2, 2), (0,), (0,))
+  full = CanonicalPattern((2, 2), (0, 0, 1, 1), (0, 1, 0, 1))
+  row = CanonicalPattern((1, 2), (0, 0), (0, 1))
+  col = CanonicalPattern((2, 1), (0, 1), (0, 0))
+
+  @sc.function(sc.arg("w", 4), sc.arg("v", 1), sc.arg("t", sc.TensorType(small.shape, pattern=small)), sc.arg("flag", ()), name="sampled_guard_holes")
+  def loss(w, v, t, flag):
+    source = sc.pack(sc.values(t), small)
+    unmasked = sc.pack(w[:2], col) @ sc.pack(source[0], row)
+    inner = sc.pack(sc.where(v > 0, v.sqrt(), 0.0), small)
+    wider = sc.where(flag > 0, inner, sc.pack(sc.const(np.zeros(full.nnz)), full))
+    masked = sc.pack(w, full) @ wider
+    return (sc.values(unmasked).sum() + sc.values(masked).sum()).block()
+
+  lower_function(sc.gradient(loss, wrt="w"))
+
+
 def _operands(case):
   rng = np.random.default_rng(47)
   if case == "empty_product":
