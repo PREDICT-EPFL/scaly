@@ -846,6 +846,10 @@ statically, and a numerical call on a sparse output returns the union.
 A concrete dense shape declaration keeps its NumPy type. Shape holes and a general `TensorType`
 use the numerical union because their output pattern is not known statically. Callers that know a
 `TensorType` has no pattern can narrow with `cast(Tree[Expr, np.ndarray], ...)`.
+*Replaced in the compiler run, 2026-11-10: "the numerical leaf type is `np.ndarray |
+scipy.sparse.sparray`" for every leaf, because the union on concrete dense declarations produced
+192 type errors in dense code ([#288], [#334]); only leaves whose pattern is not known statically
+take the union.*
 
 Shape-only input holes remain dense at runtime despite the shared annotation accepting SciPy
 arrays statically. Pattern holes are separate ([#44]). The existing NumPy-only annotations of
@@ -1556,3 +1560,5 @@ writing the guide).
 [#225]: https://github.com/PREDICT-EPFL/scaly/issues/225
 [#276]: https://github.com/PREDICT-EPFL/scaly/issues/276
 [#301]: https://github.com/PREDICT-EPFL/scaly/issues/301
+[#288]: https://github.com/PREDICT-EPFL/scaly/issues/288
+[#334]: https://github.com/PREDICT-EPFL/scaly/issues/334
