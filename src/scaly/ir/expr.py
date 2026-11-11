@@ -251,7 +251,7 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.OR: OpInfo(ExprOp.OR, 2, False, support_rule="union"),
   ExprOp.NOT: OpInfo(ExprOp.NOT, 1, False),
   ExprOp.ISFINITE: OpInfo(ExprOp.ISFINITE, 1, False),
-  ExprOp.SELECT: OpInfo(ExprOp.SELECT, 3, support_rule="select"),
+  ExprOp.SELECT: OpInfo(ExprOp.SELECT, 3, pattern_rule="union", support_rule="select"),
   ExprOp.CAST: OpInfo(ExprOp.CAST, 1, support_rule="preserve"),
   # A zero divisor gives 0, so the dividend's zeros stay.
   ExprOp.FLOORDIV: OpInfo(ExprOp.FLOORDIV, 2, False, support_rule="numerator"),
@@ -320,6 +320,8 @@ def stored_pattern(
   op: ExprOp | str, types: tuple[TensorType, ...], shape: tuple[int, ...], attrs: Mapping[str, Any] | None = None
 ) -> CanonicalPattern | None:
   """Apply the fixed storage rule, also usable for support restricted to sparse operands."""
+  if op == ExprOp.SELECT:
+    types = types[1:]
   if not any(t.pattern is not None for t in types):
     return None
   if op == ExprOp.REDUCE:
@@ -1189,7 +1191,7 @@ def where(condition: Any, x: Any, y: Any) -> Expr:
   return Expr(
     ExprOp.SELECT,
     (condition, x, y),
-    TensorType(shape, dtype=dtype, diff=op_diff(ExprOp.SELECT, x, y)),
+    TensorType(shape, dtype=dtype, diff=op_diff(ExprOp.SELECT, x, y), pattern=stored_pattern(ExprOp.SELECT, (condition.type, x.type, y.type), shape)),
     lowering=common_lowering(condition, x, y),
   )
 

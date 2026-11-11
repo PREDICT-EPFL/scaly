@@ -10,8 +10,9 @@ import numpy as np
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
 from ...ir.program import ProgramNode, RangeKind
-from ...ir.support import project_entries, slice_indices, transpose_entries
+from ...ir.support import project_entries, slice_indices, transpose_entries, _constant_condition
 from ...ir.types import stored_indices
+from ..arith import constant
 from .ctx import LowerCtx
 
 
@@ -64,7 +65,7 @@ def emit_map(
 
     def statements(k: ProgramNode) -> list[ProgramNode]:
       values = tuple(
-        p.const_float(0, dtype=arg.type.dtype) if indices[0] < 0 else p.load(p.view(ctx.raw_buf_of(arg), [ctx.index_at(indices, k, shared=True)]))
+        constant(0, arg.type.dtype) if indices[0] < 0 else p.load(p.view(ctx.raw_buf_of(arg), [ctx.index_at(indices, k, shared=True)]))
         for arg, indices in zip(operands, region.reads, strict=True)
       )
       dst = ctx.index_at(region.writes, k, shared=True)
@@ -125,4 +126,9 @@ def lower_elementwise(ctx: LowerCtx, node: Expr, program_op) -> None:
   """Sample broadcast operands on the output pattern and emit its compact scalar body."""
   logical = stored_indices(node.type)
   reads = [stored_slots(arg, project_entries(logical, arg.shape, node.shape)) for arg in node.args]
+  if program_op == p.ProgramOp.SELECT:
+    chosen = _constant_condition(node.args[0], logical, node.shape)
+    if chosen is not None:
+      reads[1] = np.where(chosen, reads[1], -1)
+      reads[2] = np.where(chosen, -1, reads[2])
   emit_map(ctx, node, reads, lambda values: ProgramNode(program_op, values, dtype=node.type.dtype))

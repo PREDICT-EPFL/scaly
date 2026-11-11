@@ -15,6 +15,40 @@ from scaly.passes.program.widen_ranges import widen_ranges
 from scaly.function.model import as_concrete
 
 
+def test_sparse_select_constant_regions_read_only_the_chosen_branch(monkeypatch):
+  from scaly.passes.lowering import plans
+  from scaly.ir.expr import ExprOp
+  from scaly.ir.types import stored_indices
+
+  pattern = CanonicalPattern((1000, 1000), (0, 4, 99, 999), (9, 3, 71, 998))
+  condition = np.arange(1000)[None, :] % 2 == 0
+  captured = []
+  emit = plans.emit_map
+
+  def observe(ctx, node, reads, body, **kwargs):
+    if node.op == ExprOp.SELECT:
+      captured.append(reads)
+    return emit(ctx, node, reads, body, **kwargs)
+
+  monkeypatch.setattr(plans, "emit_map", observe)
+
+  @sc.function(sc.arg("v", pattern.nnz), name="sparse_select_constant_regions")
+  def fn(v):
+    x = sc.pack(v, pattern)
+    return sc.where(sc.const(condition), x.sin(), x.tanh()).block()
+
+  lower_function(fn)
+  assert len(captured) == 1
+  chosen = condition.reshape(-1)[np.asarray(pattern.cols)]
+  slots = np.arange(pattern.nnz)
+  np.testing.assert_array_equal(captured[0][1], np.where(chosen, slots, -1))
+  np.testing.assert_array_equal(captured[0][2], np.where(chosen, -1, slots))
+  values = np.linspace(0.1, 1.0, pattern.nnz)
+  actual = fn(values)
+  expected = np.where(chosen, np.sin(values), np.tanh(values))
+  np.testing.assert_allclose(actual.toarray().reshape(-1)[stored_indices(sc.TensorType(pattern.shape, pattern=pattern))], expected)
+
+
 def _pattern(array):
   coo = sparse.coo_array(array)
   return CanonicalPattern(coo.shape, tuple(map(int, coo.row)), tuple(map(int, coo.col)))
