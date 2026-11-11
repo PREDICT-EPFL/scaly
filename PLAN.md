@@ -2,10 +2,10 @@
 
 Implements section #24 under `internal/notes/compiler_run_2026_11_10/plan.md` on main.
 The branch started on #368, the typed-entry layer of #30 -> #55 -> #56 -> #207.
-The original branch is rebased onto origin/main, dropping those old inherited
-commits. The scratch branch t3code/207-cortex-m-trial carries them on #368's
-supplied head 11586a7f. Rebase the task commits to main after its merge.
-Do not push before that merge is confirmed.
+The task branch t3code/207-cortex-m-builds is rebased onto origin/main after
+#368 merged. The coordinator authorized review, one push, a PR on main and
+auto-merge after the verdict. Main moved in the guide and node-ID baseline,
+so the rebase gets one full suite before review.
 Read `~/.scaly-suite/RULES.md` before tests and whenever notified of an update.
 
 Scope: a float32 oracle with a derivative from an existing example, compiled with
@@ -86,3 +86,11 @@ Findings and evidence:
 - Reports record object flash/static RAM and caller-buffer requirements. They exclude
   startup, target libm and stack. Zig caches do not recreate Clang's side-file stack
   reports, so this change does not rely on them.
+- Final rebase: origin/main includes #368 and #437. It applied cleanly. The real
+  embedded proof passes again (3 cases), with the same 456/4-byte object footprint
+  and 320/32/96-byte caller buffers. Ruff lint/format and ty pass. Full checks are
+  /tmp/scaly-207/main-final-suite-20261111.{log,exit}.
+- #445 owns the known one-ULP la015 failure. Review retries once using the saved
+  brief, updated to the current main-based diff, on claude-fable-5-2 high. The
+  previous attempt consumed no review. The coordinator confirms Claude capacity
+  reset and explicitly authorizes finishing, queueing and watching through merge.
