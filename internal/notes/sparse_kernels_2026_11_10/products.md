@@ -141,3 +141,19 @@ Gram       2000  11994, 4000           47968               2000, 2000         83
 The inherited forward rule still emits one kernel per seed and shares its index tables. Code
 size grows with the seed count. #225 already owns replacing those per-seed kernel groups and
 stored-slice copies; coloring bounds the seed count in the sparse derivative gates here.
+
+## Rebase onto the merged sparse kernels
+
+The parent #367 merged into main at `4ebb5d94`, after #315 and #320. Replaying only #47's
+commits had three conflicts. In `ad/sparsity.py`, the sampled coefficient rule keeps main's
+argument-aware `memo.support_of(other)` lookup. In `ir/expr.py`, the sampled keyword and
+result-pattern construction keep main's floating-operand check. The sparse-pattern test imports
+keep main's formatting and concrete-function names, adding `matmul`.
+
+Automatic merges preserve SELECT's masked partials and accumulation in `ad/reverse.py`.
+`passes/lowering/ctx.py` has no diff from main, including the dense column-major reorder path.
+All three CI type-check variants pass, including Python 3.14 and Windows, without changes to
+numerical assertions. Both Ruff checks pass. The first focused group passed 147 cases, including
+dense C snapshots; the call-support, derivative-sparsity, SELECT, boundary, plan and import group
+passed 281. Snapshot files are byte-identical to main. Full validation and a short check of these
+resolutions follow before pushing the rebased branch.
