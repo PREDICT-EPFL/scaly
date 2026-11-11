@@ -139,7 +139,7 @@ def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None
     kind, axes = e.attrs["kind"], e.attrs["axes"]
     count = int(np.prod([value.shape[axis] for axis in axes], dtype=np.int64))
     uniform = _uniform_value(value)
-    if uniform is not None:
+    if uniform is not None and value.size > 1024:
       result = np.multiply(np.sum(value.flat[:1]), count) if kind == "add" else uniform if count else {"max": -np.inf, "min": np.inf}[kind]
       out = np.broadcast_to(np.asarray(result, dtype=e.type.dtype.numpy()), e.shape)
     elif kind == "add":
