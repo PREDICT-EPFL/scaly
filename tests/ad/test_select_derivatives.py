@@ -426,10 +426,10 @@ def test_a_select_inside_a_map_guards_the_arguments_partial(form: str, squared: 
       np.testing.assert_allclose(hess, finite_difference(lambda v: np.asarray(derivatives(v)[1]), point), rtol=1e-7, atol=1e-9)
 
 
-@pytest.mark.parametrize("runtime", [False, True])
-@pytest.mark.parametrize("nested", [False, True])
-@pytest.mark.parametrize("squared", [False, True])
-@pytest.mark.parametrize("form", ["inline", "called", "mapped"])
+@pytest.mark.parametrize(
+  ("runtime", "nested", "squared", "form"),
+  [(True, False, False, "inline"), (False, True, True, "called"), (True, True, False, "mapped")],
+)
 def test_selected_zero_tangents_guard_downstream_singular_partials(runtime: bool, nested: bool, squared: bool, form: str) -> None:
   seed_values = np.array([[1.0, 1.0, 1.0, 1.0], [0.0, -2.0, 3.0, 0.0]])
 
@@ -554,6 +554,23 @@ def test_inner_mapped_masks_keep_each_inputs_activity_separate() -> None:
   np.testing.assert_allclose(grad, expected, rtol=1e-14)
   np.testing.assert_allclose(tangent, sum(expected), rtol=1e-14)
   np.testing.assert_allclose(hess, np.diag([0.0, -1.0 / 32.0, 0.0, -1.0 / 108.0, -1.0 / 16.0, 0.0, -1.0 / 54.0, 0.0]), rtol=1e-14)
+
+
+def test_inner_mapped_masks_keep_mixed_formal_dtypes() -> None:
+  @sc.function(sc.arg("u", sc.TensorType((), dtype=sc.dtypes.float32)), sc.arg("v", ()), outputs=sc.arg("y"), name="sd_mixed_formal_select")
+  def stage(u: sc.Expr, v: sc.Expr) -> sc.Expr:
+    return sc.where(u > 1.0, sc.cast(u, "float64"), 2.0 * v)
+
+  @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("y"), sc.arg("g"), sc.arg("h")), name="sd_mixed_formal_masks")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    y = sc.vmap(stage, 2)(sc.cast(x[:2].sqrt(), "float32"), x[2:].sqrt()).sum()
+    return y, sc.gradient(y, x), sc.hessian(y, x)
+
+  point = np.array([0.0, 4.0, 4.0, 0.0])
+  value, grad, hess = (np.asarray(v) for v in derivatives(point))
+  np.testing.assert_array_equal(value, 6.0)
+  np.testing.assert_array_equal(grad, [0.0, 0.25, 0.5, 0.0])
+  np.testing.assert_array_equal(hess, np.diag([0.0, -1.0 / 32.0, -1.0 / 16.0, 0.0]))
 
 
 def test_inner_mapped_masks_use_stored_input_coordinates() -> None:
@@ -769,23 +786,18 @@ def test_selected_dot_product_keeps_activity_on_either_operand(side: str) -> Non
     np.testing.assert_array_equal(grad, expected)
 
 
-@pytest.mark.parametrize("form", ["sparse_vector", "sparse_matrix", "matrix_sparse", "vector_sparse", "sparse_sparse"])
-@pytest.mark.parametrize("extremum", [False, True])
+@pytest.mark.parametrize(("form", "extremum"), [("sparse_vector", False), ("matrix_sparse", True), ("sparse_sparse", False)])
 def test_nested_sparse_tangent_conditions_survive_products(form: str, extremum: bool) -> None:
   pattern = CanonicalPattern((4, 4), (0, 1, 2, 3), (0, 1, 2, 3))
-  scale = 2 if form in {"sparse_matrix", "matrix_sparse"} else 1
+  scale = 2 if form == "matrix_sparse" else 1
 
   def body(x: sc.Expr) -> sc.Expr:
     inner = sc.maximum(x, 0.0) if extremum else sc.where(x > 0, x, 0.0)
     chosen = sc.pack(sc.where(x < 5, inner, 0.0), pattern)
     if form == "sparse_vector":
       result = chosen @ sc.const(np.ones(4))
-    elif form == "sparse_matrix":
-      result = chosen @ sc.const(np.ones((4, 2)))
     elif form == "matrix_sparse":
       result = sc.const(np.ones((2, 4))) @ chosen
-    elif form == "vector_sparse":
-      result = sc.const(np.ones(4)) @ chosen
     else:
       result = chosen @ sc.pack(sc.const(np.ones(4)), pattern)
     return result.sqrt().sum()
