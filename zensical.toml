@@ -21,6 +21,7 @@ nav = [
         { "Getting started" = "guide/getting_started.md" },
         { "Building functions" = "guide/functions.md" },
         { "Derivatives" = "guide/derivatives.md" },
+        { "Control flow" = "guide/control_flow.md" },
         { "Sparse derivatives" = "guide/sparsity.md" },
         { "Sparse matrices" = "guide/sparse_matrices.md" },
         { "Solvers" = "guide/solvers.md" },

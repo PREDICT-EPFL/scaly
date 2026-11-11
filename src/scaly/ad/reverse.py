@@ -6,12 +6,13 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ..ir.expr import _index_values, Expr, ExprOp, is_map, _uniform, gather, matmul, pack, _scatter_zero, topo, to_dense, values, where, zeros_like
+from ..ir.expr import _index_values, Expr, ExprOp, invocation_key, _uniform, gather, matmul, pack, _scatter_zero, topo, to_dense, values, where, zeros_like
 from ..ir.support import slice_indices, support_indices
 from ..ir.types import CanonicalPattern, stored_indices
-from .calls import _accumulate, _call_vjp, _cond_vjp, _vmap_vjp
+from .calls import _accumulate, _call_vjp, _cond_vjp, _loop_vjp
 from .rules import (
   ELEMENTWISE,
+  accumulate,
   _mask_of,
   _masked,
   _nonzero_mask,
@@ -55,7 +56,22 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
       cot = _on_pattern(cot, out)
     adjoints[out.id] = cot if out.id not in adjoints else _accumulate(adjoints[out.id], cot)
 
+  loops: dict[tuple[Any, ...], list[Expr]] = {}
+  for node in nodes:
+    if node.op == ExprOp.LOOP:
+      loops.setdefault(invocation_key(node), []).append(node)
+
   for expr in reversed(nodes):
+    if expr.op == ExprOp.LOOP:
+      siblings = loops[invocation_key(expr)]
+      if expr is not siblings[0]:
+        continue
+      seeds = {node.attrs["output"]: adjoints[node.id] for node in siblings if node.id in adjoints}
+      if seeds and needed(expr):
+        for arg, arg_cot in _loop_vjp(expr, seeds, wrts, dep_memo, pullback=vjp):
+          if arg.id in expr_ids:
+            adjoints[arg.id] = arg_cot if arg.id not in adjoints else accumulate(adjoints[arg.id], arg_cot)
+      continue
     cot = adjoints.get(expr.id)
     if (
       cot is None
@@ -65,11 +81,6 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
       or not needed(expr)
     ):
       continue
-    if is_map(expr):
-      for arg, arg_cot in _vmap_vjp(expr, cot, wrts, dep_memo, pullback=vjp):
-        if arg.id in expr_ids:
-          adjoints[arg.id] = arg_cot if arg.id not in adjoints else _accumulate(adjoints[arg.id], arg_cot)
-      continue
     active = (
       tuple(i for i, arg in enumerate(expr.args) if arg.type.dtype.is_floating and needed(arg))
       if expr.op in {ExprOp.CALL, ExprOp.COND, *ELEMENTWISE} or (expr.op == ExprOp.MATMUL and any(arg.type.pattern is not None for arg in expr.args))
@@ -78,7 +89,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
     transpose = lambda c: _local_vjp(expr, c, active)  # noqa: E731
     arg_cots = carry_mask(cot, transpose) if expr.op in _SELECTIONS else transpose(cot)
     for arg, arg_cot in zip(expr.args, arg_cots, strict=True):
-      if arg_cot is not None and arg.id in expr_ids:
+      if arg_cot is not None and arg.type.dtype.is_floating and arg.id in expr_ids:
         if arg.type.pattern is not None and arg_cot.type.pattern is not arg.type.pattern:
           arg_cot = _on_pattern(arg_cot, arg)
         elif arg.type.pattern is None and arg_cot.type.pattern is not None:
@@ -168,8 +179,6 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
   if expr.op == ExprOp.COND:
     assert active is not None
     return _cond_vjp(expr, cot, active, pullback=vjp)
-  if expr.op == ExprOp.LOOP:
-    raise NotImplementedError("derivatives through scan and while_loop are not implemented yet")
   raise NotImplementedError(f"VJP for op {expr.op!r} is not implemented")
 
 

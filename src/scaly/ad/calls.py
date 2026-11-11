@@ -10,6 +10,7 @@ from scipy.sparse import csr_array
 from ..function.concrete import ConcreteFunction, _JVP, _JVPMany, _VmapAdjoint
 from ..function.sugar import _loop_node, _mapped_call, _cond_node
 from ..ir.expr import (
+  _uniform,
   Expr,
   ExprOp,
   is_map,
@@ -27,7 +28,7 @@ from ..ir.expr import (
   where,
   zeros_like,
 )
-from ..ir.types import TensorType, dtypes
+from ..ir.types import TensorType, dtypes, _uniform_value
 from ..passes.expr import simplify_cse_fixpoint
 from .helpers import HelperKey, helper_name
 from .rules import _mask_of, _masked, _sample_stored, accumulate, activity, carry_masks, cotangent_mask, move_mask
@@ -727,6 +728,112 @@ def _vmap_adj_function(
     )
     cache[key] = (fn, arg_indices)
   return cast(_VmapAdjoint, cache[key])
+
+
+def _loop_vjp(
+  expr: Expr, cots: dict[int, Expr], wrts: Sequence[Expr], dep_memo: dict[tuple[int, int], bool], *, pullback: _Pullback
+) -> list[tuple[Expr, Expr]]:
+  if is_map(expr) and len(cots) == 1:
+    output, cot = next(iter(cots.items()))
+    return _vmap_vjp(_loop_node(expr.attrs["callee"], None, expr.args, dict(expr.attrs), output), cot, wrts, dep_memo, pullback=pullback)
+  attrs = dict(expr.attrs)
+  callee, cond = attrs.pop("callee"), attrs.pop("cond")
+  attrs.pop("output")
+  nc, length = attrs["n_carry"], attrs["length"]
+  skip = nc + int(attrs["index"])
+  carries = tuple(i for i in range(nc) if callee.inputs[i].type.dtype.is_floating)
+  outers = tuple(
+    i
+    for i in range(len(attrs["starts"]))
+    if expr.args[nc + i].type.dtype.is_floating and any(_depends_on(expr.args[nc + i], wrt, dep_memo, through_stops=False) for wrt in wrts)
+  )
+  params = tuple(i for i in outers if attrs["strides"][i] == 0)
+  sliced = tuple(i for i in outers if attrs["strides"][i] != 0)
+  active = (*carries, *(skip + i for i in outers))
+  selected = tuple(sorted(cots))
+  key = HelperKey.of(callee, "adjoint", selected, active, n_carry=nc)
+  cache = callee._memo.helpers
+  if key not in cache:
+    names = set(callee.input_names)
+
+    def symbol(name: str, primal: Expr) -> Expr:
+      while name in names:
+        name += "_"
+      names.add(name)
+      return _tangent_symbol(name, primal)
+
+    lams = {i: symbol(f"loop:lam:{i}", callee.inputs[i]) for i in carries}
+    sums = {i: symbol(f"loop:sum:{i}", callee.inputs[skip + i]) for i in params}
+    seeds = {
+      i: symbol(f"loop:seed:{i}", callee.results[i] if i < len(callee.results) else callee.inputs[i - len(callee.results) - 1])
+      for i in selected
+      if i >= nc
+    }
+    terms = [
+      body_cotangents(callee, i, active, lams[i] if i < nc else seeds[i], pullback)
+      for i in (*carries, *(i for i in selected if nc <= i < len(callee.results)))
+    ]
+    grads = {i: _sum_exprs(term[j] for term in terms) if terms else zeros_like(callee.inputs[i]) for j, i in enumerate(active)}
+    for i in carries:
+      trajectory = len(callee.results) + 1 + i
+      if trajectory in seeds:
+        grads[i] = grads[i] + seeds[trajectory]
+    inputs = (*lams.values(), *sums.values(), *callee.inputs[nc:skip], *callee.inputs[:nc], *callee.inputs[skip:], *seeds.values())
+    outputs = (*[grads[i] for i in carries], *[sums[i] + grads[skip + i] for i in params], *[grads[skip + i] for i in sliced])
+    cache[key] = ConcreteFunction._from_exprs(
+      helper_name(callee, key), inputs, outputs, [str(x.name) for x in inputs], [f"out{i}" for i in range(len(outputs))], role="adjoint"
+    )
+  fn = cast(ConcreteFunction, cache[key])
+  limit = attrs.get("max_trajectory")
+  stored = length * sum(inp.type.storage_size for inp in callee.inputs[:nc])
+  if limit is not None and stored > limit:
+    raise ValueError(f"loop {callee.name!r} would store {stored} trajectory elements, exceeding max_trajectory={limit}; use sc.custom_derivative")
+  args = [cots.get(i, zeros_like(expr.args[i])) for i in carries]
+  args += [zeros_like(callee.inputs[skip + i]) for i in params]
+  starts, strides = [], []
+  for i in range(nc):
+    args.append(_loop_node(callee, cond, expr.args, attrs, len(callee.results) + 1 + i))
+    starts.append(0)
+    strides.append(callee.inputs[i].type.storage_size)
+  # The primal step number occupies the backward body's index formal.
+  args += list(expr.args[nc : nc + len(attrs["starts"])])
+  starts += list(attrs["starts"])
+  strides += list(attrs["strides"])
+  for i in selected:
+    if i >= nc:
+      seed = simplify_cse_fixpoint(values(cots[i]).vec())
+      formal = callee.results[i] if i < len(callee.results) else callee.inputs[i - len(callee.results) - 1]
+      uniform = _uniform_value(seed.value) if seed.op == ExprOp.CONST and seed.value is not None else None
+      args.append(seed if uniform is None else _uniform(uniform, (formal.type.storage_size,), dtype=seed.type.dtype))
+      starts.append(0)
+      strides.append(formal.type.storage_size if uniform is None else 0)
+  if cond is not None:
+    args.append(_loop_node(callee, cond, expr.args, attrs, len(callee.results)))
+  else:
+    args += list(expr.args[nc + len(attrs["starts"]) :])
+  backward = {
+    **attrs,
+    "n_carry": len(carries) + len(params),
+    "starts": tuple(starts),
+    "strides": tuple(strides),
+    "reverse": not attrs["reverse"],
+    "in_place": (),
+  }
+
+  def result(i: int) -> Expr:
+    return _loop_node(fn, None, tuple(args), backward, i)
+
+  ret = [(expr.args[i], result(j)) for j, i in enumerate(carries)]
+  for j, i in enumerate(params):
+    formal = callee.inputs[skip + i]
+    grad = result(len(carries) + j)
+    ret.append((expr.args[nc + i], scatter(values(grad), attrs["starts"][i] + np.arange(formal.type.storage_size), expr.args[nc + i].shape)))
+  for j, i in enumerate(sliced):
+    formal = callee.inputs[skip + i]
+    grad = result(backward["n_carry"] + j)
+    indices = attrs["starts"][i] + np.arange(length)[:, None] * attrs["strides"][i] + np.arange(formal.type.storage_size)
+    ret.append((expr.args[nc + i], scatter(grad, indices.reshape(-1), expr.args[nc + i].shape)))
+  return ret
 
 
 def _vmap_vjp(

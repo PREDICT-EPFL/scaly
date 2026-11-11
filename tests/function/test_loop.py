@@ -450,11 +450,9 @@ def test_callees_and_the_verifier() -> None:
     sc.function(sc.arg("c0", 3), sc.arg("xs", 4))(lambda c, xs: sc.scan(mix, c, (sc.broadcast(sc.const(np.ones(2))), xs), length=4)[0])
 
 
-def test_derivatives_raise_and_an_inactive_loop_is_a_constant() -> None:
+def test_an_inactive_loop_is_a_constant() -> None:
   p, x = sc.sym("p", 2), sc.sym("x", 2)
   (c, _) = sc.scan(mix, p, (sc.broadcast(sc.const(np.array([0.5, 2.0]))), sc.const(np.arange(3.0))), length=3)
-  with pytest.raises(NotImplementedError, match="scan and while_loop"):
-    sc.vjp((c,), (p,), (sc.const(np.ones(2)),))
   y = x * c
   f = from_exprs("inactive", [x, p], [sc.jvp(y, x, sc.const(np.ones(2))), sc.vjp((y,), (x,), (sc.const(np.ones(2)),))[0]], ["x", "p"], ["fwd", "rev"])
   expected, _ = mix_numpy(np.array([1.0, 3.0]), np.array([0.5, 2.0]), [0.0, 1.0, 2.0])

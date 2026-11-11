@@ -90,3 +90,13 @@ name, and an input name.
 ::: scaly.function.sugar.broadcast
 
 ::: scaly.function.sugar.window
+
+## Control flow
+
+::: scaly.function.sugar.scan
+    options:
+      show_source: false
+
+::: scaly.function.sugar.while_loop
+    options:
+      show_source: false
