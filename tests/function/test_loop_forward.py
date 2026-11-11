@@ -188,3 +188,36 @@ def test_matrix_slices_and_shared_initial_dependency(shape):
   init = p[: max(1, int(np.prod(shape)))].reshape(shape)
   final, (ys,) = sc.scan(step, init, (p.reshape((4, 2, 2)), sc.window(p, 1, 2)), length=4)
   check_derivatives([p], [final, ys], [np.linspace(0.01, 0.1, 16)])
+
+
+@pytest.mark.parametrize("dtype", [sc.dtypes.int64, sc.dtypes.bool_])
+def test_custom_jvp_with_nonfloating_stacked_output(dtype):
+  flag_type = sc.TensorType((), dtype)
+
+  @sc.function(sc.arg("c", ()), sc.arg("x", ()), outputs=sc.group(sc.arg("cn", ()), sc.arg("flag", flag_type), sc.arg("y", ())))
+  def raw(c, x):
+    return (c * x).sin(), (x > 0.0).cast(dtype), c * c * x
+
+  @sc.function(
+    sc.arg("c", ()),
+    sc.arg("x", ()),
+    sc.arg("dc", ()),
+    sc.arg("dx", ()),
+    outputs=sc.group(sc.arg("dcn", ()), sc.arg("dflag", flag_type), sc.arg("dy", ())),
+  )
+  def raw_jvp(c, x, dc, dx):
+    return (c * x).cos() * (dc * x + c * dx), sc.const(np.zeros((), dtype=dtype.numpy()), dtype=dtype), 2 * c * x * dc + c * c * dx
+
+  body = sc.custom_derivative(raw, jvp=raw_jvp)
+  c, xs = sc.sym("c", ()), sc.sym("xs", 3)
+  final, (_, ys) = sc.scan(body, c, (xs,), length=3)
+  ref, rows = c, []
+  for k in range(3):
+    ref, _, y = raw(ref, xs[k])
+    rows.append(y)
+  point = [np.array(0.3), np.array([0.5, -0.6, 0.7])]
+  for actual, expected in ((final, ref), (ys, sc.stack(rows))):
+    for wrt in (c, xs):
+      got, want = evaluate([c, xs], [sc.jacobian(actual, wrt), sc.jacobian(expected, wrt)], point)
+      np.testing.assert_allclose(got, want, atol=1e-12)
+  check_derivatives([c, xs], [final, ys], point)

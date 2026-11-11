@@ -4252,6 +4252,8 @@ tests/function/test_loop.py::test_trajectories_and_zero_fill[True-None-False]
 tests/function/test_loop.py::test_while_loop_edge_counts
 tests/function/test_loop.py::test_while_loop_newton_matches_a_python_loop
 tests/function/test_loop.py::test_while_step_counts_at_every_boundary
+tests/function/test_loop_forward.py::test_custom_jvp_with_nonfloating_stacked_output[dtype0]
+tests/function/test_loop_forward.py::test_custom_jvp_with_nonfloating_stacked_output[dtype1]
 tests/function/test_loop_forward.py::test_matrix_slices_and_shared_initial_dependency[shape0]
 tests/function/test_loop_forward.py::test_matrix_slices_and_shared_initial_dependency[shape1]
 tests/function/test_loop_forward.py::test_matrix_slices_and_shared_initial_dependency[shape2]

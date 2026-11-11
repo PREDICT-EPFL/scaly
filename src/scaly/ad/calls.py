@@ -344,6 +344,7 @@ def _loop_jvp_many(expr: Expr, tangents: Sequence[Expr | None], nseed: int, *, p
   nc, length = attrs["n_carry"], attrs["length"]
   skip = nc + int(attrs["index"])
   carries = tuple(i for i in range(nc) if callee.inputs[i].type.dtype.is_floating)
+  floating = tuple(i for i in range(nc, len(callee.results)) if callee.results[i].type.dtype.is_floating)
   outers = tuple(i for i in range(len(attrs["starts"])) if tangents[nc + i] is not None)
   active = (*carries, *(skip + i for i in outers))
   key = HelperKey.of(callee, "forward", tuple(range(len(callee.results))), active, nseed=nseed, n_carry=nc)
@@ -359,7 +360,7 @@ def _loop_jvp_many(expr: Expr, tangents: Sequence[Expr | None], nseed: int, *, p
       seeds[i] = _tangent_symbol(name, callee.inputs[i], (nseed,))
     derivs = body_tangents(callee, tuple(range(len(callee.results))), seeds, nseed, pushforward)
     inputs = (*callee.inputs[:nc], *(seeds[i] for i in carries), *callee.inputs[nc:], *(seeds[skip + i] for i in outers))
-    outputs = (*callee.results[:nc], *(cast(Expr, derivs[i]) for i in carries), *callee.results[nc:], *(d for d in derivs[nc:] if d is not None))
+    outputs = (*callee.results[:nc], *(cast(Expr, derivs[i]) for i in carries), *callee.results[nc:], *(cast(Expr, derivs[i]) for i in floating))
     cache[key] = ConcreteFunction._from_exprs(
       helper_name(callee, key), inputs, outputs, [str(x.name) for x in inputs], [f"out{i}" for i in range(len(outputs))], role="forward"
     )
@@ -401,7 +402,6 @@ def _loop_jvp_many(expr: Expr, tangents: Sequence[Expr | None], nseed: int, *, p
   if output < nc:
     result = nc + carries.index(output)
   elif output < len(callee.results):
-    floating = [i for i in range(nc, len(callee.results)) if callee.results[i].type.dtype.is_floating]
     result = len(callee.results) + len(carries) + floating.index(output)
   else:
     carry = output - len(callee.results) - 1

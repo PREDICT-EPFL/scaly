@@ -32,3 +32,15 @@ Full shared-runner check passed: 4787 passed, 56 skipped; type, format, lint,
 benchmark smoke, docs build and private-name checks passed. C snapshots unchanged.
 The first runner attempt stopped on the stale node-ID baseline, now refreshed.
 #34 has pull request #425. Open this layer against t3code/34-fold-vmap.
+
+Opus review found the custom-JVP nonfloating stacked output offset bug. Added
+int64/bool reproductions, both failed, then fixed the tangent output list to use
+the same floating indices as result selection. 100 focused loop/sugar tests pass.
+Removed premature guide/API publication, retaining accurate source docstrings.
+Kept the existing reverse error wording as explicitly required by the brief.
+Documented n_carry in HelperKey and removed the misleading pack stem from
+condition helper names. Delta check pending after the full runner.
+
+Known cost for the PR: a forward Jacobian seeded in a sliced input materializes
+a seed table growing with steps times seeds. Reverse mode (#33) and deferred
+per-step compression own this limitation. No new follow-up issue is needed.
