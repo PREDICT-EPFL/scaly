@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import cast
 
 import numpy as np
+from scipy import sparse
 
 from scaly.function.model import as_concrete
 import scaly as sc
@@ -189,7 +190,9 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
   rng = np.random.default_rng(2)
   zv = rng.normal(size=NZ * (N + 1))
   pv = rng.normal(size=NX * (N + 1))
-  np.testing.assert_allclose(spj_vmap((zv, pv)).data, spj_unroll((zv, pv)).data, rtol=1e-10, atol=1e-10)
+  vmap_values, unroll_values = spj_vmap((zv, pv)), spj_unroll((zv, pv))
+  assert isinstance(vmap_values, sparse.csc_array) and isinstance(unroll_values, sparse.csc_array)
+  np.testing.assert_allclose(vmap_values.data, unroll_values.data, rtol=1e-10, atol=1e-10)
 
 
 # --- pairwise-barrier composition: gather-fed VMAP, VMAP -> gather -> VMAP, concat of two VMAPs ------
@@ -366,4 +369,4 @@ def test_weighted_mapped_residual_cost_matches_unrolled_derivatives() -> None:
     derivatives = fn.factory(name + "_derivatives", ["x", "p"], ["f", sc.factory.Grad("f", "x"), sc.factory.SpHess("f", "x")])
     values.append(derivatives(*inputs))
   for actual, expected in zip(values[0], values[1], strict=True):
-    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(getattr(actual, "data", actual), getattr(expected, "data", expected), rtol=1e-12, atol=1e-12)

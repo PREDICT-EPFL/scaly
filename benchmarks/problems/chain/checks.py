@@ -391,7 +391,7 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
   def hessian_values(z: sc.Expr, p: sc.Expr, lam: sc.Expr) -> sc.Expr:
     mapped = sc.vmap(hinted, HORIZON)(sc.window(z, 0, nz), sc.window(z, nz, nz), sc.window(p, nx, 0)).vec()
     eq = sc.concat([z[:nx] - p[:nx], mapped])
-    return sc.sparse_hessian(lam @ eq, z, triangle="lower").values
+    return sc.values(sc.sparse_hessian(lam @ eq, z, triangle="lower"))
 
   observed = {}
   lower_function(hessian_values, observe=lambda name, program: observed.__setitem__(name, program))

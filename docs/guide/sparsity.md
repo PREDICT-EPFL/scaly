@@ -1,14 +1,14 @@
 # Sparse derivatives
 
-Sparse derivative functions evaluate a compact vector of potentially nonzero
-entries, accompanied by a fixed matrix pattern. This is useful for multistage
-optimal control models, where each dynamics constraint depends on only a small
-part of the decision vector. The pattern comes from symbolic dependencies, not
-from numerical values observed during evaluation.
+A sparse Jacobian or Hessian stores only its potentially nonzero entries,
+together with a fixed matrix pattern. This is useful for multistage optimal
+control models, where each dynamics constraint depends on only a small part of
+the decision vector. The pattern comes from symbolic dependencies, not from
+numerical values observed during evaluation.
 
-Matrices whose type declares the entries they store, such as a constant built
-from a SciPy sparse array, are a separate feature described in
-[Sparse matrices](sparse_matrices.md).
+A sparse derivative is a [sparse matrix](sparse_matrices.md): its type carries
+the pattern, and a sparse derivative `Function` returns it as a SciPy sparse
+array whose values follow a declared [layout](sparse_matrices.md#layouts).
 
 ## Structural and numerical zeros
 
@@ -31,14 +31,11 @@ print(pattern.rows)   # (0, 0, 1, 2)
 print(pattern.cols)   # (0, 1, 2, 3)
 ```
 
-`Function.sparsity` returns `None` for an ordinary dense output and a
-`SparsityPattern` for a sparse derivative output. For a function with several
-outputs, select one by name with `of="spjac_y_x"`.
-The assertion makes that distinction explicit to a type checker.
-
-The pattern uses coordinate format, abbreviated COO. The paired `rows` and
-`cols` arrays give the zero-based coordinates of each stored value, together
-with the full matrix `shape`.
+`Function.sparsity` returns the stored pattern of a sparse output and `None`
+for a dense one. For a function with several outputs, select one by name with
+`of="spjac_y_x"`. The assertion makes that distinction explicit to a type
+checker. The pattern lists the zero-based `rows` and `cols` of the stored
+entries in row-major order, together with the full matrix `shape`.
 
 The full Jacobian is
 
@@ -57,32 +54,48 @@ operations produce a conservative pattern containing additional possible
 nonzeros.
 
 ```python
-print(sparse_jac(np.zeros(4)))  # [0. 0. 1. 0.]
-print(pattern.nnz)             # 4
+print(sparse_jac(np.zeros(4)).data)  # [0. 0. 1. 0.]
+print(pattern.nnz)                  # 4
 ```
 
 Three stored entries happen to be zero here. They are still present because
 other inputs make them nonzero. The pattern therefore stays valid across calls.
 Dropping entries based on one numerical evaluation would lose that property.
 
-## Compact values and matrix reconstruction
+## Sparse results and their layout
 
-A sparse derivative function returns a one-dimensional array of values. The
-pattern tells you where those values belong:
+A sparse derivative function returns a SciPy sparse array. By default it is a
+`csc_array`, whose stored values run column by column:
 
 ```python
-values = sparse_jac(np.array([2.0, 3.0, 4.0, 5.0]))
-print(values)  # [ 3.  2.  1. 10.]
-
-J = np.zeros(pattern.shape)
-J[np.asarray(pattern.rows), np.asarray(pattern.cols)] = values
-print(J)
+J = sparse_jac(np.array([2.0, 3.0, 4.0, 5.0]))
+print(type(J).__name__)  # csc_array
+print(J.data)            # [ 3.  2.  1. 10.]
+print(J.toarray())
 # [[ 3.  2.  0.  0.]
 #  [ 0.  0.  1.  0.]
 #  [ 0.  0.  0. 10.]]
 ```
 
-Keep the pattern alongside the values when passing them to another library.
+`layout=` chooses the order of the stored values, with the same choices as any
+[sparse output](sparse_matrices.md#layouts): `"csc"`, `"csr"`, or a
+`SparsityPattern` listing the derivative's stored coordinates in the order a
+solver reads its triplets. The values arrive in that order, in Python and in
+the [generated C](codegen.md#sparse-output-patterns), with no permutation to
+apply:
+
+```python
+by_rows = sc.sparse_jacobian(model, "y", "x", layout="csr")
+print(by_rows(np.array([2.0, 3.0, 4.0, 5.0])).data)  # [ 3.  2.  1. 10.]
+
+triplets = sc.SparsityPattern((3, 4), (2, 1, 0, 0), (3, 2, 1, 0))
+listed = sc.sparse_jacobian(model, "y", "x", layout=triplets)
+print(listed(np.array([2.0, 3.0, 4.0, 5.0])).data)  # [10.  1.  2.  3.]
+```
+
+A coordinate layout must list exactly the derivative's pattern. A different one
+raises `ValueError: coordinate layout has a different stored pattern` when the
+function is built.
 
 For a function with open shapes, pass the same arguments to the query as to
 evaluation. The query traces that binding if needed, but does not compile or
@@ -96,7 +109,6 @@ def squares(x: sc.Expr) -> sc.Expr:
 jac = sc.sparse_jacobian(squares)
 point = np.arange(3.0)
 pattern = jac.sparsity(point)
-values = jac(point)
 assert pattern is not None
 print(pattern.shape)  # (3, 3)
 print(pattern.nnz)    # 3
@@ -104,61 +116,36 @@ print(pattern.nnz)    # 3
 
 Different shapes can have different patterns. The query always selects the
 binding from its arguments, rather than the most recent call. A fully specified
-function can omit the arguments. A plain sparse derivative's
-[generated C header](codegen.md#sparse-output-patterns) contains the same index
-tables, so a C caller can reconstruct the matrix without Python.
+function can omit the arguments.
 
-For a mapped sparse derivative, the query returns the per-iteration matrix
-pattern. Apply it separately to each leading output slice. Nested maps use the
-same pattern for every iteration. The mapped concrete graph and its C header
-do not carry these per-iteration tables. Keep the source pattern when passing
-mapped compact values through another function or a factory.
+Mapping a sparse derivative over `N` independent points gives a batch of
+matrices that share one pattern. The query returns that pattern, and a
+numerical call returns an `N`-dimensional SciPy `coo_array`:
 
-For direct expression construction, the sparse result bundles the two parts:
+```python
+batched = sc.vmap(jac, 2)
+print(batched(np.arange(6.0).reshape(2, 3)).toarray()[1])
+# [[ 6.  0.  0.]
+#  [ 0.  8.  0.]
+#  [ 0.  0. 10.]]
+```
+
+For direct expression construction, the result is a sparse `Expr` with the
+pattern in its type:
 
 ```python
 x = sc.sym("x", 4)
-y = model(x)
-sj = sc.sparse_jacobian(y, x)
-compact_expression = sj.values
-matrix_expression = sj.to_dense()
-pattern = sj.sparsity
+sj = sc.sparse_jacobian(model(x), x)
+print(sj.shape)                 # (3, 4)
+print(sj.type.pattern.nnz)      # 4
+stored_expression = sc.values(sj)
+matrix_expression = sc.to_dense(sj)
 ```
 
-`sc.jacobian_sparsity(y, x)` obtains only the pattern. `pattern.to_mask()` returns
-a dense Boolean array for inspection.
-
-## The ordering rule
-
-Entry `values[k]` belongs at `(pattern.rows[k], pattern.cols[k])`. Do not assume
-the coordinates are sorted. Mapped functions can produce entries in stage order
-rather than matrix row order.
-
-Compressed sparse row and column formats, abbreviated CSR and CSC, require a
-specific ordering. Scaly returns the required permutation with the index arrays:
-
-```python
-row_ptr, col_ind, permutation = pattern.to_csr()
-values_csr = values[np.asarray(permutation, dtype=int)]
-
-col_ptr, row_ind, permutation = pattern.to_csc()
-values_csc = values[np.asarray(permutation, dtype=int)]
-```
-
-The `values` and `pattern` above can be converted to a SciPy matrix without
-forming a dense intermediate:
-
-```python
-from scipy.sparse import csr_matrix
-
-matrix = csr_matrix((values_csr, col_ind, row_ptr), shape=pattern.shape)
-```
-
-The permutation may be trivial for a small example, but a caller must apply
-it for general patterns. Generated headers
-expose the corresponding
-`_csr_val_perm` and `_csc_val_perm` tables. See
-[generated sparse-output patterns](codegen.md#sparse-output-patterns).
+The stored values of a sparse `Expr` are in row-major order, and the layout of
+a `Function` output decides the order the caller receives.
+`sc.jacobian_sparsity(y, x)` obtains only the pattern. `pattern.to_mask()`
+returns a dense Boolean array for inspection.
 
 ## Sparse Hessians
 
@@ -171,11 +158,7 @@ def cost(x: sc.Expr) -> sc.Expr:
     return sc.sumsqr(x) + x[0] * x[1]
 
 sparse_hess = sc.sparse_hessian(cost, "cost", "x", triangle="lower")
-hess_values = sparse_hess(np.ones(4))
-hess_pattern = sparse_hess.sparsity()
-assert hess_pattern is not None
-lower = np.zeros(hess_pattern.shape)
-lower[np.asarray(hess_pattern.rows), np.asarray(hess_pattern.cols)] = hess_values
+lower = sparse_hess(np.ones(4)).toarray()
 H = lower + lower.T - np.diag(np.diag(lower))
 print(H)
 # [[2. 1. 0. 0.]
@@ -184,16 +167,14 @@ print(H)
 #  [0. 0. 0. 2.]]
 ```
 
-The choices are `"full"`, `"lower"`, and `"upper"`. The pattern still has the
-full matrix shape, but only contains entries in the selected triangle. To
-reconstruct a full symmetric matrix from one triangle, reflect off-diagonal
-entries and keep diagonal entries once.
+The choices are `"full"`, `"lower"`, and `"upper"`. The matrix keeps its full
+shape but stores only the entries in the selected triangle. To reconstruct a
+full symmetric matrix from one triangle, reflect off-diagonal entries and keep
+diagonal entries once. Adding `lower + lower.T` alone would double the diagonal.
 
-Adding `lower + lower.T` alone would double the diagonal. A matrix built from
-the compact lower triangle is not yet the full symmetric Hessian.
-
-`sc.sparse_lagrangian_hessian` supports the same choices. Built-in solver
-interfaces select the triangle their solver needs.
+`sc.sparse_hessian(f, of, wrt, layout="csr", triangle="upper")` combines a
+triangle with a layout. `sc.sparse_lagrangian_hessian` takes the same choices.
+Built-in solver interfaces select the triangle and the order their solver needs.
 
 ## Sparse derivatives and mapped structure
 
@@ -265,11 +246,10 @@ costs separately.
 
 ## Sparse derivatives as matrices
 
-A `SparseJacobian` holds a pattern and an expression for its values in the
-pattern's order. It is not a [sparse matrix](sparse_matrices.md) and does not
-support matrix multiplication directly. `to_dense()` creates a dense matrix
-expression, and `sc.pack` creates a sparse matrix from the values and the
-pattern:
+A sparse derivative takes part in arithmetic like any other
+[sparse matrix](sparse_matrices.md#operations-on-sparse-values). A product with
+a dense vector multiplies only the stored entries, and `sc.to_dense` creates a
+dense matrix expression:
 
 ```python
 def chain(x: sc.Expr) -> sc.Expr:
@@ -277,12 +257,11 @@ def chain(x: sc.Expr) -> sc.Expr:
 
 @sc.function(sc.arg("x", 6), sc.arg("v", 6), outputs=sc.arg("jv"))
 def via_matrix(x: sc.Expr, v: sc.Expr) -> sc.Expr:
-    return sc.sparse_jacobian(chain(x), x).to_dense() @ v
+    return sc.to_dense(sc.sparse_jacobian(chain(x), x)) @ v
 
 @sc.function(sc.arg("x", 6), sc.arg("v", 6), outputs=sc.arg("jv"))
 def via_sparse_matrix(x: sc.Expr, v: sc.Expr) -> sc.Expr:
-    jac = sc.sparse_jacobian(chain(x), x)
-    return sc.pack(jac.values, jac.sparsity) @ v
+    return sc.sparse_jacobian(chain(x), x) @ v
 
 @sc.function(sc.arg("x", 6), sc.arg("v", 6), outputs=sc.arg("jv"))
 def via_product(x: sc.Expr, v: sc.Expr) -> sc.Expr:
@@ -298,4 +277,8 @@ multiplies only the stored entries, and the third requests a Jacobian-vector
 product directly, without constructing the matrix. The
 [sparse JVP example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/sparse_jvp.py)
 exports the first and the last for comparison. Compiler simplification can
-remove some intermediates, but `to_dense() @ v` is a dense product.
+remove some intermediates, but `sc.to_dense(J) @ v` is a dense product.
+
+A sparse derivative keeps its pattern through other operations too. Its
+transpose `J.T` stores the transposed pattern, so a wrapper `Function` that
+returns it reports that pattern from `Function.sparsity` and in its header.

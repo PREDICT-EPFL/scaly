@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable, Sequence
 import numpy as np
 
 from ...ir import program as p
-from ...ir.expr import Expr, ExprOp, OP_INFO, callees_of, invocation_key, topo
+from ...ir.expr import Expr, ExprOp, OP_INFO, callees_of, gather, invocation_key, topo
 from ...ir.match import Pattern, rewrite
 from ...function.concrete import ConcreteFunction
 from ...function.extern import _Extern
@@ -117,15 +117,15 @@ def _size_of(shape: tuple[int, ...]) -> int:
 
 
 def _declared_values(stored: Expr, layout: SparseLayout) -> Expr | None:
-  """The dense values whose order is already ``layout``'s: the stored values in canonical order,
-  or the source of a gather that only reorders into canonical order and that the layout undoes."""
+  """Dense values already in ``layout``'s order: the stored values when the layout is canonical, or,
+  when they are gathered, their source gathered straight into the declared order."""
   order, identity = np.asarray(layout.order, dtype=np.int64), np.arange(len(layout.order))
   if np.array_equal(order, identity):
     return stored
-  if stored.op == ExprOp.GATHER and stored.size == stored.args[0].size == len(order):
-    if np.array_equal(stored.attrs["indices"].reshape(-1)[order], identity):
-      return stored.args[0]
-  return None
+  if stored.op != ExprOp.GATHER or stored.size != len(order) or stored.args[0].type.pattern is not None:
+    return None
+  source, indices = stored.args[0], stored.attrs["indices"].reshape(-1)[order]
+  return source if source.size == len(order) and np.array_equal(indices, identity) else gather(source, indices)
 
 
 def _normalize_function(fun: ConcreteFunction, *, residuals: bool = False) -> ConcreteFunction:
@@ -311,10 +311,10 @@ class LowerCtx:
   # --- body -----------------------------------------------------------------
 
   def emit_body(self) -> None:
-    live = {node.id for node in topo(self._computed)}
-    for node in self.fun.nodes:
-      if node.id in self.value_buffers or node.id not in live:
-        continue  # input, already lowered, or only the reordering an output's declared layout undoes
+    # What the outputs compute, which leaves out the canonical order an output's declared layout replaces.
+    for node in topo(self._computed):
+      if node.id in self.value_buffers:
+        continue  # input (or already lowered)
       rule = _RULES.get(ExprOp(node.op))
       if rule is None:
         raise LoweringError(f"Expression op {node.op!r} is not yet lowered to Program IR")

@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import numpy as np
+from scipy import sparse
 
 import scaly as sc
 from scaly.codegen import write_module
@@ -24,7 +25,7 @@ jac = sc.sparse_jacobian(stages, "residuals", "zs")
 zs = np.arange(1.0, 2 * N + 1) / 10.0
 pattern = jac.sparsity()
 assert pattern is not None
-matrix = jac(zs)
+matrix = sparse.csc_array(jac(zs))
 print(stages(zs))
 print("Jacobian shape:", pattern.shape)
 print("Stored entries:", pattern.nnz)

@@ -5,6 +5,7 @@ from typing import cast
 from tests.matmul_cases import SHAPES
 
 import numpy as np
+from scipy import sparse
 import pytest
 
 from scaly.function.model import as_concrete
@@ -389,7 +390,7 @@ def test_sparse_hessian_factory_returns_compact_values_with_sparsity_metadata() 
   assert shf_sparsity is not None
   assert shf_sparsity.rows == (0, 1, 2)
   assert shf_sparsity.cols == (0, 2, 1)
-  np.testing.assert_allclose(shf(xv).toarray(), np.array([[2.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]]))
+  np.testing.assert_allclose(sparse.coo_array(shf(xv)).toarray(), np.array([[2.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]]))
 
 
 @pytest.mark.parametrize("triangle", ("lower", "upper"))
@@ -436,9 +437,9 @@ def test_sparse_hessian_triangle_matches_masked_full(triangle: Triangle) -> None
   assert full_fn_sp is not None and triangle_fn_sp is not None
   assert triangle_fn_sp.rows == tuple(np.asarray(full_fn_sp.rows)[keep])
   assert triangle_fn_sp.cols == tuple(np.asarray(full_fn_sp.cols)[keep])
-  full_dense = full_fn(np.array([0.2, 0.7, -0.3, 1.1])).toarray()
+  full_dense = sparse.coo_array(full_fn(np.array([0.2, 0.7, -0.3, 1.1]))).toarray()
   np.testing.assert_allclose(
-    triangle_fn(np.array([0.2, 0.7, -0.3, 1.1])).toarray(),
+    sparse.coo_array(triangle_fn(np.array([0.2, 0.7, -0.3, 1.1]))).toarray(),
     np.tril(full_dense) if triangle == "lower" else np.triu(full_dense),
     rtol=1e-10,
     atol=1e-10,
@@ -459,7 +460,8 @@ def test_sparse_lagrangian_hessian_uses_aux_output() -> None:
   assert shf_sparsity is not None
   assert shf_sparsity.rows == (0, 0, 1, 1)
   assert shf_sparsity.cols == (0, 1, 0, 1)
-  np.testing.assert_allclose(shf(*(np.array([2.0, 3.0]), (np.array(1.5), np.array([0.25, -0.5])))).toarray(), np.array([[3.0, 0.25], [0.25, -1.0]]))
+  actual = sparse.coo_array(shf(*(np.array([2.0, 3.0]), (np.array(1.5), np.array([0.25, -0.5]))))).toarray()
+  np.testing.assert_allclose(actual, np.array([[3.0, 0.25], [0.25, -1.0]]))
 
 
 def test_sparse_lagrangian_hessian_through_vmap_matches_unrolled_dense_and_fd() -> None:
@@ -594,7 +596,7 @@ def test_spjac_factory_returns_compact_values_with_sparsity_metadata() -> None:
   assert spjf_sparsity is not None
   assert spjf_sparsity.rows == (0, 1, 1, 2)
   assert spjf_sparsity.cols == (0, 2, 3, 1)
-  np.testing.assert_allclose(spjf(xv).toarray(), np.array([[1.0, 0, 0, 0], [0, 0, 1, 1], [0, 1, 0, 0]]))
+  np.testing.assert_allclose(sparse.coo_array(spjf(xv)).toarray(), np.array([[1.0, 0, 0, 0], [0, 0, 1, 1], [0, 1, 0, 0]]))
 
 
 def test_sparse_jacobian_preserves_constructed_local_coloring_width() -> None:

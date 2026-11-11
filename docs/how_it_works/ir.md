@@ -100,9 +100,9 @@ derivative and split ties equally for `minimum` and `maximum`. The
 [derivative conventions](../guide/derivatives.md#non-smooth-conventions) also
 cover `abs` and extremum reductions.
 
-A [sparse matrix](../guide/sparse_matrices.md) also carries its stored pattern in its type. A sparse
-derivative is instead a one-dimensional `Expr` of nonzero values, and its pattern lives on the
-owning `Function` in `output_sparsities`, as the [sparse derivatives guide](../guide/sparsity.md) shows.
+A [sparse matrix](../guide/sparse_matrices.md) also carries its stored pattern in its type, and so
+does a [sparse derivative](../guide/sparsity.md), which is a sparse matrix whose stored values are
+built from the derivative's coloring.
 
 ### Operations
 

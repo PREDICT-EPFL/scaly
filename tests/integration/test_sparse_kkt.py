@@ -131,7 +131,7 @@ def test_maros_meszaros_kkt_and_products_without_dense_matrix_buffers(name):
       _same_pattern(incidence, expected, f"{prefix}_jac")
       derivative = sc.sparse_jacobian(values)
       jac = derivative(numeric)
-      assert jac.format == "csc"
+      assert isinstance(jac, sparse.csc_array)
       numeric_values = values(numeric)
       assert isinstance(numeric_values, np.ndarray)
       for column in np.unique(np.linspace(0, len(numeric) - 1, min(len(numeric), 5), dtype=int)):

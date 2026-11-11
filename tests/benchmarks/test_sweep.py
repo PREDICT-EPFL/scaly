@@ -462,7 +462,7 @@ def test_module_info_records_constructed_local_coloring_width() -> None:
     return _mapped_call(piece, 4, [(z, 0, 1), (z, 1, 1)])
 
   built = mapped.factory("module_info_spjac", ["z"], [sc.factory.SpJac("y", "z")])
-  sparsity = as_concrete(built).outputs[0].type.pattern
+  sparsity = _value_order(as_concrete(built))
   coloring_width = as_concrete(built).output_coloring_widths[0]
   assert sparsity is not None
   assert coloring_width == 2

@@ -1119,8 +1119,12 @@ return sparse-typed outputs with a declared layout and triangle
 goes away, so a sparse output has one spelling. The header tables, the CasADi gather and
 `casadi_output_sparsities` read the type. Values switch from arbitrary order to the declared layout,
 which removes the two value-permutation tables: an interface change under `docs/dev/versioning.md`.
-The mapped path (`ad/sparse.py::_sparse_jacobian_vmap`) keeps its local coloring and returns a
-batched pattern for a map of independent stages.
+The mapped path (`ad/sparse.py::_sparse_jacobian_vmap`) keeps its local coloring and returns the
+two-dimensional pattern of the whole map; `sc.vmap` of a stage's sparse derivative gives the batched
+pattern of a map of independent stages. *Replaced in the compiler run, 2026-11-11: "returns a
+batched pattern for a map of independent stages", because a result whose shape depended on the
+structure the analysis finds would break consumers that expect the Jacobian's matrix shape, such
+as the solver oracles and CasADi.*
 
 Deferred, beside this track: different patterns per batch entry, dense-block and supernode
 detection inside a pattern ([#91]), automatic compaction of dense-typed values. [#96] (row coloring)

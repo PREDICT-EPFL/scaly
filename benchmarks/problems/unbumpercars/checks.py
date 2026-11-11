@@ -22,6 +22,7 @@ from scaly.function.concrete import ConcreteFunction
 from scaly.function.model import as_concrete
 import scaly as sc
 import numpy as np
+from scipy import sparse
 
 from benchmarks.harness import check_fastest_casadi_encoding
 from benchmarks.problems.unbumpercars.common import (
@@ -89,11 +90,8 @@ def check_oracle_matches_casadi() -> None:
       ):
         is_hess = isinstance(spec, sc.factory.SpHess)
         derivative = oracle.factory("pair_derivative", [*oracle.inputs.names, *(["lam:g"] if is_hess else [])], [spec], aux={"gamma": ["g"]})
-        sparsity = derivative.sparsity()
-        assert sparsity is not None
         values = derivative(*(*args, np.arange(1.0, loop_cfg.n_slack + 1)) if is_hess else args)
-        np.testing.assert_allclose(values, reference[sparsity.rows, sparsity.cols], rtol=1e-8, atol=1e-9)
-        np.testing.assert_allclose(reference[~sparsity.to_mask()], 0.0, atol=1e-12)
+        np.testing.assert_allclose(sparse.coo_array(values).toarray(), reference, rtol=1e-8, atol=1e-9)
 
 
 def check_pair_jac_codegen_growth() -> None:

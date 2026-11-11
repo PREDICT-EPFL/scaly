@@ -10,6 +10,7 @@ import sys
 from typing import Protocol
 
 import numpy as np
+from scipy import sparse
 import pytest
 
 import scaly as sc
@@ -151,7 +152,7 @@ def test_unseeded_derivatives_bind_and_keep_declared_output_names(operation: _De
   assert operation(cost, name="derived").instantiate((2,)) is two
   assert operation(cost).instantiate((2,)).input_tree.types == cost.instantiate((2,)).input_tree.types
   values = derivative(np.array([2.0, 3.0]))
-  values = values.toarray() if operation in (sc.sparse_jacobian, sc.sparse_hessian) else values
+  values = sparse.coo_array(values).toarray() if operation in (sc.sparse_jacobian, sc.sparse_hessian) else values
   assert isinstance(values, np.ndarray)
   assert np.all(np.isfinite(values))
   if operation is sc.gradient:
@@ -185,7 +186,7 @@ def test_seeded_templates_and_lagrangian_multiplier_trees() -> None:
     derivative = operation(problem, "x")
     result = derivative(x, (np.array(2.0), np.array([1.0, 2.0])))
     expected = np.diag(4.0 + 6.0 * np.array([1.0, 2.0]) * x)
-    np.testing.assert_array_equal(result if isinstance(result, np.ndarray) else result.toarray(), expected)
+    np.testing.assert_array_equal(sparse.coo_array(result).toarray(), expected)
     with pytest.raises(ValueError, match="seed or argument types"):
       derivative(x, (np.array(2.0), np.ones(3)))
 
@@ -430,7 +431,7 @@ def test_sparsity_queries_cover_fixed_bare_and_zero_input_functions() -> None:
   mapped_derivative = sc.vmap(derivative, 3)
   pattern = mapped_derivative.sparsity(batch)
   assert pattern is not None
-  np.testing.assert_array_equal(mapped_derivative(batch).toarray(), np.stack([np.diag(2.0 * point) for point in batch]))
+  np.testing.assert_array_equal(sparse.coo_array(mapped_derivative(batch)).toarray(), np.stack([np.diag(2.0 * point) for point in batch]))
   assert model.sparsity() is None
   with pytest.raises(ValueError, match="expected shape"):
     derivative.sparsity(np.ones(3))

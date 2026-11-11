@@ -234,8 +234,9 @@ def test_vmapped_source_is_constant_in_the_horizon_where_the_unrolled_twin_grows
   from scaly.ir.program import ProgramOp
   from scaly.passes.lowering import lower_function, main_proc
 
-  # Auto widening starts once the horizon supplies a full vector chunk.
-  sizes = (2, 8, 32) if lanes == 1 else (8, 16, 32)
+  # Auto widening starts once the horizon supplies a full vector chunk, and the compressed-column
+  # Jacobian hoists its invariant callee work out of the map from three stages on.
+  sizes = (3, 8, 32) if lanes == 1 else (8, 16, 32)
   for kernel, request in (("spjac", sc.factory.SpJac("eq", "z")), ("sphess", sc.factory.SpHess("gamma", "z"))):
     lines = []
     for stages in sizes:

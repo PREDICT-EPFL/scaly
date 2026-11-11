@@ -66,11 +66,13 @@ identifier. Give independently declared functions distinct names.
 ### Sparsity tables
 
 The `<prefix>_NNZ`, `_NROW` and `_NCOL` macros and the index tables in the
-generated header take their prefix from the derived-output name, so their names follow the symbol
-rule above. No release promises their contents. The coordinate order is an artifact of lowering,
-and a coloring or `vmap` change may reorder it. A consumer stays correct by reading values through
-the `<prefix>_csr_val_perm` and `<prefix>_csc_val_perm` tables, as
-[the generated interface](../how_it_works/generated_interface.md#sparse-outputs) describes. Whenever generated output changes,
+generated header take their prefix from the input or output name, a derived output's included, so
+their names follow the symbol rule above. A sparse output's values follow its declared layout, and
+the header publishes that layout's tables, as
+[the generated interface](../how_it_works/generated_interface.md#sparse-outputs) describes. The
+order rule is part of the interface. The tables' contents are not: a sharper derivative analysis
+may drop an entry from a derivative's pattern, so a consumer reads the tables rather than copying
+them. Whenever generated output changes,
 `_JIT_CACHE_VERSION` in `src/scaly/codegen/jit.py` is bumped so a cached library from an older
 version is never reused.
 

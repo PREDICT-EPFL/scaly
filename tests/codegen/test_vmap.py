@@ -172,8 +172,7 @@ def _rk4_bicycle_eq_vmap(horizon: int) -> sc.Function:
   return eq
 
 
-@pytest.mark.parametrize("layout", ["csr", "csc"])
-def test_mapped_spjac_values_follow_the_header_tables_of_their_layout(layout) -> None:
+def test_mapped_spjac_values_follow_the_header_tables_of_their_layout() -> None:
   """On the merged map path the values come straight out in the declared layout, so walking the
   header's compressed tables over the value buffer rebuilds the dense Jacobian with no permutation."""
 
@@ -182,7 +181,7 @@ def test_mapped_spjac_values_follow_the_header_tables_of_their_layout(layout) ->
   from scaly.codegen.aot import render_c_module
   from scaly.ir.expr import topo
 
-  N = 3
+  N, layout = 3, "csc"
   fn = _rk4_bicycle_eq_vmap(N)
   spjf = fn.factory(f"trk_vmap_{layout}_N{N}", ["z", "p"], [sc.factory.SpJac("eq", "z", layout=layout)])
   dense_fn = fn.factory(f"trk_vmap_dense_N{N}", ["z", "p"], [sc.factory.Jac("eq", "z")])

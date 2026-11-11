@@ -61,8 +61,6 @@ that can be evaluated together without mixing their results. See the
 
 ## Sparse derivatives
 
-::: scaly.ad.sparse.SparseJacobian
-
 ::: scaly.ad.sparse.sparse_jacobian
 
 ::: scaly.ad.sparse.sparse_hessian

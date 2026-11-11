@@ -85,9 +85,9 @@ For a matrix input `X`, column `j` of the Jacobian corresponds to
 `X.reshape(-1)[j]`, not to a column of `X`.
 
 For large problems with many known zeros, use `sc.sparse_jacobian` or
-`sc.sparse_hessian`. These return only the potentially nonzero entries. See
-[Sparsity](sparsity.md) for retrieving their locations and reconstructing a
-matrix. Sparse Hessians accept `triangle="full"`, `"lower"`, or `"upper"`.
+`sc.sparse_hessian`. These store only the potentially nonzero entries and return
+SciPy sparse arrays. See [Sparse derivatives](sparsity.md) for their patterns and
+layouts. Sparse Hessians accept `triangle="full"`, `"lower"`, or `"upper"`.
 
 ## Products with a Jacobian
 
@@ -144,8 +144,8 @@ print(lag_hess(point, weights))  # [[2. 3.]
 ```
 
 The multiplier structure matches the complete output structure. Every output
-participates in the weighted sum. `sc.sparse_lagrangian_hessian` returns compact
-values and accepts the same triangle choices as `sc.sparse_hessian`.
+participates in the weighted sum. `sc.sparse_lagrangian_hessian` returns a sparse
+matrix and accepts the same triangle and layout choices as `sc.sparse_hessian`.
 
 ## Values and derivatives in one function
 
@@ -208,7 +208,7 @@ weights = sc.sym("weights", 2)
 `jvp` means Jacobian-vector product and `vjp` means vector-Jacobian product.
 `sc.jvp_many(y, x, seeds)` handles several directions, with the seed number as
 the first axis. Expression forms of sparse derivatives return a
-`SparseJacobian` containing `.values`, `.sparsity`, and `.to_dense()`.
+[sparse matrix](sparse_matrices.md) `Expr`, with the pattern in its type.
 
 ## Differentiation inputs
 
@@ -406,8 +406,8 @@ as a boolean mask of `shape` or a `SparsityPattern`:
 diagonal = sc.custom_derivative(
     cubic_root, jvp=cubic_root_jvp, sparsity=lambda of, wrt, shape: np.eye(*shape, dtype=bool)
 )
-print(sc.sparse_jacobian(diagonal)(p))     # [0.25       0.07692308 0.03571429]
-print(sc.sparse_jacobian(root)(p).shape)   # (9,)
+print(sc.sparse_jacobian(diagonal)(p).data)  # [0.25       0.07692308 0.03571429]
+print(sc.sparse_jacobian(root)(p).nnz)       # 9
 ```
 
 !!! warning "A declared pattern is taken as given"
