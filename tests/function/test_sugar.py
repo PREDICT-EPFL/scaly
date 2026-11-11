@@ -120,7 +120,7 @@ def test_a_no_carry_loop_with_step_control_keeps_its_loop_rules(kind: str) -> No
   def positive(x):
     return x > 0
 
-  @sc.function(sc.arg("x", 4), outputs=sc.arg("y", 4))
+  @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("y", 4), sc.arg("dy", 4)))
   def host(x):
     _, (y,) = sc.scan(
       indexed if kind == "index" else square, (), (x,), length=4, index=kind == "index", reverse=kind == "reverse", trip=2 if kind == "trip" else None
@@ -130,14 +130,15 @@ def test_a_no_carry_loop_with_step_control_keeps_its_loop_rules(kind: str) -> No
       node = _loop_node(node.attrs["callee"], positive.instantiate(), node.args, dict(node.attrs), 0)
       y = node
     assert not is_map(node)
-    for derivative in (lambda: sc.jvp(y, x, sc.const(np.ones(4))), lambda: sc.vjp((y,), (x,), (sc.const(np.ones(4)),))):
-      with pytest.raises(NotImplementedError, match="scan and while_loop"):
-        derivative()
-    return y
+    with pytest.raises(NotImplementedError, match="scan and while_loop"):
+      sc.vjp((y,), (x,), (sc.const(np.ones(4)),))
+    return y, sc.jvp(y, x, sc.const(np.ones(4)))
 
   x = np.array([1.0, 2.0, -3.0, 4.0])
   expected = x * x + np.arange(4) if kind == "index" else np.array([1.0, 4.0, 0.0, 0.0]) if kind in {"trip", "condition"} else x * x
-  np.testing.assert_array_equal(host(x), expected)
+  y, dy = host(x)
+  np.testing.assert_array_equal(y, expected)
+  np.testing.assert_array_equal(dy, [2.0, 4.0, 0.0, 0.0] if kind in {"trip", "condition"} else 2 * x)
 
 
 @pytest.mark.parametrize("kind", ["transpose", "negative", "gapped", "nested_slice"])
