@@ -3406,6 +3406,7 @@ tests/test_released_solvers.py::test_restored_local_build_without_compiler[ipopt
 tests/test_solver_requirements.py::test_required_solver_collection[1-ipopt-True]
 tests/test_solver_requirements.py::test_required_solver_collection[piqp,sqp-ipopt-False]
 tests/test_solver_requirements.py::test_required_solver_collection[piqp,sqp-piqp-True]
+tests/test_union_github_probe.py::test_left
 tests/typing/test_distribution.py::test_package_includes_type_marker
 tests/utils/test_names.py::test_c_identifier_spelling[1value-_1value]
 tests/utils/test_names.py::test_c_identifier_spelling[fwd:eq:z-fwd_eq_z]
