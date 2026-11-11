@@ -322,3 +322,44 @@ def test_reused_buffer_drops_old_zero_support():
     return step(x)
 
   np.testing.assert_array_equal(run(np.arange(4.0)), [5, 1, 0, 3])
+
+
+def test_float_index_cannot_prove_disjointness():
+  from unittest.mock import patch
+
+  @sc.function(sc.arg("carry", 3), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
+  def step(carry, j):
+    first = sc.scatter(carry, [0], sc.gather(carry, [0]) + 1, combine="set")
+    read_index = ((j.cast(sc.dtypes.float64) / 13).exp() <= 3.6976308645666602).cast(sc.dtypes.int64)
+    return sc.scatter(first, [2], sc.gather(carry, read_index), combine="set")
+
+  @sc.function(sc.arg("initial", 3), name="float_index_automatic")
+  def automatic(initial):
+    return sc.scan(step, initial, length=18, index=True)[0]
+
+  @sc.function(sc.arg("initial", 3), name="float_index_reference")
+  def reference(initial):
+    return sc.scan(step, initial, length=18, index=True)[0]
+
+  initial = np.array([1.0, 2.0, 3.0])
+  with patch("scaly.passes.lowering.calls.carry_reuse", return_value={}):
+    expected = reference(initial)
+  np.testing.assert_array_equal(automatic(initial), expected)
+  assert not _inout(automatic)
+  with pytest.raises(NotImplementedError, match="carry"):
+    lower_function(_loop(step, 3, length=18, index=True))
+
+
+def test_batched_integer_indices_remain_provable():
+  @sc.function(sc.arg("carry", 8), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
+  def step(carry, j):
+    index = sc.where(j < 3, j, j % 3)
+    first = sc.scatter(carry, index, sc.gather(carry, index) + 1, combine="set")
+    return sc.scatter(first, index + 4, sc.gather(carry, index + 4) + 2, combine="set")
+
+  fn = _loop(step, 8, length=6, index=True)
+  expected = np.arange(8.0)
+  expected[:3] += 2
+  expected[4:7] += 4
+  np.testing.assert_array_equal(fn(np.arange(8.0)), expected)
+  assert _inout(fn)

@@ -7,9 +7,47 @@ import numpy as np
 from ...ad.rules import ELEMENTWISE
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp, _index_values
-from ...ir.program import ProgramNode
+from ...ir.program import ProgramNode, ProgramOp
 from ...function.concrete import ConcreteFunction
 from ...ir.types import dtypes
+
+
+_EXACT_INDEX_OPS = {
+  ProgramOp.NEG,
+  ProgramOp.ADD,
+  ProgramOp.SUB,
+  ProgramOp.MUL,
+  ProgramOp.FLOORDIV,
+  ProgramOp.FLOORMOD,
+  ProgramOp.MINIMUM,
+  ProgramOp.MAXIMUM,
+  ProgramOp.LT,
+  ProgramOp.LE,
+  ProgramOp.EQ,
+  ProgramOp.NE,
+  ProgramOp.AND,
+  ProgramOp.OR,
+  ProgramOp.NOT,
+  ProgramOp.SELECT,
+  ProgramOp.CAST,
+}
+
+
+def _exact_index(node: Expr, values: dict[int, np.ndarray], length: int) -> np.ndarray | None:
+  row = ELEMENTWISE[ExprOp(node.op)]
+  if row.program not in _EXACT_INDEX_OPS or any(arg.type.dtype.is_floating for arg in (*node.args, node)):
+    return None
+  rank = len(node.shape)
+  args = [values[arg.id].reshape((length, *(1,) * (rank - len(arg.shape)), *arg.shape)).astype(object) for arg in node.args]
+  try:
+    result = np.asarray(row.numpy(*args))
+  except ArithmeticError:
+    return None
+  # Python integers expose overflow before a C integer conversion or arithmetic operation.
+  low, high = (0, 1) if node.type.dtype.is_bool else (np.iinfo(node.type.dtype.numpy()).min, np.iinfo(node.type.dtype.numpy()).max)
+  if np.any(result < low) or np.any(result > high):
+    return None
+  return result.astype(node.type.dtype.numpy())
 
 
 def index_batches(nodes: tuple[Expr, ...], length: int, step: Expr | None) -> dict[int, np.ndarray]:
@@ -21,10 +59,9 @@ def index_batches(nodes: tuple[Expr, ...], length: int, step: Expr | None) -> di
     elif node.value is not None:
       values[node.id] = np.broadcast_to(np.asarray(node.value), (length, *node.shape))
     elif node.op in ELEMENTWISE and all(arg.id in values for arg in node.args):
-      rank = len(node.shape)
-      args = [values[arg.id].reshape((length, *(1,) * (rank - len(arg.shape)), *arg.shape)) for arg in node.args]
-      with np.errstate(all="ignore"):
-        values[node.id] = np.asarray(ELEMENTWISE[node.op].numpy(*args)).astype(node.type.dtype.numpy())
+      result = _exact_index(node, values, length)
+      if result is not None:
+        values[node.id] = result
     elif node.op == ExprOp.RESHAPE and node.args[0].id in values:
       values[node.id] = values[node.args[0].id].reshape((length, *node.shape))
   return values
