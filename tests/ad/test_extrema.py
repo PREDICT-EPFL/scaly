@@ -112,13 +112,15 @@ def test_norms_nan_and_zero():
 
 
 @pytest.mark.parametrize("kind", ["max", "min"])
-def test_unchosen_nan_partial(kind):
+@pytest.mark.parametrize("sparse", [False, True])
+def test_unchosen_nan_partial(kind, sparse):
   build = sc.reduce_max if kind == "max" else sc.reduce_min
   sign = 1 if kind == "max" else -1
 
   @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("t"), sc.arg("g")))
   def f(x):
-    y = build(sign * x.sqrt())
+    source = sc.pack(x, CanonicalPattern((2, 2), (0, 1), (0, 1))) if sparse else x
+    y = build(sign * source.sqrt())
     return sc.jvp(y, x, sc.const(np.ones(2))), sc.gradient(y, x)
 
   t, g = f(np.array([0.0, 4.0]))

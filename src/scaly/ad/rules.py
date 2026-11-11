@@ -16,7 +16,7 @@ from ..ir.types import TensorType, stored_indices
 
 @dataclass(frozen=True, slots=True)
 class Mask:
-  """The partial of a select with respect to a branch: 1 where ``condition`` chooses it, else 0.
+  """A partial selected by ``condition``, optionally scaled by ``weight``, and zero elsewhere.
 
   A product with a mask is a select of the product, so the branch not chosen contributes an exact
   zero even where it, or its derivative, is NaN or infinite.
