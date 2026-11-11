@@ -9,7 +9,7 @@ import numpy as np
 from ..ir.expr import Expr, ExprOp, _uniform, callees_of, concat, from_dense, gather, matmul, pack, scatter, stack, to_dense, values
 from ..ir.types import TensorType, stored_indices
 from ..passes.expr import simplify_cse_fixpoint
-from .calls import _call_jvp_many, _is_zero_const, _vmap_jvp_many, read_args
+from .calls import _call_jvp_many, _cond_jvp_many, _is_zero_const, _vmap_jvp_many, read_args
 from .rules import ELEMENTWISE, Mask, reduction_partial, times_partial, tangent as _elementwise_tangent
 from .sparsity import _check_wrt, _prunable_support
 
@@ -106,11 +106,8 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
       elif callees_of(expr):
         read = {arg.id for arg in args}
         call_tangents = [simplify_cse_fixpoint(t) if arg.id in read and (t := tangents[arg.id]) is not None else None for arg in expr.args]
-        tangent = (
-          _call_jvp_many(expr, call_tangents, nseed, pushforward=_pushforward)
-          if expr.op == ExprOp.CALL
-          else _vmap_jvp_many(expr, call_tangents, nseed, pushforward=_pushforward)
-        )
+        rule = {ExprOp.CALL: _call_jvp_many, ExprOp.VMAP: _vmap_jvp_many, ExprOp.COND: _cond_jvp_many}[ExprOp(expr.op)]
+        tangent = rule(expr, call_tangents, nseed, pushforward=_pushforward)
       elif expr.op in ELEMENTWISE:
         if ELEMENTWISE[expr.op].partials is None:
           raise NotImplementedError(f"JVP for nonsmooth op {expr.op!r} in callee {callee!r} is not implemented")

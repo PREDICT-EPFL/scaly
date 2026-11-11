@@ -325,6 +325,32 @@ def _vmap_attrs(expr: Expr) -> str | None:
   return None
 
 
+def _cond_attrs(expr: Expr) -> str | None:
+  branches = expr.attrs.get("branches")
+  if not isinstance(branches, tuple) or not branches:
+    return "COND requires a nonempty tuple of branches"
+  if not expr.args or expr.args[0].shape or not (expr.args[0].type.dtype.is_bool or expr.args[0].type.dtype.is_integer):
+    return "COND selector must be a bool or integer scalar"
+  if expr.args[0].type.dtype.is_bool and len(branches) != 2:
+    return "COND boolean selector requires two branches"
+  output = expr.attrs.get("output")
+  if type(output) is not int or not 0 <= output < len(branches[0].outputs):
+    return "COND output index out of range"
+  for branch in branches:
+    if len(branch.inputs) != len(expr.args) - 1 or len(branch.outputs) != len(branches[0].outputs):
+      return "COND branch input and output counts must match"
+    for actual, formal in zip(expr.args[1:], branch.inputs, strict=True):
+      if actual.shape != formal.shape or actual.type.dtype != formal.type.dtype or actual.type.pattern is not formal.type.pattern:
+        return "COND operands must match every branch input shape, dtype and pattern"
+    for expected, result in zip(branches[0].outputs, branch.outputs, strict=True):
+      if expected.shape != result.shape or expected.type.dtype != result.type.dtype or expected.type.pattern is not result.type.pattern:
+        return "COND branch outputs must match in shape, dtype and pattern"
+  expected = branches[0].outputs[output]
+  if expr.shape != expected.shape or expr.type.dtype != expected.type.dtype or expr.type.pattern is not expected.type.pattern:
+    return "COND result must preserve the branch shape, dtype and pattern"
+  return None
+
+
 def loop_result_type(attrs: Mapping[str, Any], output: int) -> TensorType | None:
   """The type of result ``output`` of a ``LOOP``: final carries, stacked ys, the trip count, then trajectories."""
   callee, n_carry, length = attrs["callee"], int(attrs["n_carry"]), int(attrs["length"])
@@ -481,6 +507,7 @@ spec_expr = Spec(
     Rule(ExprOp.CALL, "call-attrs", _call_attrs),
     Rule(ExprOp.EXTERN, "extern-attrs", _call_attrs),
     Rule(ExprOp.VMAP, "vmap-attrs", _vmap_attrs),
+    Rule(ExprOp.COND, "cond-attrs", _cond_attrs),
     Rule(ExprOp.LOOP, "loop-attrs", _loop_attrs),
     Rule(ExprOp.GATHER, "gather-indices", _gather_indices),
     Rule(ExprOp.SCATTER, "scatter-indices", _scatter_indices),

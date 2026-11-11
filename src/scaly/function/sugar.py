@@ -1,4 +1,4 @@
-"""Typed mapped callables, carried loops, argument markers, affine views, and the internal VMAP and LOOP builders."""
+"""Typed mapped callables, carried loops, conditional calls, argument markers and affine views."""
 
 from __future__ import annotations
 
@@ -353,6 +353,55 @@ def vmap[SI, NI, SO, NO](callee: Function[SI, NI, SO, NO] | ConcreteFunction[SI,
     length,
   )
   return cast(Function[SI, NI, SO, NO], _traced(mapped))
+
+
+def _cond_node(branches: tuple[ConcreteFunction, ...], args: tuple[Expr, ...], output: int) -> Expr:
+  type_ = branches[0].outputs[output].type
+  diff = type_.dtype.is_floating and any(branch.outputs[output].type.diff for branch in branches) and any(arg.type.diff for arg in args[1:])
+  return Expr(ExprOp.COND, args, replace(type_, diff=diff), attrs={"branches": branches, "output": output}, lowering=common_lowering(*args))
+
+
+def cond(selector: Any, branches: tuple[Function | ConcreteFunction, ...], *operands: Any) -> Any:
+  """Call the branch selected by a scalar boolean or integer, with ``operands`` as its inputs.
+
+  False selects branch zero and True selects branch one. A boolean requires exactly two
+  branches. Integer selectors clamp to ``[0, len(branches) - 1]``. Only the selected branch
+  runs, including its prints. Branches must have matching input and output structures,
+  shapes, dtypes and stored patterns. Results follow the first branch's output tree.
+  The selector has no derivative. Derivatives follow the selected branch; structural
+  sparsity is the union of the branches.
+  """
+  if not isinstance(branches, tuple) or not branches or not all(isinstance(fn, Function | ConcreteFunction) for fn in branches):
+    raise TypeError("cond branches must be a nonempty tuple of scaly Functions")
+  selector = selector if isinstance(selector, Expr) else Expr.const(np.asarray(selector))
+  if selector.shape or not (selector.type.dtype.is_bool or selector.type.dtype.is_integer):
+    raise TypeError("cond selector must be a boolean or integer scalar")
+  if selector.type.dtype.is_bool and len(branches) != 2:
+    raise ValueError("a boolean cond selector requires two branches")
+  concrete = []
+  actuals = None
+  for fn in branches:
+    source = Function._from_instance(fn) if isinstance(fn, ConcreteFunction) else fn
+    branch, prepared = source._prepare_arguments(_symbolic(operands), "cond")
+    leaves = branch.input_tree.flatten_symbolic(prepared, "cond")
+    if actuals is None:
+      actuals = tuple(leaves)
+    elif tuple(leaves) != actuals:
+      raise ValueError("cond branches must have matching input structures")
+    if concrete and branch.output_tree.unflatten(tuple(range(len(branch.outputs)))) != concrete[0].output_tree.unflatten(
+      tuple(range(len(concrete[0].outputs)))
+    ):
+      raise ValueError("cond branches must have matching output structures")
+    if concrete and any(
+      (out.shape, out.type.dtype, out.type.pattern) != (ref.shape, ref.type.dtype, ref.type.pattern)
+      for out, ref in zip(branch.outputs, concrete[0].outputs, strict=True)
+    ):
+      raise ValueError("cond branches must have matching output shapes, dtypes and stored patterns")
+    concrete.append(branch)
+  assert actuals is not None
+  functions = tuple(concrete)
+  results = tuple(_cond_node(functions, (selector, *actuals), i) for i in range(len(functions[0].outputs)))
+  return functions[0].output_tree.unflatten(results)
 
 
 def _loop_node(callee: ConcreteFunction, cond: ConcreteFunction | None, args: tuple[Expr, ...], attrs: dict[str, Any], output: int) -> Expr:

@@ -98,12 +98,13 @@ class ExprOp(StrEnum):
   VMAP = "vmap"
   EXTERN = "extern"
   LOOP = "loop"
+  COND = "cond"
   SOLVER_CALL = "solver_call"
   PRINT = "print"
   STOP_GRADIENT = "stop_gradient"
 
 
-CALLEE_OPS = {ExprOp.CALL, ExprOp.VMAP, ExprOp.LOOP, ExprOp.EXTERN}
+CALLEE_OPS = {ExprOp.CALL, ExprOp.VMAP, ExprOp.LOOP, ExprOp.EXTERN, ExprOp.COND}
 
 
 COMMON_ELEMENTWISE_UNARY = {
@@ -168,6 +169,7 @@ COMMON_STRUCTURAL = {
   ExprOp.VMAP,
   ExprOp.EXTERN,
   ExprOp.LOOP,
+  ExprOp.COND,
   ExprOp.SOLVER_CALL,
   ExprOp.PRINT,
   ExprOp.STOP_GRADIENT,
@@ -213,6 +215,7 @@ class OpInfo:
       "call",
       "vmap",
       "loop",
+      "cond",
     ]
     | None
   ) = None
@@ -279,6 +282,7 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.CALL: OpInfo(ExprOp.CALL, None, support_rule="call"),
   ExprOp.VMAP: OpInfo(ExprOp.VMAP, None, support_rule="vmap"),
   ExprOp.EXTERN: OpInfo(ExprOp.EXTERN, None),
+  ExprOp.COND: OpInfo(ExprOp.COND, None, support_rule="cond"),
   ExprOp.LOOP: OpInfo(ExprOp.LOOP, None, support_rule="loop"),
   ExprOp.SOLVER_CALL: OpInfo(ExprOp.SOLVER_CALL, None, False),
   ExprOp.PRINT: OpInfo(ExprOp.PRINT, None, support_rule="preserve"),
@@ -957,6 +961,8 @@ def _attrs_key(attrs: Mapping[str, Any]) -> tuple[tuple[str, Any], ...]:
 
 def callees_of(node: Expr) -> tuple[Any, ...]:
   """The concrete functions invoked by ``node``, or an empty tuple for other operations."""
+  if node.op == ExprOp.COND:
+    return node.attrs["branches"]
   if node.op == ExprOp.LOOP and node.attrs["cond"] is not None:
     return node.attrs["callee"], node.attrs["cond"]
   return (node.attrs["callee"],) if node.op in CALLEE_OPS else ()
@@ -965,7 +971,7 @@ def callees_of(node: Expr) -> tuple[Any, ...]:
 def invocation_key(node: Expr) -> tuple[Any, ...]:
   """Group a call operation's results by operation, callee identity, argument identity and invocation attributes."""
   # VMAP's slice size describes the selected result, not the invocation.
-  attrs = {k: v for k, v in node.attrs.items() if k not in ("callee", "output", "slice_size")}
+  attrs = {k: v for k, v in node.attrs.items() if k not in ("callee", "branches", "output", "slice_size")}
   return node.op, tuple(id(callee) for callee in callees_of(node)), tuple(arg.id for arg in node.args), _attrs_key(attrs)
 
 
@@ -1705,6 +1711,9 @@ def format_expr(outputs: Expr | Iterable[Expr]) -> str:
       slice_size = e.attrs["slice_size"]
       bindings = ", ".join(f"%{loc[a.id]}[{s}::{st}]" for a, s, st in zip(e.args, e.attrs["starts"], e.attrs["strides"], strict=True))
       rhs = f"vmap[{length}x{slice_size}] {callee.name}[{e.attrs['output']}]({bindings})"
+    elif e.op == ExprOp.COND:
+      branches = ", ".join(fn.name for fn in e.attrs["branches"])
+      rhs = f"cond [{branches}][{e.attrs['output']}]({', '.join(f'%{loc[a.id]}' for a in e.args)})"
     elif e.op == ExprOp.LOOP:
       cond = e.attrs["cond"]
       n_carry = e.attrs["n_carry"]

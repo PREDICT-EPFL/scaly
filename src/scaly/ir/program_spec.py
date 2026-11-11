@@ -45,7 +45,7 @@ def verify_program(root: ProgramNode, spec: "Spec | None" = None) -> None:
       declared = set()
     elif node.op == ProgramOp.ASSIGN and node.attrs.get("declare"):
       _declare_name(node.attrs["target"], declared)
-    if node.op in (ProgramOp.PROGRAM, ProgramOp.PROC, ProgramOp.BLOCK, ProgramOp.FOR):
+    if node.op in (ProgramOp.PROGRAM, ProgramOp.PROC, ProgramOp.BLOCK, ProgramOp.FOR, ProgramOp.IF):
       pending.extend((arg, can_break, declared) for arg in node.args)
   for proc in root.args if root.op == ProgramOp.PROGRAM else (root,):
     buffers = {n.attrs["name"]: n for n in walk_program(proc) if n.op == ProgramOp.BUFFER}
@@ -202,6 +202,12 @@ def _for_body(n: ProgramNode) -> str | None:
   return None
 
 
+def _if_attrs(n: ProgramNode) -> str | None:
+  if len(n.args) != 3 or n.args[0].op not in SCALAR_OPS or not n.args[0].dtype.is_bool or any(a.op != ProgramOp.BLOCK for a in n.args[1:]):
+    return "IF takes one bool scalar and two BLOCKs"
+  return None
+
+
 def _break_if_attrs(n: ProgramNode) -> str | None:
   if len(n.args) != 1 or n.args[0].op not in SCALAR_OPS or not n.args[0].dtype.is_bool:
     return "BREAK_IF takes one bool scalar"
@@ -280,6 +286,7 @@ spec_program_full = Spec(
     Rule(ProgramOp.ASSIGN, "assign-attrs", _assign_attrs),
     Rule(ProgramOp.RANGE, "range-attrs", _range_kind),
     Rule(ProgramOp.FOR, "for-body", _for_body),
+    Rule(ProgramOp.IF, "if-attrs", _if_attrs),
     Rule(ProgramOp.BREAK_IF, "break-if-attrs", _break_if_attrs),
     Rule(ProgramOp.CALL, "call-attrs", _call_attrs),
     Rule(ProgramOp.PRINT, "print-pieces", _print_pieces),

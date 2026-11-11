@@ -82,14 +82,15 @@ def _decides_on(exprs: Sequence[Expr], variables: Sequence[Expr]) -> bool:
 
   def visit(targets: Sequence[Expr], active: Sequence[Expr]) -> bool:
     for node in topo(targets):
-      if node.op in {ExprOp.CALL, ExprOp.VMAP}:
-        callee = node.attrs["callee"]
-        formals = tuple(f for f, a in zip(callee.inputs, node.args, strict=True) if any(_depends_on(a, v, memo) for v in active))
-        key = (id(callee), tuple(f.id for f in formals))
-        if formals and key not in seen:
-          seen.add(key)
-          if visit(callee.results, formals):
-            return True
+      if callees_of(node) and node.op != ExprOp.LOOP:
+        actuals = node.args[1:] if node.op == ExprOp.COND else node.args
+        for callee in callees_of(node):
+          formals = tuple(f for f, a in zip(callee.inputs, actuals, strict=True) if any(_depends_on(a, v, memo) for v in active))
+          key = (id(callee), tuple(f.id for f in formals))
+          if formals and key not in seen:
+            seen.add(key)
+            if visit(callee.results, formals):
+              return True
       elif (
         not node.type.dtype.is_floating
         or node.op in {ExprOp.LOOP, ExprOp.MAXIMUM, ExprOp.MINIMUM, ExprOp.ABS, ExprOp.FLOOR, ExprOp.CEIL}

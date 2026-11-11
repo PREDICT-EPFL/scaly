@@ -32,7 +32,7 @@ interfaces for inspecting or extending the compiler.
     options:
       show_source: false
       filters:
-        - "!^(EXTERN|LOOP)$"
+        - "!^(EXTERN|LOOP|COND)$"
 
 ::: scaly.ir.expr.OpInfo
     options:

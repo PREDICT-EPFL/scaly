@@ -141,7 +141,13 @@ def _walk_support(roots: Sequence[Expr], rules: Mapping[ExprOp, OpInfo], context
       stack.append((node, True))
       stack.extend((arg, False) for arg in reversed(node.args))
       continue
-    if rule == "loop":
+    if rule == "cond":
+      result = frozenset()
+      arguments = tuple(support_of(arg) for arg in node.args[1:])
+      for branch in node.attrs["branches"]:
+        lookup = yield branch, arguments
+        result = _combine(result, lookup(branch.outputs[node.attrs["output"]]), intersection=False)
+    elif rule == "loop":
       result = yield from _loop_support(node, support_of)
     else:
       result = (yield from _call_support(node, rule, support_of)) if rule in {"call", "vmap"} else _rule(node, rule, support_of)
