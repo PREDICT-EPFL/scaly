@@ -7,10 +7,12 @@ C promotes a float argument to double for variadic printf. Float64 output and C 
 must stay byte-identical. Embedded build #207 and other printing behavior are out of scope.
 
 - [x] Read the run plan, suite rules, issue, section contract and compiler conventions.
-- [ ] Add exactly three tests for JIT evaluation and round-trip output, rendered format,
+- [x] Add exactly three tests for JIT evaluation and round-trip output, rendered format,
   and removal with `-DSCALY_PRINTF(...)=`. Observe the existing rejection.
-- [ ] Add the two float32 table entries and update the guide and API dtype descriptions.
-- [ ] Run focused tests and perturb their gates. Refresh the full collection baseline.
+- [x] Add the two float32 table entries and update the guide and API dtype descriptions.
+- [x] Run focused tests and perturb their gates. Refresh the full collection baseline.
+  All 29 print and snapshot checks pass. Eight-digit formatting fails both precision tests;
+  overriding print removal fails the removal test. The README solve/export and print example run.
 - [ ] Run the detached, queued pre-merge hook, including the full suite and C snapshots.
 - [ ] Commit and push the reviewed candidate, open a draft PR, and link it in T3.
 - [ ] Obtain one cross-review from claude-fable-5-2 at high effort. Fix findings together

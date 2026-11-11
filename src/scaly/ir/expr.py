@@ -1098,7 +1098,7 @@ def binary(op: ExprOp | str, x: Expr, y: Expr) -> Expr:
   )
 
 
-PRINTABLE = (dtypes.float64, dtypes.int32, dtypes.int64, dtypes.bool_)
+PRINTABLE = (dtypes.float64, dtypes.float32, dtypes.int32, dtypes.int64, dtypes.bool_)
 
 
 def print_pieces(fmt: str) -> tuple[str, ...]:
@@ -1145,8 +1145,9 @@ def print_(fmt: str, *values: Any) -> Expr:
   """Return the first of ``values``, printing them all each time generated code computes it.
 
   ``fmt`` has one ``{}`` for each value, and ``{{`` and ``}}`` for literal braces. Each print ends
-  its line. A ``float64`` prints with 17 significant digits, enough to read it back exactly, an
-  integer in full and a ``bool`` as ``True`` or ``False``, and a tensor prints flat as ``[a, b, ...]``. The print is part of the returned expression, so a
+  its line. A ``float64`` prints with 17 significant digits and a ``float32`` with 9, enough to
+  read each back exactly, an integer in full and a ``bool`` as ``True`` or ``False``, and a tensor
+  prints flat as ``[a, b, ...]``. The print is part of the returned expression, so a
   function's outputs have to use it. A print they do not use raises ``ValueError`` when Scaly runs
   the function body to build its expression graph.
 

@@ -3466,6 +3466,9 @@ tests/codegen/test_name_clash.py::test_workspace_parameter_does_not_shadow_expor
 tests/codegen/test_print.py::test_c_and_python_output_stay_in_order_through_a_pipe
 tests/codegen/test_print.py::test_derivative_prints_when_it_computes_the_primal
 tests/codegen/test_print.py::test_distinct_arguments_sharing_a_buffer_are_distinct_invocations
+tests/codegen/test_print.py::test_float32_print_compiles_out
+tests/codegen/test_print.py::test_float32_print_evaluates_and_round_trips
+tests/codegen/test_print.py::test_float32_print_renders_nine_significant_digits
 tests/codegen/test_print.py::test_format_text_reaches_stdout_unchanged
 tests/codegen/test_print.py::test_identical_prints_intern_to_one
 tests/codegen/test_print.py::test_integers_print_in_full_and_bools_as_words

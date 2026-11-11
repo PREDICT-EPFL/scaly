@@ -49,6 +49,7 @@ _INTEGER_C = {r.program: r.c_integer for r in ELEMENTWISE.values() if r.c_intege
 # printf conversion and argument by dtype. 17 significant digits read a double back exactly.
 _PRINTF = {
   "float64": ("%.17g", "{}"),
+  "float32": ("%.9g", "{}"),
   "int32": ("%lld", "(long long)({})"),
   "int64": ("%lld", "(long long)({})"),
   "bool": ("%s", '(({}) ? "True" : "False")'),

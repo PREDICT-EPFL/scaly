@@ -31,6 +31,58 @@ def test_print_returns_its_value_and_prints_at_each_call(capfd) -> None:
   assert capfd.readouterr().out == "x=[0.10000000000000001, 0] k=-1\n"
 
 
+def _float32_print() -> sc.Function:
+  @sc.function(sc.arg("x", sc.TensorType((), dtype=sc.dtypes.float32)), outputs=sc.arg("y"), name="print_float32")
+  def diagnostic(x: sc.Expr) -> sc.Expr:
+    return sc.print("x={}", x)
+
+  return diagnostic
+
+
+def test_float32_print_evaluates_and_round_trips(capfd) -> None:
+  x = np.array(1.23456789, dtype=np.float32)
+  result = _float32_print()(x)
+  assert result.dtype == np.float32
+  np.testing.assert_array_equal(result, x)
+  text = capfd.readouterr().out
+  assert text == "x=1.23456788\n"
+  assert np.float32(text.removeprefix("x=")) == x
+
+
+def test_float32_print_renders_nine_significant_digits() -> None:
+  assert 'SCALY_PRINTF("x=%.9g\\n", ' in render_c_source(_float32_print())
+
+
+def test_float32_print_compiles_out(tmp_path) -> None:
+  module = render_c_module(_float32_print())
+  (tmp_path / module.header_name).write_text(module.header)
+  source = tmp_path / module.source_name
+  source.write_text(module.source)
+  main = tmp_path / "main.c"
+  main.write_text(
+    """
+#include "print_float32.h"
+
+int main(void) {
+  print_float32_x_t x = {{1.23456789f}};
+  print_float32_y_t y = {{0}};
+  int err = print_float32_call(&x, &y, NULL);
+  if (err) return err;
+  return y.data[0] != x.data[0];
+}
+"""
+  )
+  exe = tmp_path / "main"
+  compiler = find_c_compiler()
+  assert compiler is not None
+  subprocess.run(
+    [*compiler.command, "-std=c11", "-Wall", "-Wextra", "-Werror", "-DSCALY_PRINTF(...)=", str(main), str(source), "-lm", "-o", str(exe)],
+    check=True,
+    cwd=tmp_path,
+  )
+  assert subprocess.run([str(exe)], check=True, capture_output=True, text=True).stdout == ""
+
+
 def test_c_and_python_output_stay_in_order_through_a_pipe() -> None:
   """Through a pipe both stdouts buffer whole blocks, so the order holds only because the JIT flushes both."""
   script = """
