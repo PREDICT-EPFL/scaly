@@ -136,3 +136,127 @@ def test_sparse_siblings_preserve_each_declared_layout(length) -> None:
   assert len(calls) == int(length != 0)
   if calls:
     assert calls[0].attrs["n_out"] == 3
+
+
+def test_small_static_loop_unrolls_and_block_hint_keeps_it_rolled() -> None:
+  @sc.function(sc.arg("c", ()))
+  def step(c):
+    return c * 1.25 + 0.1
+
+  def build(hint):
+    x = sc.sym("x")
+    c, _ = sc.scan(step, x, length=3)
+    return ConcreteFunction._from_exprs("static_loop", [x], [c.with_lowering(hint)], ["x"], ["y"])
+
+  expanded, rolled = build("auto"), build("block")
+  assert not any(n.op == ProgramOp.FOR and n.args[0].attrs.get("carried") for n in walk_program(_lowered_main(expanded)))
+  assert any(n.op == ProgramOp.FOR and n.args[0].attrs.get("carried") for n in walk_program(_lowered_main(rolled)))
+  assert expanded(np.array(0.3)).tobytes() == rolled(np.array(0.3)).tobytes()
+
+
+def _static_scan(step, length, hint="auto", *, reverse=False, trip=None):
+  x = sc.sym("x", as_concrete(step).inputs[0].shape)
+  c, _ = sc.scan(step, x, length=length, reverse=reverse, trip=trip)
+  return ConcreteFunction._from_exprs("static_scan", [x], [c.with_lowering(hint)], ["x"], ["y"])
+
+
+def _has_carried_loop(fun):
+  return any(n.op == ProgramOp.FOR and n.args[0].attrs.get("carried") for n in walk_program(_lowered_main(fun)))
+
+
+def test_static_loop_budget_boundary_and_scalar_override(monkeypatch) -> None:
+  from scaly.passes.lowering import calls
+
+  @sc.function(sc.arg("c", ()))
+  def step(c):
+    return c * 1.25 + 0.1
+
+  raw = _lowered_main(step)
+  cost = calls._loop_cost(raw, {})
+  assert cost is not None and cost > 0
+  monkeypatch.setattr(calls, "STATIC_LOOP_BUDGET", 3 * cost)
+  assert not _has_carried_loop(_static_scan(step, 3))
+  assert _has_carried_loop(_static_scan(step, 4))
+  assert not _has_carried_loop(_static_scan(step, 4, "scalar"))
+  assert _has_carried_loop(_static_scan(step, 1, "block"))
+  assert _has_carried_loop(_static_scan(step, 1, "opaque"))
+  assert _has_carried_loop(_static_scan(step, 1, "scalar", trip=sc.const(np.int64(1))))
+
+
+def test_budget_counts_all_solve_rhs_and_nested_loop_iterations() -> None:
+  from scaly.ir import program as p
+  from scaly.passes.lowering.calls import _loop_cost
+
+  rhs = p.buffer("rhs", sc.dtypes.float64, (100, 8))
+  solve = p.proc("solve", [rhs], [p.for_(p.range_("row", 0, 8), [p.store(p.view(rhs, [p.var("row")]), p.const_float(1.0))])])
+  many_rhs = p.proc(
+    "many_rhs",
+    [rhs],
+    [p.for_(p.range_("seed", 0, 100), [p.call("solve", [rhs])])],
+  )
+  assert _loop_cost(solve, {}) == 8
+  assert _loop_cost(many_rhs, {"solve": solve}) == 800
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_unrolling_preserves_reduction_order_bitwise(reverse) -> None:
+  @sc.function(sc.arg("c", 3))
+  def step(c):
+    return sc.stack([c.sum(), c[1] * 0.5, c[2] + 0.125])
+
+  expanded = _static_scan(step, 5, "scalar", reverse=reverse)
+  rolled = _static_scan(step, 5, "block", reverse=reverse)
+  for x in (np.array([1e16, 1.0, -1e16]), np.array([0.1, -0.2, 0.3]), np.array([-0.0, 0.0, -0.0])):
+    assert expanded(x).tobytes() == rolled(x).tobytes()
+
+
+def test_small_static_triangle_folds_masked_terms() -> None:
+  from scaly.codegen import render_c_source
+
+  @sc.function(sc.arg("c", 4), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
+  def step(c, j):
+    return c + sc.where(sc.const(np.arange(4, dtype=np.int64)) < j, c.sin(), 0.0)
+
+  x = sc.sym("x", 4)
+  y, _ = sc.scan(step, x, length=3, index=True)
+  expanded = ConcreteFunction._from_exprs("triangle", [x], [y], ["x"], ["y"])
+  rolled = ConcreteFunction._from_exprs("triangle", [x], [y.block()], ["x"], ["y"])
+  assert not _has_carried_loop(expanded)
+  source = render_c_source(expanded)
+  assert " ? " not in source and "i_loop" not in source
+  assert source.count("sin(") == 3
+  v = np.array([0.1, 0.2, 0.3, 0.4])
+  assert expanded(v).tobytes() == rolled(v).tobytes()
+
+
+def test_nested_scan_work_is_included_in_outer_budget() -> None:
+  @sc.function(sc.arg("c", 8))
+  def rhs(c):
+    return c.sin() + c
+
+  @sc.function(sc.arg("c", 8))
+  def solve_many(c):
+    value, _ = sc.scan(rhs, c, length=100)
+    return value
+
+  auto = _static_scan(solve_many, 2)
+  assert _has_carried_loop(auto)
+  x = np.linspace(-0.1, 0.1, 8)
+  np.testing.assert_array_equal(auto(x), _static_scan(solve_many, 2, "block")(x))
+
+
+def test_condition_and_narrow_store_prevent_expansion() -> None:
+  @sc.function(sc.arg("c", ()))
+  def step(c):
+    return (c.cast(sc.dtypes.float32) + sc.const(np.float32(0.1))).cast(sc.dtypes.float64)
+
+  assert _has_carried_loop(_static_scan(step, 2, "scalar"))
+
+  @sc.function(sc.arg("c", ()))
+  def cond(c):
+    return c < 2.0
+
+  x = sc.sym("x")
+  y, _ = sc.while_loop(cond, step, x, max_iter=2)
+  fn = ConcreteFunction._from_exprs("conditional", [x], [y.scalar()], ["x"], ["y"])
+  assert _has_carried_loop(fn)

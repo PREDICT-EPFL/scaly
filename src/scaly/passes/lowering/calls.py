@@ -6,10 +6,16 @@ import numpy as np
 
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp, invocation_key
-from ...ir.program import ProgramNode, ProgramOp, RangeKind
+from ...ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
 from ...ir.types import DType, dtypes
 from ...function.concrete import ConcreteFunction
+from ..program.scalarize import _Frame, _Pointer
+from ..program.scheduling import ScalarNameAllocator, schedule_values
+from ..arith import constant
 from .ctx import LowerCtx, LoweringError, lowers, _lower_to_proc
+
+
+STATIC_LOOP_BUDGET = 256
 
 
 def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction) -> None:
@@ -157,6 +163,8 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
   (``j + 1`` in reverse), when its trajectory is used. Stacked outputs and trajectory slots past
   the trip count are zeroed only when a condition or a trip operand can end the loop early.
   """
+  before_loop = len(ctx.statements)
+  existing_buffers = tuple(ctx.buffers.values())
   callee: ConcreteFunction = node.attrs["callee"]
   cond: ConcreteFunction | None = node.attrs["cond"]
   n_carry, length, index, reverse = node.attrs["n_carry"], node.attrs["length"], node.attrs["index"], node.attrs["reverse"]
@@ -267,6 +275,76 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
         start = p.add(p.const_int(offset), p.mul(taken, p.const_int(type_.storage_size)))
         stop = offset + length * type_.storage_size
         ctx.statements.append(p.for_(p.range_(e, start, stop), [p.store(p.view(buf, [p.var(e)]), _zero(type_.dtype))]))
+
+  hints = {sibling.lowering for sibling in used.values()}
+  if not early and not hints & {"block", "opaque"}:
+    procs = {proc.attrs["name"]: proc for proc in ctx.callees.values()}
+    proc = ctx.callees.get(callee)
+    cost = None if proc is None else _loop_cost(proc, procs)
+    if cost is not None and ("scalar" in hints or length * cost <= STATIC_LOOP_BUDGET):
+      body = ctx.statements[before_loop:]
+      referenced = {n.attrs["buffer"] for stmt in body for n in walk_program(stmt) if n.op == ProgramOp.VIEW}
+      params = [buf for buf in existing_buffers if buf.attrs["name"] in referenced]
+      proc = p.proc("static_loop", params, body)
+      pointers = [
+        _Pointer([constant(v, buf.dtype) for v in buf.attrs["values"]])
+        if "values" in buf.attrs
+        else _Pointer([p.load(p.view(buf, [p.const_int(i)])) for i in range(int(np.prod(buf.attrs["shape"])))])
+        for buf in params
+      ]
+      frame = _Frame(proc, pointers, procs, {})
+      frame.run(tuple(body))
+      targets, values = [], []
+      for sibling in used.values():
+        if not sibling.type.storage_size:
+          continue
+        buf = ctx.raw_buf_of(sibling)
+        ptr = frame.buffers[buf.attrs["name"]]
+        for at in range(sibling.type.storage_size):
+          value = ptr.values[ptr.offset + at]
+          assert value is not None
+          targets.append(p.view(buf, [p.const_int(at)]))
+          values.append(value)
+      occupied = set()
+      scope = ctx.names
+      while scope is not None:
+        occupied.update(scope.occupied)
+        scope = scope.parent
+      names = ScalarNameAllocator(occupied)
+      declarations, values = schedule_values(values, names)
+      ctx.names.occupied.update(names.scope.occupied)
+      ctx.statements[before_loop:] = [
+        *(stmt for stmt in body if stmt.op == ProgramOp.BUFFER),
+        *declarations,
+        *(p.store(target, value) for target, value in zip(targets, values, strict=True)),
+      ]
+
+
+def _loop_cost(proc: ProgramNode, procs: dict[str, ProgramNode]) -> int | None:
+  total = 0
+  stack = [(stmt, 1) for stmt in proc.args[proc.attrs["param_count"] :]]
+  while stack:
+    stmt, factor = stack.pop()
+    if stmt.dtype is not None and stmt.dtype not in (dtypes.float64, dtypes.int64, dtypes.bool_):
+      return None
+    if stmt.op == ProgramOp.CALL:
+      callee = procs.get(stmt.attrs["callee"])
+      if callee is None:
+        return None
+      stack.extend((child, factor) for child in callee.args[callee.attrs["param_count"] :])
+    elif stmt.op == ProgramOp.FOR:
+      rng = stmt.args[0]
+      if any(arg.op != ProgramOp.CONST_INT for arg in rng.args):
+        return None
+      start, stop, step = (arg.attrs["value"] for arg in rng.args)
+      if step <= 0:
+        return None
+      stack.extend((child, factor * len(range(start, stop, step))) for child in stmt.args[1:])
+    elif stmt.op in (ProgramOp.STORE, ProgramOp.ASSIGN):
+      total += factor
+    elif stmt.op != ProgramOp.BUFFER:
+      return None
+  return max(1, total)
 
 
 def _call(ctx: LowerCtx, fn: ConcreteFunction, ins: list[ProgramNode], outs: list[ProgramNode]) -> ProgramNode:
