@@ -270,4 +270,6 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
 
 
 def _call(ctx: LowerCtx, fn: ConcreteFunction, ins: list[ProgramNode], outs: list[ProgramNode]) -> ProgramNode:
-  return ProgramNode(ProgramOp.CALL, (*ins, *outs), attrs={"callee": ctx.symbols[fn], "n_in": len(ins), "n_out": len(outs), "returns": ()})
+  return ProgramNode(
+    ProgramOp.CALL, (*ins, *outs), attrs={"callee": ctx.symbols[fn], "n_in": len(ins), "n_out": len(outs), "returns": ()}, dtype=dtypes.float64
+  )
