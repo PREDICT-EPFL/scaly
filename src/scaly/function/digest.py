@@ -113,7 +113,7 @@ class _Walk:
     elif isinstance(v, enum.Enum):
       self.put(b"M", self.named(kind))
       self.value(v.value)
-    elif dataclasses.is_dataclass(kind) and kind.__dataclass_params__.frozen:  # type: ignore[attr-defined]
+    elif dataclasses.is_dataclass(v) and not isinstance(v, type) and kind.__dataclass_params__.frozen:  # type: ignore[attr-defined]
       self.put(b"O", self.named(kind))
       for field in dataclasses.fields(v):
         if field.compare and field.init:  # a field its class keeps out of its value or computes is state, such as a cache
