@@ -7,6 +7,7 @@ import numpy as np
 from ...ad.rules import ELEMENTWISE
 from ...ir.expr import Expr, ExprOp, _index_values
 from ...function.concrete import ConcreteFunction
+from ...ir.types import dtypes
 
 
 def index_batches(nodes: tuple[Expr, ...], length: int, step: Expr | None) -> dict[int, np.ndarray]:
@@ -33,12 +34,16 @@ def _indices(node: Expr, batches: dict[int, np.ndarray], length: int) -> np.ndar
   base, index = node.args[:2]
   if index.value is not None:
     return np.broadcast_to(_index_values(node).reshape(1, -1), (length, node.args[2].size if node.op == ExprOp.SCATTER else node.size))
-  if index.id not in batches or node.attrs.get("axis") is not None:
+  if index.id not in batches:
     return None
   entries = batches[index.id].reshape(length, index.size)
-  if node.attrs.get("mode") == "clip":
-    entries = np.clip(entries, 0, base.size - 1)
-  return entries
+  axis = node.attrs.get("axis")
+  if axis is None:
+    return entries
+  before = int(np.prod(base.shape[:axis]))
+  after = int(np.prod(base.shape[axis + 1 :]))
+  addresses = (np.arange(before)[None, :, None, None] * base.shape[axis] + entries[:, None, :, None]) * after + np.arange(after)[None, None, None, :]
+  return addresses.reshape(length, before * index.size * after)
 
 
 def _reads(node: Expr, operand: Expr, batches: dict[int, np.ndarray], length: int) -> np.ndarray | None:
@@ -151,6 +156,8 @@ def same_index_sources(fun: ConcreteFunction, scatter: Expr) -> set[Expr]:
 
   def visit(node: Expr) -> bool:
     nonlocal found
+    if node.type.dtype not in (dtypes.float64, dtypes.int64, dtypes.bool_):
+      return False
     if node.op == ExprOp.CONST:
       return True
     if node in fun.outputs or any(node in other.args for other in nodes if other is not scatter and other not in selected):
@@ -177,6 +184,11 @@ def fused_value(ctx, node: Expr, scatter: Expr, position, address):
   if node.op == ExprOp.GATHER:
     return p.load(p.view(ctx.buf_of(scatter.args[0]), [address]))
   if node.op == ExprOp.CONST:
-    return p.load(p.view(ctx.buf_of(node), [p.const_int(0) if node.size == 1 else position]))
+    from .ctx import _flat_coordinates
+
+    coords = _flat_coordinates(position, scatter.args[2].shape)
+    return ctx.read(
+      node, [coord if dim != 1 else p.const_int(0) for coord, dim in zip(coords[len(coords) - len(node.shape) :], node.shape, strict=True)]
+    )
   op = ProgramOp.CAST if node.op == ExprOp.CAST else ELEMENTWISE[ExprOp(node.op)].program
   return ProgramNode(op, tuple(fused_value(ctx, arg, scatter, position, address) for arg in node.args), dtype=node.type.dtype)

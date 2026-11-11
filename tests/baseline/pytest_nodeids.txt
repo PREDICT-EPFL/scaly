@@ -4983,6 +4983,7 @@ tests/passes/lowering/test_ctx.py::test_non_float64_leaves_refused[input-float32
 tests/passes/lowering/test_ctx.py::test_non_float64_leaves_refused[output-float32]
 tests/passes/lowering/test_in_place.py::test_alias_created_before_update_is_read_after_it
 tests/passes/lowering/test_in_place.py::test_disjoint_later_read
+tests/passes/lowering/test_in_place.py::test_disjoint_runtime_axis_indices
 tests/passes/lowering/test_in_place.py::test_floor_reads_old_entries
 tests/passes/lowering/test_in_place.py::test_floor_regression_numpy_result
 tests/passes/lowering/test_in_place.py::test_inout_parameter_and_call_contract
@@ -4997,6 +4998,7 @@ tests/passes/lowering/test_in_place.py::test_lengths_and_reverse_preserve_input[
 tests/passes/lowering/test_in_place.py::test_overlapping_later_gather_refuses
 tests/passes/lowering/test_in_place.py::test_repeated_same_indices_materialize_before_writing
 tests/passes/lowering/test_in_place.py::test_returning_old_carry_refuses
+tests/passes/lowering/test_in_place.py::test_same_index_matrix_broadcast
 tests/passes/lowering/test_in_place.py::test_same_runtime_index
 tests/passes/lowering/test_in_place.py::test_scatter_keeps_a_live_private_base
 tests/passes/lowering/test_in_place.py::test_scatter_reuses_a_dead_private_base

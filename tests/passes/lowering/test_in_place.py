@@ -272,3 +272,28 @@ def test_floor_regression_numpy_result():
   expected[0] = initial[1]
   expected[0] = np.floor(initial[0]) + 0.5
   np.testing.assert_array_equal(run(initial), expected)
+
+
+def test_same_index_matrix_broadcast():
+  @sc.function(sc.arg("carry", (2, 4)))
+  def step(carry):
+    return sc.scatter(carry, [0, 2], sc.gather(carry, [0, 2], axis=1) + sc.const([[1.0], [2.0]]), axis=1, combine="set")
+
+  fn = _loop(step, (2, 4))
+  expected = np.arange(8.0).reshape(2, 4)
+  for _ in range(3):
+    expected[:, [0, 2]] += [[1], [2]]
+  np.testing.assert_array_equal(fn(np.arange(8.0).reshape(2, 4)), expected)
+
+
+def test_disjoint_runtime_axis_indices():
+  @sc.function(sc.arg("carry", (2, 8)), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
+  def step(carry, j):
+    first = sc.scatter(carry, j, sc.gather(carry, j, axis=1) + 1, axis=1, combine="set")
+    return sc.scatter(first, j + 4, sc.gather(carry, j + 4, axis=1) + 2, axis=1, combine="set")
+
+  fn = _loop(step, (2, 8), index=True)
+  expected = np.arange(16.0).reshape(2, 8)
+  expected[:, :3] += 1
+  expected[:, 4:7] += 2
+  np.testing.assert_array_equal(fn(np.arange(16.0).reshape(2, 8)), expected)

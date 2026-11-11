@@ -23,7 +23,7 @@ def verify_program(root: ProgramNode, spec: "Spec | None" = None) -> None:
   if root.op == ProgramOp.PROGRAM:
     procs = {proc.attrs["name"]: proc for proc in root.args}
     for call in walk_program(root):
-      if call.op != ProgramOp.CALL or call.attrs["callee"] not in procs:
+      if call.op != ProgramOp.CALL or call.attrs.get("callee") not in procs:
         continue
       callee = procs[call.attrs["callee"]]
       expected = tuple(k for k, param in enumerate(callee.args[: callee.attrs["param_count"]]) if param.attrs.get("intent") == "inout")
