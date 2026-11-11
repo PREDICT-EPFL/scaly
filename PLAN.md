@@ -1,46 +1,61 @@
 # Select masks in mapped adjoints and forward products
 
-Implements #364 and #414 under `internal/notes/compiler_run_2026_11_10/plan.md`,
-section 4 (#24), on origin/main. The run plan and `~/.scaly-suite/RULES.md` override
-the ordinary implement workflow. Read PR #358 before extending its helper protocol.
-Activity comes from select conditions, never cotangent or tangent values.
+Automatic differentiation (AD) work for #364 and its folded-in #414, under
+`internal/notes/compiler_run_2026_11_10/plan.md`, section 4 (#24). PR #434 is draft,
+based on main after #358. Its original pushed state passed the full merge hook.
+Review fixes are local and must be pushed together after their checks.
 
-- [x] Read both issues, #358, the run rules, architecture, conventions and compiler decisions.
-- [x] Reproduce both failures with differential regressions, including higher derivatives at a
-      zero cotangent and runtime/baked/multiple forward seeds.
-- [x] Return masks introduced inside mapped adjoints, preserving helpers without masks.
-- [x] Preserve selected forward tangents through downstream singular partials and nested selects.
-- [ ] Check sparse/shared/overlapping mapped inputs, finite differences and singular boundaries.
-      Include `sqrt(maximum(x, 0))` after #65 lands; its rules are outside this change.
-- [x] Update the functions guide and `where` docstring using write-docs.
-- [x] Prove regression gates fail under perturbation and generated C without selects is identical.
-- [ ] Run the full pre-merge hook detached through the suite queue, then push one reviewed state.
-- [ ] Get Opus's thorough cross-review plus the required independent correctness review; fix and
-      confirm only review deltas. Delete this temporary plan before making the PR ready.
-- [ ] Queue the single PR closing both issues after its verdict, watch through merge and report.
+The scope includes forward helper inputs and outputs, also recorded in #432.
+Derive activity from select conditions, never numerical tangent or cotangent values.
+Keep C without selects byte-identical. Do not change #65's nonsmooth rules or LOOP masks.
 
-Nearby PRs #368, #361, #405 and #408 can require conflict resolution. Do not rebase merely
-because main moved. No changes to LOOP, nonsmooth conventions or other children's scope.
+## Remaining work
 
-Evidence before full checks: 1,467 focused AD/differential/snapshot tests pass. Restoring the
-original AD modules makes 26 of the new cases fail. Six C/header files for inline, called and
-mapped gradients without selects are byte-identical to origin/main. Proof files are in
-`/tmp/scaly-364-proof-0cqs9ig2/`. Types and Ruff pass. #408 is still open and conflicted,
-so the maximum regression needs its final integration after #65 lands. No code from #65 copied.
+- [x] Reproduce both reports and the correctness review's nine failures.
+- [x] Keep full nested conditions in sums and simplify mapped adjoints before extracting activity.
+- [x] Preserve sparse masks through packing, movement and assembly.
+- [x] Keep the stable single-division contraction for masked quotients.
+- [x] Carry selected activity through matrix products using constant coefficient support.
+- [x] Carry masks through ordinary and mapped forward helpers, including baked/periodic/colored
+      seeds, shared helper packing, unused formals and second derivatives at a zero tangent.
+- [x] Update the guide and where docstring for forward calls. #432 belongs in this PR's closing refs.
+- [ ] Integrate #65 after PR #408 merges. The two maximum regressions are already added but
+      currently fail because this base has no maximum derivative. Remove the obsolete forward
+      maximum limitation that #408 adds to docs/guide/derivatives.md. Preserve #65's conventions.
+- [ ] Run the final full pre-merge hook detached through ~/.scaly-suite/run, on the state to push.
+- [ ] Get the required fresh full Opus review at xhigh, fix its findings and confirm only its delta.
+      Its first attempt never reviewed due to quota, resets 12:30 Europe/Zurich on Nov 11.
+- [ ] Confirm the Sol correctness findings with one fresh low-effort delta task against the
+      originally reviewed PR head, covering the fixes only. Do not request a second full Sol review.
+- [ ] Delete this temporary plan, push the combined fixes, update the PR's evidence and verdict
+      line, mark ready, update issue status, and queue with gh pr merge 434 --squash --auto.
+- [ ] Watch to merge, report an ejection immediately, and settle completed review threads.
 
-Further focused checks cover broadcasts, stacks and concatenations, and pin the dtype of a
-masked cast. Their failures were reproduced before their fixes. The last focused snapshot run
-passed all 87 cases. Forward tangent conditions crossing call boundaries are a distinct helper
-protocol change, filed as #432 and documented as a remaining limit. An optional scope question
-was sent to the coordinator; absent an answer, keep this PR at the two locations in its brief.
+## Evidence and review state
 
-The first full hook ran 5,366 cases: 5,309 passed, 56 skipped, and the operation-coverage gate
-failed because the shared tangent routine named CAST and SELECT. Moved those choices into the
-existing table rules and shared their partial sum. The unchanged coverage gate, select regressions
-and C snapshots now pass together (88 cases); Ruff, types and the six-file C comparison pass too.
-The next full hook uses a fresh queue ticket because the first run consumed its slot.
+- First pushed state: full hook exit 0, 5,310 passed and 56 skipped; benchmark smoke, docs,
+  private-name check, Ruff and ty passed. Log /tmp/scaly-364-suite-pBCJnx/recheck.log.
+- Local review fixes: 2,164 AD/coverage/snapshot checks passed, excluding the two maximum cases
+  that need #65. Log /tmp/scaly-364-ad-review-fixes-final.log. All 116 available select cases,
+  including second-forward derivatives, pass. Ruff, ty and the documentation build pass.
+- Six C/header files for inline, ordinary-call and mapped gradients without selects still match
+  the base byte for byte. Proof directory /tmp/scaly-364-proof-0cqs9ig2/.
+- Restoring the original AD modules failed 26 early regressions; all nine review reproductions
+  were observed failing and now pass. New sparse, quotient, boundary, cache and zero-formal
+  cases are in tests/ad/test_select_derivatives.py.
+- Replacing condition-based activity with numerical nonzero activity made both higher-order
+  regressions fail: the mapped zero-cotangent Hessian and the called zero-tangent second-forward
+  derivative. Restoring condition-based activity passed both. The perturbation was in memory
+  only and left no source changes.
+- Sol's full correctness review returned changes needed. Its seven findings are fixed except
+  maximum integration. Its thread was settled. The original Opus quota-failed attempt was
+  cancelled and settled because its brief was obsolete; a new task must review the final fixes.
+- GitHub reads use REST. Push rarely. PR #434 is already linked and watched in this thread.
 
-The fresh full merge hook passed through the shared runner, exit 0, with 5,310 tests passing
-and 56 skips. Benchmark smoke, documentation build and the private-name check also passed.
-Log: `/tmp/scaly-364-suite-pBCJnx/recheck.log`. The latest origin/main merges cleanly into this
-branch, so do not rebase merely to catch up. #65/#408 is still needed for the maximum criterion.
+## Follow-up
+
+#435 is a separate reverse matrix-product bug, also reproducible without a select:
+sqrt(x @ [[0, 1], [0, 1]]).sum() at x=[1, 4] has a finite derivative but NaN gradients.
+Changing that unmasked contraction would violate this task's C-preservation scope. It is
+labelled source:agent and documented in the derivatives guide. Forward selected-activity tests
+for zero coefficients compare against finite differences; nonzero coefficients retain duality checks.

@@ -288,15 +288,11 @@ arguments. Mapping a function that returns `sc.where(u > 0.0, u, 0.0)` over
 `x.sqrt()` gives gradient `[0.0, 0.25]` at `x = [0.0, 4.0]` after summing the
 mapped values.
 
-In forward mode, a selected zero tangent stays zero through later elementwise
-derivatives. For example, `sc.where(x > 0.0, x, 0.0).sqrt()` has derivative zero
-at `x = -1`, although the square root's partial derivative is infinite at zero.
-
-!!! warning "Forward derivatives across calls"
-    Forward mode loses a selected tangent's condition when it passes into or
-    returns from a `Function` call. With `root` returning `sqrt`,
-    `root(sc.where(x > 0.0, x, 0.0))` can still have a NaN forward derivative at
-    `x = -1`. Keep the select and the later singular operation in the same body.
+In forward mode, a selected zero tangent stays zero through later partial
+derivatives, including across ordinary and mapped calls. For example,
+`sc.where(x > 0.0, x, 0.0).sqrt()` has derivative zero at `x = -1`, although the
+square root's partial derivative is infinite at zero. The same holds for
+`root(sc.where(x > 0.0, x, 0.0))`.
 
 ### Supported array operations
 

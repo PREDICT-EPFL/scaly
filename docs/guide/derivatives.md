@@ -450,4 +450,8 @@ storage can therefore grow with the dense size, even for diagonal inputs.
 Comparisons, `sc.isfinite` and casts to integer or `bool` types have no
 derivative, and a gradient of an integer or `bool` value raises `TypeError`.
 
+Reverse matrix products can propagate a nonfinite partial through a zero
+coefficient. A zero column followed by `sqrt` can therefore give a NaN gradient
+even when the composed function has a finite derivative.
+
 See [How differentiation works](../how_it_works/autodiff.md) for the algorithms.

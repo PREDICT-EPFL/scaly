@@ -1216,9 +1216,8 @@ def where(condition: Any, x: Any, y: Any) -> Expr:
   including when a ``Function`` or ``vmap`` computes the square root. The condition has no derivative.
   Custom reverse rules receive zero cotangents on unchosen entries and must return finite results
   there. A select inside a mapped ``Function`` also guards derivatives of the map's arguments.
-  A selected zero tangent guards later elementwise partials: ``sqrt(where(x > 0, x, 0))`` has
-  derivative zero at ``x = -1`` in both modes.
-  Forward mode does not carry tangent conditions into or out of a ``Function`` call.
+  A selected zero tangent guards later partials, including through ordinary and mapped calls:
+  ``sqrt(where(x > 0, x, 0))`` has derivative zero at ``x = -1`` in both modes.
   """
   condition = _condition(condition)
   x, y = _operands(x, y)
