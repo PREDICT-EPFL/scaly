@@ -190,6 +190,7 @@ class _JacContext:
   support_of: Callable[[Expr], Support] = lambda node: node.support
   specializations: dict[Callable[[Expr], Support], _JacContext] = field(default_factory=dict)
   calls: dict[Expr, list[tuple[np.ndarray, _JacContext]]] = field(default_factory=dict)
+  conditional_calls: dict[Expr, tuple[Expr, ...]] = field(default_factory=dict)
 
 
 def _call_contexts(expr: Expr, context: _JacContext) -> list[tuple[np.ndarray, _JacContext]]:
@@ -240,7 +241,7 @@ def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_arra
         stack.extend((arg, variable, 0, context) for arg in reversed(node.args) if (arg.id, variable.id) not in masks)
     elif phase == 1 and node.op == ExprOp.COND:
       stack.append((node, variable, 2, context))
-      stack.extend((call, variable, 0, context) for call in _cond_calls(node))
+      stack.extend((call, variable, 0, context) for call in _cond_calls(node, context))
     elif phase == 1 and callees_of(node) and node.op not in (ExprOp.EXTERN, ExprOp.LOOP):
       stack.append((node, variable, 2, context))
       callee = node.attrs["callee"]
@@ -341,7 +342,7 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_a
     return ret
   if expr.op == ExprOp.COND:
     result = _empty((expr.size, wrt.size))
-    for call in _cond_calls(expr):
+    for call in _cond_calls(expr, memo):
       result = _or(result, _jac_mask(call, wrt, memo))
     return result
   if expr.op == ExprOp.LOOP:
@@ -501,11 +502,13 @@ def _callee_mask(callee: Any, output: int, k: int, memo: dict[tuple[int, int], s
   return _incidence(pattern.shape, rows[keep], cols[keep])
 
 
-def _cond_calls(expr: Expr) -> tuple[Expr, ...]:
-  return tuple(
-    Expr(ExprOp.CALL, expr.args[1:], branch.outputs[expr.attrs["output"]].type, attrs={"callee": branch, "output": expr.attrs["output"]})
-    for branch in expr.attrs["branches"]
-  )
+def _cond_calls(expr: Expr, context: _JacContext) -> tuple[Expr, ...]:
+  if expr not in context.conditional_calls:
+    context.conditional_calls[expr] = tuple(
+      Expr(ExprOp.CALL, expr.args[1:], branch.outputs[expr.attrs["output"]].type, attrs={"callee": branch, "output": expr.attrs["output"]})
+      for branch in expr.attrs["branches"]
+    )
+  return context.conditional_calls[expr]
 
 
 def _call_mask(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_array:

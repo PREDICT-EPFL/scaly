@@ -140,13 +140,14 @@ def _lower_cond(ctx: LowerCtx, node: Expr) -> None:
   buffers = [
     ctx.alloc_tmp(used[i]) if i in used else ctx.new_private(out.type.dtype, out.type.storage_shape) for i, out in enumerate(branches[0].outputs)
   ]
+  operands = [ctx.buf_of(arg) for arg in node.args[1:]]
   bodies = []
   for branch in branches:
     _ensure_callee(ctx, branch)
     before = len(ctx.statements)
     ins = [
-      ctx.buf_of(arg) if layout is None else ctx.reorder(ctx.buf_of(arg), arg, layout.permutation)
-      for arg, layout in zip(node.args[1:], branch.input_tree.layouts, strict=True)
+      buf if layout is None else ctx.reorder(buf, arg, layout.permutation)
+      for buf, arg, layout in zip(operands, node.args[1:], branch.input_tree.layouts, strict=True)
     ]
     outs = [
       buf if layout is None else ctx.new_private(out.type.dtype, out.type.storage_shape)

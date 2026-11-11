@@ -3908,11 +3908,13 @@ tests/function/test_cond.py::test_both_ad_modes_match_finite_differences[0]
 tests/function/test_cond.py::test_both_ad_modes_match_finite_differences[1]
 tests/function/test_cond.py::test_both_ad_modes_match_finite_differences[2]
 tests/function/test_cond.py::test_both_ad_modes_match_finite_differences[7]
+tests/function/test_cond.py::test_both_dialects_render_conditional_calls
 tests/function/test_cond.py::test_builder_rejects_invalid_selectors_and_branches[0-branches2-tuple]
 tests/function/test_cond.py::test_builder_rejects_invalid_selectors_and_branches[0-branches3-tuple]
 tests/function/test_cond.py::test_builder_rejects_invalid_selectors_and_branches[0.0-branches0-selector]
 tests/function/test_cond.py::test_builder_rejects_invalid_selectors_and_branches[True-branches1-two branches]
 tests/function/test_cond.py::test_cond_inside_scan_and_map
+tests/function/test_cond.py::test_csc_input_is_canonical_before_either_branch
 tests/function/test_cond.py::test_custom_branch_rules_preserve_derivatives_outside_primal_support
 tests/function/test_cond.py::test_derivatives_of_a_mapped_conditional_with_multiple_operands[0.0]
 tests/function/test_cond.py::test_derivatives_of_a_mapped_conditional_with_multiple_operands[1.0]
@@ -3926,6 +3928,8 @@ tests/function/test_cond.py::test_only_selected_branch_prints
 tests/function/test_cond.py::test_only_selected_derivative_branch_recomputes_its_primal
 tests/function/test_cond.py::test_selected_multioutput_branch_runs_once
 tests/function/test_cond.py::test_sparse_branch_layouts_and_both_derivatives
+tests/function/test_cond.py::test_sparsity_of_two_conditional_calls_keeps_temporary_nodes_alive[False]
+tests/function/test_cond.py::test_sparsity_of_two_conditional_calls_keeps_temporary_nodes_alive[True]
 tests/function/test_cond.py::test_support_and_sparsity_union_specialize_all_branches
 tests/function/test_cond.py::test_verifier_rejects_mismatched_branch_results
 tests/function/test_cond.py::test_zero_operand_and_single_branch_calls

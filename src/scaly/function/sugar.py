@@ -368,6 +368,8 @@ def cond(selector: Any, branches: tuple[Function | ConcreteFunction, ...], *oper
   branches. Integer selectors clamp to ``[0, len(branches) - 1]``. Only the selected branch
   runs, including its prints. Branches must have matching input and output structures,
   shapes, dtypes and stored patterns. Results follow the first branch's output tree.
+  The selector has no derivative. Derivatives follow the selected branch; structural
+  sparsity is the union of the branches.
   """
   if not isinstance(branches, tuple) or not branches or not all(isinstance(fn, Function | ConcreteFunction) for fn in branches):
     raise TypeError("cond branches must be a nonempty tuple of scaly Functions")
@@ -390,6 +392,11 @@ def cond(selector: Any, branches: tuple[Function | ConcreteFunction, ...], *oper
       tuple(range(len(concrete[0].outputs)))
     ):
       raise ValueError("cond branches must have matching output structures")
+    if concrete and any(
+      (out.shape, out.type.dtype, out.type.pattern) != (ref.shape, ref.type.dtype, ref.type.pattern)
+      for out, ref in zip(branch.outputs, concrete[0].outputs, strict=True)
+    ):
+      raise ValueError("cond branches must have matching output shapes, dtypes and stored patterns")
     concrete.append(branch)
   assert actuals is not None
   functions = tuple(concrete)

@@ -209,7 +209,10 @@ def test_verifier_rejects_mismatched_branch_results():
   def bad(x):
     return x.sum(), x
 
-  y, _ = sc.cond(sc.sym("selector", dtype=sc.dtypes.int64), (square, bad), sc.sym("x", 3))
+  selector, x = sc.sym("selector", dtype=sc.dtypes.int64), sc.sym("x", 3)
+  with pytest.raises(ValueError, match="matching output shapes"):
+    sc.cond(selector, (square, bad), x)
+  y = sc.Expr(sc.ExprOp.COND, (selector, x), x.type, attrs={"branches": (square.instantiate(), bad.instantiate()), "output": 0})
   with pytest.raises(VerifyError, match="outputs must match"):
     sc.verify_expr(y)
 
@@ -333,3 +336,63 @@ def test_forward_does_not_differentiate_an_unused_loop_result():
   dy = sc.jvp(y, x, sc.const(1.0))
   f = ConcreteFunction._from_exprs("cond_unused_loop", [x], [dy], ["x"], ["dy"])
   np.testing.assert_allclose(f(np.array(2.0)), [4.0])
+
+
+def test_csc_input_is_canonical_before_either_branch():
+  from scipy import sparse
+  from scaly.ir.types import CanonicalPattern
+
+  pattern = CanonicalPattern((3, 3), (0, 1, 2, 2), (0, 1, 0, 2))
+  type_ = sc.TensorType((3, 3), pattern=pattern)
+
+  @sc.function(sc.arg("x", type_, layout="csr"), outputs=sc.arg("y", type_, layout="csc"))
+  def squared(x):
+    return x * x
+
+  @sc.function(sc.arg("x", type_, layout="csc"), outputs=sc.arg("y", type_, layout="csr"))
+  def doubled(x):
+    return 2 * x
+
+  @sc.function(sc.arg("s", ()), sc.arg("x", type_, layout="csc"))
+  def f(s, x):
+    y = sc.cond(s.cast(sc.dtypes.bool_), (squared, doubled), x)
+    return sc.to_dense(y), sc.to_dense(x) + sc.to_dense(y)
+
+  x = sparse.csc_array([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [3.0, 0.0, 4.0]])
+  for selector in (1.0, 0.0, 1.0):
+    expected = 2 * x.toarray() if selector else x.toarray() ** 2
+    got = f(np.array(selector), x)
+    np.testing.assert_array_equal(got[0], expected)
+    np.testing.assert_array_equal(got[1], x.toarray() + expected)
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_sparsity_of_two_conditional_calls_keeps_temporary_nodes_alive(nested):
+  @sc.function(sc.arg("i", I64), sc.arg("p", 3), sc.arg("x", 3))
+  def f(i, p, x):
+    yp, _ = sc.cond(i, (square, sine), p)
+    yx, _ = sc.cond(i, (square, sine), x)
+    return sc.concat([yp, yx])
+
+  i, p, x = sc.sym("two_cond_i", dtype=sc.dtypes.int64), sc.sym("two_cond_p", 3), sc.sym("two_cond_x", 3)
+  y = f(i, p, x) if nested else f.instantiate().outputs[0]
+  wrt = x if nested else f.instantiate().inputs[2]
+  expected = np.vstack([np.zeros((3, 3), dtype=bool), np.eye(3, dtype=bool)])
+  for _ in range(20):
+    np.testing.assert_array_equal(sc.jacobian_sparsity(y, wrt).to_mask(), expected)
+
+
+def test_both_dialects_render_conditional_calls():
+  from scaly.passes.lowering.ctx import lower_function
+  from scaly.ir.text import format_program
+
+  f = choose().instantiate()
+  expressions = sc.format_expr(f.outputs)
+  assembly = sc.render_expr_assembly(f)
+  program = lower_function(f)
+  listing = format_program(program)
+  program_assembly = sc.render_program_assembly(program)
+  assert "cond [square, sine, affine]" in expressions
+  assert 'branches=["square", "sine", "affine"]' in assembly
+  assert "if " in listing and "else:" in listing
+  assert "prog.if " in program_assembly and "} else {" in program_assembly
