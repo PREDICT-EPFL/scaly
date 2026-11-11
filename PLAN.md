@@ -67,13 +67,19 @@ Findings and evidence:
   /tmp/scaly-207/main-suite-20261111.{log,exit}. Start no further full run until the
   coordinator supplies #368's new head, then run one full suite on the combined trial.
 - Review goes to claude-fable-5-2 at high effort, replacing Opus per the updated
-  run-wide rules. No push, PR or review yet. The one-ULP failure is owned by a
+  run-wide rules. No push or PR yet. The one-ULP failure is owned by a
   separate thread and is a known la015-only failure until its fix merges.
 - The typed trial's full run finished with 6224 passed, 5 skipped and only that
   known one-ULP failure, in 392 s. It ran detached through ~/.scaly-suite/run.
   Log and status: /tmp/scaly-207/typed-suite-20261111.{log,exit}.
   The separate benchmark smoke and docs build passed. Ruff lint/format, ty,
   collection and the private-name check passed. No source snapshots changed.
+- The Fable review attempt failed before reviewing any code: Claude's 5-hour
+  usage limit, reported reset at 18:20 Europe/Zurich on November 11. It is missing,
+  not approved. Start a fresh delegate_task for the review once capacity returns,
+  using /tmp/scaly-207/review-brief.txt. No immediate retries or model substitution.
+  Reviewed candidate is the unchanged task diff on pr368; hold all pushes until
+  the coordinator confirms #368 merged and the review has been completed.
 - The symbol checker rejects malloc injected into the no-budget probe. Both Cortex-M
   probes leave only sinf/cosf undefined; the supported boolean diagnostic compiles
   without stdio or undefined symbols when SCALY_PRINTF is empty.
