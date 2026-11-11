@@ -127,8 +127,8 @@ def _select_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
     result = where(condition, zero if dx is None else dx, zero if dy is None else dy)
   masks = [None if t is None else cotangent_mask(t) for t in (dx, dy)]
   if any(mask is not None for mask in masks):
-    activity = [Expr.const(t is not None, dtype=condition.type.dtype) if mask is None else mask for t, mask in zip((dx, dy), masks, strict=True)]
-    result = where(where(condition, *activity), result, zeros_like(result))
+    branch_masks = [Expr.const(t is not None, dtype=condition.type.dtype) if mask is None else mask for t, mask in zip((dx, dy), masks, strict=True)]
+    result = where(where(condition, *branch_masks), result, zeros_like(result))
   return result
 
 
@@ -341,6 +341,8 @@ def accumulate(total: Expr, cot: Expr) -> Expr:
   a, b = _mask_of(total), _mask_of(cot)
   if a is None or b is None:
     return total + cot
+  if a[0] is b[0]:
+    return where(a[0], accumulate(a[1], b[1]), _zero(total))
   a_condition, b_condition = cotangent_mask(total), cotangent_mask(cot)
   assert a_condition is not None and b_condition is not None
   if total.type.pattern is not None:
@@ -377,8 +379,14 @@ def _mask_of(cot: Expr) -> tuple[Expr, Expr] | None:
 def cotangent_mask(cot: Expr) -> Expr | None:
   """The conjunction of the select conditions enclosing a cotangent, independent of its value."""
   condition: Expr | None = None
+  output = cot.type
   while (mask := _mask_of(cot)) is not None:
-    condition = mask[0] if condition is None else condition & mask[0]
+    if condition is None:
+      condition = mask[0]
+    elif output.pattern is None:
+      condition = condition & mask[0]
+    else:
+      condition = pack(_sample_stored(condition, output) & _sample_stored(mask[0], output), output.pattern, shape=output.shape)
     cot = mask[1]
   return condition
 
@@ -427,9 +435,7 @@ def _compact_elementwise(expr: Expr) -> Expr:
 
 
 def _sample_stored(expr: Expr, output: TensorType) -> Expr:
-  (sampled,) = carry_mask(expr, lambda e: (_sample_stored_unmasked(e, output),))
-  assert sampled is not None
-  return sampled
+  return move_mask(expr, lambda e: _sample_stored_unmasked(e, output))
 
 
 def _sample_stored_unmasked(expr: Expr, output: TensorType) -> Expr:
@@ -474,13 +480,11 @@ def _broadcast_tangent(tangent: Expr, operand: Expr, output: Expr, nseed: int) -
   if not missing:
     return tangent
 
-  def reshape(t: Expr) -> tuple[Expr]:
+  def reshape(t: Expr) -> Expr:
     compact = values(t).reshape((nseed, *(1,) * missing, *operand.type.storage_shape))
-    return (compact if t.type.pattern is None else pack(compact, t.type.pattern, shape=(nseed, *(1,) * missing, *operand.shape)),)
+    return compact if t.type.pattern is None else pack(compact, t.type.pattern, shape=(nseed, *(1,) * missing, *operand.shape))
 
-  (result,) = carry_mask(tangent, reshape)
-  assert result is not None
-  return result
+  return move_mask(tangent, reshape)
 
 
 def _unbroadcast(cot: Expr, in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> Expr:

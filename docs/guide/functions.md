@@ -283,8 +283,8 @@ gradient `[0.0, 0.25]` at `x = [0.0, 4.0]`.
 Custom reverse rules receive zero cotangents for entries the select does not
 choose and must return finite results there.
 
-A select inside a mapped `Function` also guards operations on the map's
-arguments. Mapping a function that returns `sc.where(u > 0.0, u, 0.0)` over
+In reverse mode, a select inside a mapped `Function` also guards operations on
+the map's arguments. Mapping a function that returns `sc.where(u > 0.0, u, 0.0)` over
 `x.sqrt()` gives gradient `[0.0, 0.25]` at `x = [0.0, 4.0]` after summing the
 mapped values.
 
@@ -297,8 +297,11 @@ square root's partial derivative is infinite at zero.
     Forward mode loses a selected tangent's condition when it passes into or
     returns from an ordinary or mapped `Function` call. With `root` returning
     `sqrt`, `root(sc.where(x > 0.0, x, 0.0))` can still have a NaN forward
-    derivative at `x = -1`. Keep the select and the later singular operation in
-    the same body.
+    derivative at `x = -1`. A select inside a mapped function can also lose its
+    condition when its tangent is combined with the caller's seeds. Multiple
+    forward seeds or a Jacobian for the mapped example above can therefore
+    contain NaN even though its reverse gradient is finite. For forward
+    derivatives, keep the select and the singular operation in the same body.
 
 ### Supported array operations
 

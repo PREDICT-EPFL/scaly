@@ -29,7 +29,7 @@ from ..ir.expr import (
 from ..ir.types import TensorType, dtypes
 from ..passes.expr import simplify_cse_fixpoint
 from .helpers import HelperKey, helper_name
-from .rules import _sample_stored, activity, cotangent_mask
+from .rules import _mask_of, _sample_stored, activity, cotangent_mask
 from .sparsity import _callee_mask, _depends_on, _incidence, _mask_sparsity, _prunable_support, _stored_slots, column_coloring
 
 _Pushforward = Callable[[Sequence[Expr], dict[Expr, Expr], int, str], tuple[Expr | None, ...]]
@@ -501,7 +501,7 @@ def _vmap_adj_function(
     # One concatenated result needs one dtype: float64 holds every float32 and integer cotangent exactly.
     common = grads[0].type.dtype if len({grad.type.dtype for grad in grads}) == 1 else dtypes.float64
     parts = [cast_expr(values(grad), common).vec() for grad in grads]
-    if masked or any(cotangent_mask(grad) is not None for grad in grads):
+    if masked or any(_mask_of(grad) is not None for grad in grads):
       parts.extend(cast_expr(values(activity(grad)), common).vec() for grad in grads)
     adj = callee._inherit_lowering(simplify_cse_fixpoint(concat(parts)))
     dep_memo: dict[tuple[int, int], bool] = {}

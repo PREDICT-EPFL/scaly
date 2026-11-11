@@ -28,9 +28,9 @@ from .calls import _call_jvp_many, _cond_jvp_many, _is_zero_const, _vmap_jvp_man
 from .rules import (
   ELEMENTWISE,
   Mask,
+  _mask_of,
   _masked,
   carry_masks,
-  cotangent_mask,
   move_mask,
   reduction_partial,
   times_partial,
@@ -142,7 +142,7 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
         d = [t if t is not None else _zero_tangent(arg, nseed) for arg, t in zip(args, d, strict=True)]
         if len(d) == 1:
           tangent = move_mask(d[0], lambda t: _pushforward_rule(expr, [t], nseed, callee))
-        elif expr.op == ExprOp.MATMUL and any(cotangent_mask(t) is not None for t in d):
+        elif expr.op == ExprOp.MATMUL and any(_mask_of(t) is not None for t in d):
           weights = matmul(*(_coefficient_activity(arg) for arg in args), sampled=expr.attrs.get("sampled"))
           tangent = carry_masks(
             d,

@@ -767,3 +767,61 @@ def test_selected_dot_product_keeps_activity_on_either_operand(side: str) -> Non
     expected = np.array([0.0, 0.25 if point[1] > 0 else 0.0])
     np.testing.assert_array_equal(tangent, expected.sum())
     np.testing.assert_array_equal(grad, expected)
+
+
+@pytest.mark.parametrize("form", ["sparse_vector", "sparse_matrix", "matrix_sparse", "vector_sparse", "sparse_sparse"])
+@pytest.mark.parametrize("extremum", [False, True])
+def test_nested_sparse_tangent_conditions_survive_products(form: str, extremum: bool) -> None:
+  pattern = CanonicalPattern((4, 4), (0, 1, 2, 3), (0, 1, 2, 3))
+  scale = 2 if form in {"sparse_matrix", "matrix_sparse"} else 1
+
+  def body(x: sc.Expr) -> sc.Expr:
+    inner = sc.maximum(x, 0.0) if extremum else sc.where(x > 0, x, 0.0)
+    chosen = sc.pack(sc.where(x < 5, inner, 0.0), pattern)
+    if form == "sparse_vector":
+      result = chosen @ sc.const(np.ones(4))
+    elif form == "sparse_matrix":
+      result = chosen @ sc.const(np.ones((4, 2)))
+    elif form == "matrix_sparse":
+      result = sc.const(np.ones((2, 4))) @ chosen
+    elif form == "vector_sparse":
+      result = sc.const(np.ones(4)) @ chosen
+    else:
+      result = chosen @ sc.pack(sc.const(np.ones(4)), pattern)
+    return result.sqrt().sum()
+
+  primal = sc.function(sc.arg("x", 4), outputs=sc.arg("y"), name="sd_nested_sparse_product")(body)
+
+  @sc.function(
+    sc.arg("x", 4), sc.arg("seeds", (4, 4)), outputs=sc.group(sc.arg("t"), sc.arg("runtime"), sc.arg("baked")), name="sd_nested_sparse_products"
+  )
+  def products(x: sc.Expr, seeds: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    y = body(x)
+    return sc.jvp(y, x, sc.const(np.ones(4))), sc.jvp_many(y, x, seeds), sc.jvp_many(y, x, sc.const(np.eye(4)))
+
+  for point in (np.array([1.0, 2.0, 3.0, 4.0]), np.array([-1.0, 2.0, 6.0, 4.0])):
+    active = (point > 0) & (point < 5)
+    expected = np.zeros(4)
+    expected[active] = scale * 0.5 / np.sqrt(point[active])
+    tangent, runtime, baked = (np.asarray(v) for v in products(point, np.eye(4)))
+    np.testing.assert_allclose(tangent, expected.sum(), rtol=1e-14)
+    np.testing.assert_allclose(runtime, expected, rtol=1e-14)
+    np.testing.assert_allclose(baked, expected, rtol=1e-14)
+    np.testing.assert_allclose(finite_difference(primal, point).reshape(-1), expected, rtol=1e-7, atol=1e-9)
+  point = np.array([1.0, 2.0, 3.0, 4.0])
+  np.testing.assert_allclose(np.asarray(sc.hessian(primal)(point)), np.diag(-0.25 * scale / point**1.5), rtol=1e-14)
+
+
+def test_shared_outer_mask_keeps_the_union_of_inner_mapped_conditions() -> None:
+  @sc.function(sc.arg("u", ()), outputs=sc.arg("y"), name="sd_shared_outer")
+  def stage(u: sc.Expr) -> sc.Expr:
+    return sc.where(u > -2, sc.where(u > 1, u, 0.0), 0.0) + sc.where(u > -2, sc.where(u < -1, 2 * u, 0.0), 0.0)
+
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("g"), sc.arg("h")), name="sd_shared_outer_map")
+  def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    y = sc.vmap(stage, 2)(x.sqrt()).sum()
+    return sc.gradient(y, x), sc.hessian(y, x)
+
+  grad, hess = (np.asarray(v) for v in f(np.array([0.0, 4.0])))
+  np.testing.assert_array_equal(grad, [0.0, 0.25])
+  np.testing.assert_array_equal(hess, np.diag([0.0, -1.0 / 32.0]))
