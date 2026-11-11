@@ -77,7 +77,9 @@ are explicit in the extern docstring.
 
 #357 owns reuse of compatible Linux linker namespaces. The operating system limits the number
 of live namespaces, so many linked-binary rebuilds in one process can exhaust them. The loader now
-reports its actual error. Source-only builds share one namespace. The key still preprocesses each
-source when a graph is looked up, to detect changed included headers. `_Extern` supplies the
+reports its actual error. Source-only builds share one namespace. Both the graph index and the rendered key reuse the library build fingerprint. It hashes every
+readable file below declared include directories, preprocessed sources and resolved linked-library
+contents/versions, so changes between processes miss the index. An unchanged index hit does not
+lower the graph. The key still preprocesses each source when a graph is looked up. `_Extern` supplies the
 callee metadata the compiler walks, rather than being a concrete expression graph. These last two
 choices remain implementation points for the section's later simplification pass.

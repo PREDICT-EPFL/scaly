@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from .abi import C_API_SIGNATURE, c_ident
-from .external import compile_library
+from .external import LibraryBuild, compile_library, libraries_of, prepare_library
 from .aot import _RENDER_OBSERVERS, CModule, render_c_module
 from .solver import solver_stats_symbols, solver_functions
 from ..ir.layout import DenseLayout, SparseLayout
@@ -53,7 +53,17 @@ from ..solvers.model import CSolverOption
 from ..solvers.graph import solver_backends_used
 from ..solvers.paths import SolverLibraryError, backend_compile_flags, solver_paths
 from ..solvers.stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats
-from .toolchain import BuildRecipe, Compiler, cache_root, compiler_fingerprint, find_c_compiler, native_recipe, no_gather_flags, vector_libm_flags
+from .toolchain import (
+  BuildRecipe,
+  Compiler,
+  cache_root,
+  directory_fingerprint,
+  compiler_fingerprint,
+  find_c_compiler,
+  native_recipe,
+  no_gather_flags,
+  vector_libm_flags,
+)
 from ..utils.env import ToolchainError, env, shared_lib_ext, shared_lib_flag
 
 if TYPE_CHECKING:
@@ -173,7 +183,14 @@ def _render_native(fun: ConcreteFunction, compiler: tuple[str, ...]) -> CModule:
 
 
 def _compile_command(
-  compiler: tuple[str, ...], recipe: BuildRecipe, link_flags: tuple[str, ...], source: str, output: str, objects: tuple[str, ...] = (), *, external: bool = False
+  compiler: tuple[str, ...],
+  recipe: BuildRecipe,
+  link_flags: tuple[str, ...],
+  source: str,
+  output: str,
+  objects: tuple[str, ...] = (),
+  *,
+  external: bool = False,
 ) -> list[str]:
   # Link libraries (-l in link_flags) MUST come after the source: ld defaults to --as-needed on
   # Linux, so a -lpiqpc/-lipopt placed before the object that references it is dropped (no
@@ -212,24 +229,7 @@ def solver_inputs_fingerprint(link_flags: tuple[str, ...]) -> str:
 
 @functools.cache
 def _solver_directory_fingerprint(directory: Path) -> bytes:
-  h = hashlib.sha256(os.fsencode(directory) + b"\0")
-  for root, subdirs, files in os.walk(directory, followlinks=True):
-    root_path = Path(root)
-    ancestors = {(directory / parent).resolve() for parent in root_path.relative_to(directory).parents}
-    ancestors.add(root_path.resolve())
-    subdirs[:] = sorted(name for name in subdirs if (root_path / name).resolve() not in ancestors)
-    for filename in sorted(files):
-      path = root_path / filename
-      if not path.is_file():
-        continue
-      h.update(os.fsencode(path.relative_to(directory)))
-      h.update(b"\0")
-      try:
-        with path.open("rb") as stream:
-          h.update(b"\1" + hashlib.file_digest(stream, "sha256").digest())
-      except PermissionError:
-        h.update(b"\0")
-  return h.digest()
+  return directory_fingerprint(directory)
 
 
 def _hash_parts(*parts: str) -> str:
@@ -252,11 +252,13 @@ def _compute_cache_key(source: str, *, fun_name: str, command: list[str], toolch
   return _hash_parts(_JIT_CACHE_VERSION, C_API_SIGNATURE, fun_name, source, toolchain, solver_inputs, *command)
 
 
-def _toolchain(fun: ConcreteFunction, compiler: Compiler) -> str:
+def _toolchain(fun: ConcreteFunction, compiler: Compiler, libraries: tuple[LibraryBuild, ...] = ()) -> str:
   try:
     toolchain = compiler_fingerprint(compiler.command)
   except (OSError, subprocess.CalledProcessError) as exc:
     raise JitError(f"failed to identify C compiler {shlex.join(compiler.command)!r}: {exc}") from exc
+  if libraries:
+    toolchain += ":extern:" + ":".join(build.key for build in libraries)
   if epoch := _cache_epochs.get(fun.name, 0):
     toolchain += f":{os.getpid()}:{epoch}"
   return toolchain
@@ -265,14 +267,14 @@ def _toolchain(fun: ConcreteFunction, compiler: Compiler) -> str:
 def _render_and_key(fun: ConcreteFunction, compiler: Compiler) -> tuple[CModule, str]:
   """Render ``fun`` for the host and derive its cache key, which hashes exactly the text handed to the compiler."""
   module = _render_native(fun, compiler.command)
-  toolchain = _toolchain(fun, compiler)
   try:
-    if module._library_builds:
-      toolchain += ":extern:" + ":".join(build.key for build in module._library_builds)
+    toolchain = _toolchain(fun, compiler, module._library_builds)
   except (OSError, subprocess.CalledProcessError) as exc:
     detail = (exc.stderr or exc.stdout) if isinstance(exc, subprocess.CalledProcessError) else str(exc)
     raise JitError(f"failed to prepare external libraries for {fun.name!r}: {detail}") from exc
-  command = _compile_command(compiler.command, module.recipe, module.link_flags, "module.c", "module" + shared_lib_ext(), external=bool(module._libraries))
+  command = _compile_command(
+    compiler.command, module.recipe, module.link_flags, "module.c", "module" + shared_lib_ext(), external=bool(module._libraries)
+  )
   solver_inputs = solver_inputs_fingerprint(module.link_flags) if module.backends else ""
   return module, _compute_cache_key(module.body, fun_name=fun.name, command=command, toolchain=toolchain, solver_inputs=solver_inputs)
 
@@ -298,13 +300,14 @@ def _index_key(fun: ConcreteFunction, compiler: Compiler) -> str | None:
   recipe = _host_recipe(compiler.command)
   backends = solver_backends_used(fun)
   try:
-    link_flags = (*backend_compile_flags(backends), *recipe.link_flags)
-  except SolverLibraryError:
+    libraries = tuple(prepare_library(library, compiler.command) for library in libraries_of(fun))
+    link_flags = (*backend_compile_flags(backends), *recipe.link_flags, *(flag for library in libraries for flag in library.link_flags))
+  except (SolverLibraryError, OSError, subprocess.CalledProcessError):
     return None  # rendering says what is missing
-  command = _compile_command(compiler.command, recipe, link_flags, "module.c", "module" + shared_lib_ext())
+  command = _compile_command(compiler.command, recipe, link_flags, "module.c", "module" + shared_lib_ext(), external=bool(libraries))
   solver_inputs = solver_inputs_fingerprint(link_flags) if backends else ""
   libc = platform.libc_ver() if recipe.vector_libm == "glibc" else ()
-  toolchain = _toolchain(fun, compiler)
+  toolchain = _toolchain(fun, compiler, libraries)
   return _hash_parts(_JIT_CACHE_VERSION, C_API_SIGNATURE, _scaly_version(), source, graph, repr(recipe), toolchain, solver_inputs, *libc, *command)
 
 
@@ -346,7 +349,12 @@ def _index_read(index: str) -> _Artifact | None:
   """The artifact the index names for ``index``, or None when it has no entry."""
   try:
     entry = json.loads(_index_path(index).read_text())
-    return _Artifact(lib_path=cache_root() / entry.pop("library"), flags=tuple(entry.pop("flags")), **entry)
+    return _Artifact(
+      lib_path=cache_root() / entry.pop("library"),
+      flags=tuple(entry.pop("flags")),
+      namespace=tuple(entry.pop("namespace")),
+      **entry,
+    )
   except (OSError, ValueError, KeyError, TypeError, AttributeError):
     return None
 
@@ -441,7 +449,9 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
     try:
       objects = tuple(obj for build in module._library_builds for obj in compile_library(build, compiler.command))
       subprocess.run(
-        _compile_command(compiler.command, module.recipe, module.link_flags, source_path.as_posix(), tmp_lib.as_posix(), objects, external=bool(module._libraries)),
+        _compile_command(
+          compiler.command, module.recipe, module.link_flags, source_path.as_posix(), tmp_lib.as_posix(), objects, external=bool(module._libraries)
+        ),
         cwd=tempfile.gettempdir(),
         check=True,
         capture_output=True,

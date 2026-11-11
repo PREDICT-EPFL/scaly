@@ -108,9 +108,11 @@ def test_manifest_consumer_compiles_each_translation_unit_and_links(tmp_path):
 
 
 def test_an_included_header_changes_library_and_jit_keys(isolated_cache):
-  header = isolated_cache / "value.h"
+  include = isolated_cache / "include"
+  include.mkdir()
+  header = include / "value.h"
   header.write_text("#define LOCAL_ONLY 2\n")
-  library = sc.CLibrary("included", sources={"included.c": '#include "value.h"\n' + SOURCE}, include_dirs=(str(isolated_cache),))
+  library = sc.CLibrary("included", sources={"included.c": '#include "value.h"\n' + SOURCE}, include_dirs=(str(include),))
   first = get_compiled(library_host(library))
   header.write_text("#define LOCAL_ONLY 3\n")
   second = get_compiled(library_host(library))
@@ -205,3 +207,104 @@ def test_aot_cli_exports_without_a_compiler_or_jit_cache(tmp_path, monkeypatch, 
   assert not cache.exists()
   manifest = json.loads((tmp_path / "export" / "external_build_host.build.json").read_text())
   assert manifest["libraries"][0]["link"] == ["m"]
+
+
+_EXTERNAL_INDEX_PROCESS = r"""
+import json
+import sys
+from pathlib import Path
+import numpy as np
+import scaly as sc
+import scaly.codegen.aot as aot
+import scaly.codegen.jit as jit
+from scaly.codegen.toolchain import find_c_compiler
+from scaly.function.model import as_concrete
+from tests.codegen.test_external import SOURCE, library_host
+
+lowered = []
+lower = aot.lower_function
+setattr(aot, "lower_function", lambda *args, **kwargs: (lowered.append(1), lower(*args, **kwargs))[1])
+root, kind = Path(sys.argv[1]), sys.argv[2]
+library = (
+  sc.CLibrary("indexed_header", sources={"kernel.c": '#include "value.h"\n' + SOURCE}, include_dirs=(str(root / "include"),))
+  if kind == "header" else sc.CLibrary("indexed_link", link=("external_dependency",))
+)
+fun = as_concrete(library_host(library))
+compiler = find_c_compiler()
+assert compiler is not None
+index = jit._index_key(fun, compiler)
+assert index is not None, "the extern graph must have a trusted index key"
+hit = jit._index_read(index) is not None
+compiled = jit.get_compiled(fun)
+print(json.dumps({"hit": hit, "index": index, "artifact": compiled.cache_key, "lowered": len(lowered), "value": float(compiled.run([np.array(3.)])[0])}))
+"""
+
+
+def _external_process(root, kind, *, mode="", compiler=None):
+  import os
+  import shlex
+
+  environment = {**os.environ, "SCALY_CACHE_DIR": str(root / "cache"), "SCALY_JIT_KEY": mode}
+  if compiler is not None:
+    environment["SCALY_CC"] = shlex.join((*compiler, "-L" + str(root / "lib")))
+  result = subprocess.run(
+    [sys.executable, "-c", _EXTERNAL_INDEX_PROCESS, str(root), kind], env=environment, capture_output=True, text=True, timeout=120
+  )
+  assert result.returncode == 0, result.stderr
+  return json.loads(result.stdout)
+
+
+@pytest.mark.parametrize("mode", ["", "verify"], ids=["index", "verify"])
+@pytest.mark.parametrize("edited", ["value.h", "extra.h"])
+def test_include_header_edit_misses_the_index_in_another_process(tmp_path, mode, edited):
+  include = tmp_path / "include"
+  include.mkdir()
+  header = include / "value.h"
+  header.write_text("#define LOCAL_ONLY 2\n")
+  (include / "extra.h").write_text("#define EXTRA 2\n")
+  first = _external_process(tmp_path, "header")
+  warm = _external_process(tmp_path, "header")
+  assert not first["hit"] and warm["hit"]
+  assert (first["lowered"], warm["lowered"]) == (1, 0)
+  assert first["index"] == warm["index"]
+  assert first["value"] == warm["value"] == 15
+  (include / edited).write_text("#define LOCAL_ONLY 3\n")
+  changed = _external_process(tmp_path, "header", mode=mode)
+  assert not changed["hit"]
+  assert changed["lowered"] == 1
+  assert changed["index"] != first["index"]
+  assert changed["artifact"] != first["artifact"]
+  assert changed["value"] == (21 if edited == "value.h" else 15)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="swapping a named ELF dependency")
+@pytest.mark.parametrize("mode", ["", "verify"], ids=["index", "verify"])
+def test_linked_library_swap_misses_the_index_in_another_process(tmp_path, mode):
+  compiler = find_c_compiler()
+  assert compiler is not None
+  directory = tmp_path / "lib"
+  directory.mkdir()
+  source = tmp_path / "dependency.c"
+  source.write_text(SOURCE)
+  target, temporary = directory / "libexternal_dependency.so", directory / "new.so"
+
+  def build(scale):
+    subprocess.run(
+      [*compiler.command, "-shared", "-fPIC", f"-DLOCAL_ONLY={scale}", str(source), "-o", str(temporary)], capture_output=True, check=True
+    )
+    temporary.replace(target)
+
+  build(2)
+  first = _external_process(tmp_path, "link", compiler=compiler.command)
+  warm = _external_process(tmp_path, "link", compiler=compiler.command)
+  assert not first["hit"] and warm["hit"]
+  assert (first["lowered"], warm["lowered"]) == (1, 0)
+  assert first["index"] == warm["index"]
+  assert first["value"] == warm["value"] == 15
+  build(3)
+  changed = _external_process(tmp_path, "link", mode=mode, compiler=compiler.command)
+  assert not changed["hit"]
+  assert changed["lowered"] == 1
+  assert changed["index"] != first["index"]
+  assert changed["artifact"] != first["artifact"]
+  assert changed["value"] == 21

@@ -10,8 +10,29 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from ..function.extern import CLibrary
-from .toolchain import LinkedLibrary, cache_root, compiler_fingerprint, resolve_library
+from ..function.extern import CLibrary, _Extern
+from ..function.concrete import ConcreteFunction
+from ..ir.expr import callees_of
+from ..solvers.graph import solver_callees
+from .toolchain import LinkedLibrary, cache_root, compiler_fingerprint, directory_fingerprint, resolve_library
+
+
+def libraries_of(fun: ConcreteFunction) -> tuple[CLibrary, ...]:
+  """The libraries in a graph, in the same callee order lowering follows, without lowering."""
+  found: dict[CLibrary, None] = {}
+  seen = set()
+  pending = [fun]
+  while pending:
+    callee = pending.pop()
+    if callee in seen:
+      continue
+    seen.add(callee)
+    if isinstance(callee, _Extern):
+      found[callee.library] = None
+    else:
+      children = [*solver_callees(callee), *(child for node in callee.nodes for child in callees_of(node))]
+      pending.extend(reversed(children))
+  return tuple(found)
 
 
 def _write_files(library: CLibrary, directory: Path) -> None:
@@ -64,6 +85,8 @@ def prepare_library(library: CLibrary, compiler: tuple[str, ...]) -> LibraryBuil
   links = tuple(resolve_library(name, compiler) for name in library.link)
   digest = hashlib.sha256(description.encode())
   digest.update(compiler_fingerprint(compiler).encode())
+  for include in library.include_dirs:
+    digest.update(directory_fingerprint(Path(include)))
   for link in links:
     digest.update(json.dumps((link.path, link.identity, link.flags)).encode())
   for name, _ in library.sources:

@@ -307,5 +307,27 @@ def resolve_library(name: str, command: tuple[str, ...]) -> LinkedLibrary:
   raise FileNotFoundError(f"C toolchain cannot resolve library {name!r}")
 
 
+def directory_fingerprint(directory: Path) -> bytes:
+  """Hash the names and contents of readable native files, following links without revisiting ancestors."""
+  h = hashlib.sha256(os.fsencode(directory) + b"\0")
+  for root, subdirs, files in os.walk(directory, followlinks=True):
+    root_path = Path(root)
+    ancestors = {(directory / parent).resolve() for parent in root_path.relative_to(directory).parents}
+    ancestors.add(root_path.resolve())
+    subdirs[:] = sorted(name for name in subdirs if (root_path / name).resolve() not in ancestors)
+    for filename in sorted(files):
+      path = root_path / filename
+      if not path.is_file():
+        continue
+      h.update(os.fsencode(path.relative_to(directory)))
+      h.update(b"\0")
+      try:
+        with path.open("rb") as stream:
+          h.update(b"\1" + hashlib.file_digest(stream, "sha256").digest())
+      except PermissionError:
+        h.update(b"\0")
+  return h.digest()
+
+
 if __name__ == "__main__":
   main()
