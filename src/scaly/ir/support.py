@@ -360,6 +360,8 @@ def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> 
       chunks.append(np.ravel_multi_index(tuple(coords), node.shape))
     return _make_support(np.concatenate(chunks))
   if op == "matmul":
+    if node.attrs.get("sampled") is not None:
+      return None  # The declared sample bounds support without forming the unsampled Boolean product.
     x, y = node.args
     if not node.size or x.shape[-1] == 0:
       return frozenset()

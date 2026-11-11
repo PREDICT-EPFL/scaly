@@ -6,7 +6,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _uniform, gather, pack, scatter, topo, to_dense, values, zeros_like
+from ..ir.expr import Expr, ExprOp, _uniform, gather, matmul, pack, scatter, topo, to_dense, values, zeros_like
 from ..ir.support import slice_indices, support_indices
 from ..ir.types import stored_indices
 from .calls import _call_vjp, _vmap_vjp
@@ -174,6 +174,9 @@ def _stored_movement_vjp(expr: Expr, cot: Expr) -> Expr:
 
 
 def _stored_matmul_vjp(x: Expr, y: Expr, cot: Expr, active: tuple[int, ...] | None) -> tuple[Expr | None, ...]:
+  if x.type.pattern is not None and y.type.pattern is not None:
+    active = (0, 1) if active is None else active
+    return matmul(cot, y.T, sampled=x.type.pattern) if 0 in active else None, matmul(x.T, cot, sampled=y.type.pattern) if 1 in active else None
   left = x.type.pattern is not None
   src, dense = (x, y) if left else (y, x)
   pattern = src.type.pattern

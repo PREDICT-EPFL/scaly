@@ -1071,6 +1071,15 @@ as the sum of squared row degrees, which no table can remove; tests pin bounded 
 growth on `G.T @ diag(w) @ G`. Block assembly, `diagonal`, Kronecker products and repatterning are
 compositions of existing ops and need no item.
 
+Sparse adjoints use an internal `sampled` pattern on `MATMUL`. Its type holds exactly the
+requested coordinates, without constructing the full Boolean product. Forward differentiation
+keeps the sample; reverse differentiation samples each operand's adjoint in turn. Support bounds
+and derivative relations use the requested coordinates. Lowering scatters one operand row's
+stored-slot indices into one dense scratch row, computes dots only for requested outputs, and
+clears the row. Absent factors take a zero-trip range; explicit stored zeros still multiply.
+*Replaced in the compiler run, 2026-11-10: ordinary products followed by projection for sparse
+adjoints, because they build the full Boolean pattern and forward-over-reverse materializes it.*
+
 **[#221]. Support through calls.** A call's support comes from its callee's rules evaluated under
 its arguments' support, with one specialisation per distinct argument support, cached and bounded.
 Beyond the bound, it falls back to the callee's own support. On the chain Hessian the zeros come
