@@ -1,5 +1,12 @@
 # Cortex-M oracle builds, #207
 
+Current instruction: follow ~/.scaly-suite/super/flush-common.md. Hold every push,
+PR and queue action until the coordinator authorizes it after #448. The coordinator
+owns the Claude review; do not launch it here. Rebased cleanly onto origin/main
+589a2e8f for this flush. The embedded proof passes. Full hook evidence is in
+/tmp/scaly-207/flush-suite-20261111.{log,exit}. Older review/push instructions below
+are historical and are superseded by the flush instructions.
+
 Implements section #24 under `internal/notes/compiler_run_2026_11_10/plan.md` on main.
 The branch started on #368, the typed-entry layer of #30 -> #55 -> #56 -> #207.
 The task branch t3code/207-cortex-m-builds is rebased onto origin/main after
