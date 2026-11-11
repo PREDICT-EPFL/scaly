@@ -15,13 +15,18 @@ from scaly.passes.program.widen_ranges import widen_ranges
 from scaly.function.model import as_concrete
 
 
-def test_sparse_select_constant_regions_read_only_the_chosen_branch(monkeypatch):
+@pytest.mark.parametrize("condition_kind", ["broadcast", "matrix_true", "matrix_false"])
+def test_sparse_select_constant_regions_read_only_the_chosen_branch(monkeypatch, condition_kind):
   from scaly.passes.lowering import plans
   from scaly.ir.expr import ExprOp
   from scaly.ir.types import stored_indices
 
   pattern = CanonicalPattern((1000, 1000), (0, 4, 99, 999), (9, 3, 71, 998))
-  condition = np.arange(1000)[None, :] % 2 == 0
+  condition = (
+    np.arange(1000)[None, :] % 2 == 0
+    if condition_kind == "broadcast"
+    else np.broadcast_to(np.asarray(condition_kind == "matrix_true"), pattern.shape)
+  )
   captured = []
   emit = plans.emit_map
 
@@ -37,7 +42,11 @@ def test_sparse_select_constant_regions_read_only_the_chosen_branch(monkeypatch)
     x = sc.pack(v, pattern)
     return sc.where(sc.const(condition), x.sin(), x.tanh()).block()
 
-  lower_function(fn)
+  observed = {}
+  lower_function(fn, observe=observed.__setitem__)
+  for node in walk_program(observed["lowered"]):
+    if node.op == ProgramOp.BUFFER and node.attrs["address_space"] == "private":
+      assert np.prod(node.attrs["shape"]) <= 20 * pattern.nnz
   assert len(captured) == 1
   chosen = condition.reshape(-1)[np.asarray(pattern.cols)]
   slots = np.arange(pattern.nnz)

@@ -290,6 +290,8 @@ def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> 
     return _make_support(entries[keep])
   if op == "select":
     a, b = (_broadcast_support(arg, node.shape, support_of(arg)) for arg in node.args[1:])
+    if a is None and b is None:
+      return None
     condition = node.args[0]
     if condition.op == "const":
       assert condition.value is not None

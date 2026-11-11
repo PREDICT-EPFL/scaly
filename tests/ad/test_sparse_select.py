@@ -252,3 +252,54 @@ def test_sparse_select_masks_survive_nesting_and_pattern_normalization(path):
     c = np.asarray(condition)
     reference = finite_difference(lambda v: loss(v, c), point).reshape(point.shape)
     np.testing.assert_allclose(np.asarray(grad(point, c)), reference, atol=1e-7, rtol=1e-7)
+
+
+@pytest.mark.parametrize("shape", [(3, 4), (1, 4)])
+def test_sparse_condition_with_dense_branches_matches_numpy(shape):
+  pattern = CanonicalPattern(shape, (0, 1, 2) if shape[0] == 3 else (0, 0, 0), (3, 1, 2) if shape[0] == 3 else (1, 2, 3))
+
+  def expression(v, c):
+    condition = sc.pack(sc.cast(c, "bool"), pattern)
+    result = sc.where(condition, v + 100.0, -v)
+    assert result.type.pattern is None
+    return result.block()
+
+  leaves = (sc.arg("v", (3, 4)), sc.arg("c", pattern.nnz))
+  fn = sc.function(*leaves, name=f"sparse_condition_dense_branches_{shape[0]}")(expression)
+  loss = sc.function(*leaves, name=f"sparse_condition_dense_loss_{shape[0]}")(lambda v, c: expression(v, c).sum())
+  c = np.array([True, False, True])
+  condition = sparse.coo_array((c, (pattern.rows, pattern.cols)), shape=shape).toarray()
+  point = np.arange(12, dtype=float).reshape((3, 4))
+  numpy = lambda v: np.where(condition, v + 100.0, -v)
+  np.testing.assert_array_equal(fn(point, c), numpy(point))
+  reference = finite_difference(numpy, point)
+  np.testing.assert_allclose(sc.jacobian(fn, wrt="v")(point, c), reference, atol=1e-7, rtol=1e-7)
+  np.testing.assert_allclose(sc.gradient(loss, wrt="v")(point, c), reference.sum(axis=0).reshape(point.shape), atol=1e-7, rtol=1e-7)
+
+
+@pytest.mark.parametrize("path", ["pack", "matvec", "rmatvec", "matmat", "rmatmat"])
+def test_sparse_select_masks_singular_dense_operands_and_pack_input(path):
+  pattern = CanonicalPattern((4, 5), (0, 0, 1, 2, 3, 3), (0, 4, 1, 3, 0, 2))
+  size = {"pack": pattern.nnz, "matvec": 5, "rmatvec": 4, "matmat": 10, "rmatmat": 8}[path]
+
+  @sc.function(sc.arg("v", size), sc.arg("c", ()), name=f"sparse_select_dense_partial_{path}")
+  def loss(v, c):
+    root = v.sqrt()
+    matrix = sc.pack(sc.const(np.linspace(0.5, 1.5, pattern.nnz)), pattern)
+    branch = {
+      "pack": lambda: sc.pack(root, pattern),
+      "matvec": lambda: matrix @ root,
+      "rmatvec": lambda: root @ matrix,
+      "matmat": lambda: matrix @ root.reshape((5, 2)),
+      "rmatmat": lambda: root.reshape((2, 4)) @ matrix,
+    }[path]()
+    return sc.where(c > 0, branch, sc.const(np.ones(branch.shape))).sum().block()
+
+  grad = sc.gradient(loss, wrt="v")
+  zero = np.zeros(size)
+  np.testing.assert_array_equal(grad(zero, np.asarray(False)), zero)
+  point = np.linspace(0.2, 1.3, size)
+  for condition in (False, True):
+    c = np.asarray(condition)
+    reference = finite_difference(lambda v: loss(v, c), point).reshape(point.shape)
+    np.testing.assert_allclose(np.asarray(grad(point, c)), reference, atol=1e-7, rtol=1e-7)

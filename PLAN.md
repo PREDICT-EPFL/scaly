@@ -29,10 +29,21 @@ with 3,894 tests and 55 skips. Benchmark smoke, docs build and all remaining hoo
 #367 rebased upstream since this branch started. This branch now includes its notes-only update,
 and source and tests are byte-identical to the reviewed candidate. Use the updated ancestor in
 the coordinator's latest `rebase --onto` instruction when #367 lands. Hold the next push until
-the review fixes are together. Opus's review of the original candidate is running. Sol found two
+the review fixes are together. Sol found two
 mask-loss paths: nested masks lost their inner condition during the compact transpose, and pattern
 normalization hid a mask in PACK/GATHER. Both are fixed locally through the existing mask helper,
 including the corresponding dense conversion. Three regression cases failed first and now pass
 with gradient and Hessian checks. Focused SELECT and C snapshot validation passed 51 tests, and
-strict types and Ruff passed. Combine any Opus fixes, rerun full pre-merge, then ask for the short
-delta check on fixes only. Do not push the rebase separately.
+strict types and Ruff passed. Opus found an out-of-bounds sparse condition read with dense branches,
+missing dense-product and PACK mask gates, and needless enumeration of unknown dense support.
+These are fixed and tested. Constant conditions on sparse results are also projected to stored
+coordinates at construction, so even a full-shape uniform condition has no logical matrix buffer.
+The repeated zero construction is now one helper, and sparse mask unions use bool stored vectors.
+All five dense-product/PACK mask perturbations fail their new gates. Final focused validation
+passed 195 tests. The final full pre-merge rerun passed, with 3,908 tests, 55 skips, benchmark
+smoke and docs build clean. Log: `/tmp/scaly-359-review-premerge.log`, exit zero. A separate
+100,000-square constant-condition case with six stored entries lowered values, gradient,
+Jacobian and sparse Hessian under a 4 GB memory limit, with at most 36 private entries.
+Ask both reviewers for short delta checks on fixes only.
+Do not push the rebase separately. The guide examples in #382 must account for a dense zero branch
+giving a full pattern, and sparse predicates still requiring an explicit packed values predicate.

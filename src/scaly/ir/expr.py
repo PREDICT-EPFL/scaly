@@ -20,7 +20,7 @@ from typing import Any, Generator, Iterable, Literal, Mapping
 
 import numpy as np
 
-from .support import Support, compute_support, reduce_entries, slice_entries, transpose_entries
+from .support import Support, compute_support, reduce_entries, slice_entries, transpose_entries, _constant_condition
 from .types import (
   CanonicalPattern,
   SparsityPattern,
@@ -321,6 +321,8 @@ def stored_pattern(
 ) -> CanonicalPattern | None:
   """Apply the fixed storage rule, also usable for support restricted to sparse operands."""
   if op == ExprOp.SELECT:
+    if types[0].pattern is not None and not any(t.pattern is not None for t in types[1:]):
+      raise ValueError("select has no stored-pattern rule for a sparse condition with dense branches; use to_dense() explicitly")
     types = types[1:]
   if not any(t.pattern is not None for t in types):
     return None
@@ -1187,11 +1189,20 @@ def where(condition: Any, x: Any, y: Any) -> Expr:
   condition = _condition(condition)
   x, y = _operands(x, y)
   dtype = elementwise_dtype(ExprOp.SELECT, condition.type.dtype, x.type.dtype, y.type.dtype)
+  if condition.type.pattern is not None and x.type.pattern is None and y.type.pattern is None:
+    condition = to_dense(condition)
   shape = broadcast_shape(condition.shape, broadcast_shape(x.shape, y.shape))
+  type_ = TensorType(
+    shape, dtype=dtype, diff=op_diff(ExprOp.SELECT, x, y), pattern=stored_pattern(ExprOp.SELECT, (condition.type, x.type, y.type), shape)
+  )
+  if type_.pattern is not None:
+    chosen = _constant_condition(condition, stored_indices(type_), shape)
+    if chosen is not None:
+      condition = pack(Expr.const(chosen.reshape(type_.storage_shape), dtype=dtypes.bool_, lowering=condition.lowering), type_.pattern, shape=shape)
   return Expr(
     ExprOp.SELECT,
     (condition, x, y),
-    TensorType(shape, dtype=dtype, diff=op_diff(ExprOp.SELECT, x, y), pattern=stored_pattern(ExprOp.SELECT, (condition.type, x.type, y.type), shape)),
+    type_,
     lowering=common_lowering(condition, x, y),
   )
 

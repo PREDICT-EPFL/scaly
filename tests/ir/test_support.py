@@ -396,3 +396,11 @@ def test_predicates_select_and_casts_keep_zeros_only_where_numpy_does() -> None:
   }
   for name, (expr, expected) in cases.items():
     assert expr.support == (None if expected is None else frozenset(expected)), name
+
+
+def test_constant_select_does_not_enumerate_two_unknown_dense_supports() -> None:
+  x, y = (sc.sym(f"support_dense_select_{name}", (20, 30)) for name in ("x", "y"))
+  condition = np.arange(30)[None, :] % 2 == 0
+  assert sc.where(sc.const(condition), x.sin(), y.cos()).support is None
+  expected = frozenset(np.flatnonzero(np.broadcast_to(condition, x.shape)))
+  assert sc.where(sc.const(condition), x.sin(), 0.0).support == expected

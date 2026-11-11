@@ -59,6 +59,10 @@ def _const(value: float, like: Expr) -> Expr:
   return Expr.const(value, dtype=like.type.dtype)
 
 
+def _zero(like: Expr) -> Expr:
+  return zeros_like(like) if like.type.pattern is not None else _const(0, like)
+
+
 def _sqrt_one_minus_square(e: Expr) -> Expr:
   return (_const(1, e) - e.args[0] ** _const(2, e)).sqrt()
 
@@ -245,9 +249,7 @@ def carry_mask(cot: Expr, transpose: Callable[[Expr], tuple[Expr | None, ...]]) 
   ones = _full_like(1, cot) if cot.type.pattern is not None else Expr.const(np.ones(cot.shape, dtype=cot.type.dtype.numpy()), dtype=cot.type.dtype)
   weights = transpose(_masked(cot, lambda inner: ones))
   return tuple(
-    r
-    if r is None or w is None or r.op == ExprOp.CONST or _mask_of(r) is not None
-    else where(_nonzero_mask(w), r, zeros_like(r) if r.type.pattern is not None else _const(0, r))
+    r if r is None or w is None or r.op == ExprOp.CONST or _mask_of(r) is not None else where(_nonzero_mask(w), r, _zero(r))
     for r, w in zip(results, weights, strict=True)
   )
 
@@ -264,10 +266,9 @@ def accumulate(total: Expr, cot: Expr) -> Expr:
   if a is None or b is None:
     return total + cot
   if a[0] is b[0]:
-    return where(a[0], a[1] + b[1], zeros_like(total) if total.type.pattern is not None else _const(0, total))
+    return where(a[0], a[1] + b[1], _zero(total))
   if total.type.pattern is not None:
-    weights = cast(_sample_stored(a[0], total.type), total.type.dtype) + cast(_sample_stored(b[0], total.type), total.type.dtype)
-    combined = pack(not_equal(weights, 0), total.type.pattern, shape=total.shape)
+    combined = pack(_sample_stored(a[0], total.type) | _sample_stored(b[0], total.type), total.type.pattern, shape=total.shape)
     return where(combined, total + cot, zeros_like(total))
   return where(a[0] | b[0], total + cot, _const(0, total))
 
@@ -288,7 +289,7 @@ def _masked(cot: Expr, product: Callable[[Expr], Expr]) -> Expr:
   if mask is None:
     return product(cot)
   inner = _masked(mask[1], product)
-  return where(mask[0], inner, zeros_like(inner) if inner.type.pattern is not None else _const(0, inner))
+  return where(mask[0], inner, _zero(inner))
 
 
 def _compact_elementwise(expr: Expr) -> Expr:
