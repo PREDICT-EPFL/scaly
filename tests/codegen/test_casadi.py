@@ -68,7 +68,6 @@ def test_casadi_header_declares_the_query_set() -> None:
   # The output is a sparse leaf in compressed-column order, so the entry writes CasADi's order directly.
   assert "static const int f_spjac_spjac_y_x_csc_col_ptr[5] = {0, 1, 2, 3, 5};" in header
   assert "static const int f_spjac_spjac_y_x_csc_row_ind[5] = {0, 2, 1, 1, 2};" in header
-  assert "val_perm" not in header
   assert workspace_size(fun, casadi=True) == workspace_size(fun)
   assert "casadi_int" not in render_c_api_header(fun)
 

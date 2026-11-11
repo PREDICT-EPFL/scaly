@@ -461,7 +461,7 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
         elif spec.kind in {"adj", "grad"}:
           layout = input_layouts.get(spec.wrt)
         elif output.type.pattern is not None:
-          layout = sparse_layout(output.type.pattern, getattr(spec, "layout", "csc"))
+          layout = sparse_layout(output.type.pattern, cast(Any, spec).layout)
       ret_layouts.append(layout)
     return ConcreteFunction._from_exprs(
       name,

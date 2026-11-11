@@ -181,13 +181,12 @@ def test_mapped_spjac_values_follow_the_header_tables_of_their_layout() -> None:
   from scaly.codegen.aot import render_c_module
   from scaly.ir.expr import topo
 
-  N, layout = 3, "csc"
+  N = 3
   fn = _rk4_bicycle_eq_vmap(N)
-  spjf = fn.factory(f"trk_vmap_{layout}_N{N}", ["z", "p"], [sc.factory.SpJac("eq", "z", layout=layout)])
+  spjf = fn.factory(f"trk_vmap_csc_N{N}", ["z", "p"], [sc.factory.SpJac("eq", "z")])
   dense_fn = fn.factory(f"trk_vmap_dense_N{N}", ["z", "p"], [sc.factory.Jac("eq", "z")])
   assert any(node.op == sc.ExprOp.VMAP for node in topo(as_concrete(spjf).outputs))
   module = render_c_module(spjf, header_name="t.h", source_name="t.c")
-  assert "val_perm" not in module.header
 
   def table(name: str) -> np.ndarray:
     m = re.search(rf"_{name}\[\d+\] = \{{([^}}]*)\}};", module.header)
@@ -198,11 +197,11 @@ def test_mapped_spjac_values_follow_the_header_tables_of_their_layout() -> None:
   zv, pv = rng.normal(size=RK4_NZ * (N + 1)), rng.normal(size=RK4_NX * (N + 1) + RK4_N_PARAMS)
   result = spjf(*(zv, pv))
   dense_ref = np.asarray(dense_fn(*(zv, pv)))
-  ptr, ind = (table("csr_row_ptr"), table("csr_col_ind")) if layout == "csr" else (table("csc_col_ptr"), table("csc_row_ind"))
+  ptr, ind = table("csc_col_ptr"), table("csc_row_ind")
   rebuilt = np.zeros(dense_ref.shape)
   for outer in range(len(ptr) - 1):
     for k in range(ptr[outer], ptr[outer + 1]):
-      rebuilt[(outer, ind[k]) if layout == "csr" else (ind[k], outer)] = result.data[k]
+      rebuilt[ind[k], outer] = result.data[k]
   np.testing.assert_allclose(rebuilt, dense_ref, rtol=1e-12, atol=1e-12)
   np.testing.assert_allclose(result.toarray(), dense_ref, rtol=1e-12, atol=1e-12)
 

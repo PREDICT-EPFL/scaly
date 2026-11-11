@@ -418,7 +418,7 @@ content-derived.
   so folding and generated C both follow `np.minimum`/`np.maximum`.
 
 **[#16]. An immutable Function.** One private constructor with one `_validate`, and a public
-`Function.build(name, input_tree, inputs, output_tree, outputs, *, output_sparsities=None,
+`Function.build(name, input_tree, inputs, output_tree, outputs, *,
 descriptor=None, role=None, ...)` used by the decorator, `factory`, the AD callees and `solvers/`.
 `_replace` is the only copy path: `with_device`, `_with_outputs` and `_with_trees` become one-liners,
 and `_with_trees` stops mutating `self`. The solver descriptor becomes a constructor field instead

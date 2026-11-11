@@ -79,8 +79,16 @@ class _Compact:
 
   def leaf(self) -> Expr:
     """The values as a sparse tensor over the canonical pattern."""
+    logical_size = self.sparsity.shape[0] * self.sparsity.shape[1]
+    if logical_size > np.iinfo(np.int64).max:
+      raise ValueError(f"sparse derivative logical size {logical_size} exceeds int64; see #447")
     pattern, order = self.sparsity.canonicalize()
-    values = self.values if order == tuple(range(len(order))) else self._select(np.asarray(order, dtype=np.int64), self.sparsity).values
+    values = self.values
+    if order != tuple(range(len(order))):
+      source = self._compressed if self._compressed is not None else self.values
+      indices = np.asarray(order, dtype=np.int64)
+      recovery = self._recovery[indices] if self._recovery is not None else indices
+      values = simplify_cse_fixpoint(gather(source, recovery))
     return pack(values, pattern, shape=pattern.shape)
 
 

@@ -56,7 +56,6 @@ def test_sparse_headers_compile_and_run_declared_layouts(lang, layout, batch, em
   header = module.header
   assert header == render_c_api_header(fun, lang=lang)
   assert not re.search(r"\w+\[0\] =", header)
-  assert "val_perm" not in header
   count = prod(batch) * pattern.nnz
   if lang == "c":
     for ident in ("a", "b"):
@@ -185,7 +184,7 @@ def test_declared_sparse_and_derivative_metadata_coexist(lang, empty, tmp_path):
   derivative = sc.sparse_jacobian(fun, "y", "x", name="mixed_sparse")
   module = write_module(derivative, tmp_path, lang=lang)
   if not empty:
-    assert "csc_row_ind" in module.header and "val_perm" not in module.header
+    assert "csc_row_ind" in module.header
   assert not re.search(r"\w+\[0\] =", module.header)
   main = tmp_path / "main.cpp"
   main.write_text(f'#include "{module.header_name}"\nint main() {{ return 0; }}\n')

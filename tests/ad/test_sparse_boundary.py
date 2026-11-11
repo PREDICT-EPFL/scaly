@@ -180,18 +180,23 @@ def test_custom_sparse_rules_bound_relations_by_storage_without_losing_zero_rows
   ruled = sc.custom_derivative(primal, jvp=rule, sparsity=(lambda *_: declared_pattern) if declared else None)
   fn = sc.vmap(ruled, 2) if mapped else ruled
   data = np.array([[2.0, 5.0], [7.0, 11.0]]) if mapped else np.array([2.0, 5.0])
-  # A 10^5 x 10^5 leaf has a 10^10 x 10^10 Jacobian, past what a sparse tensor's flat int64
-  # coordinates reach, so the compact values are evaluated as a dense vector.
-  x = _input("x", pattern, (2,) if mapped else ())
-  compact = sparse_jacobian(fn(x), x)
-  output_pattern = compact.sparsity
-  result = _evaluate("sparse_custom_compact", [x], [compact.values], [data])[0]
+  logical_size = (2 * size if mapped else size) ** 2
+  if logical_size > np.iinfo(np.int64).max:
+    with pytest.raises(ValueError, match=rf"logical size {logical_size}.*int64.*#447"):
+      sc.sparse_jacobian(fn)
+    return
+  derivative = sc.sparse_jacobian(fn)
+  output_pattern = derivative.sparsity()
+  assert output_pattern is not None
+  evaluated = derivative(data)
+  assert isinstance(evaluated, sparse.csc_array)
+  result = evaluated.tocoo()
   entries = np.array([*domain, *(i + size for i in domain)]) if mapped else np.array(domain)
   assert output_pattern.shape == ((2 * size, 2 * size) if mapped else (size, size))
   assert np.isin(output_pattern.rows, entries).all() and np.isin(output_pattern.cols, entries).all()
-  rows = np.searchsorted(entries, output_pattern.rows)
-  cols = np.searchsorted(entries, output_pattern.cols)
-  actual = sparse.coo_array((result, (rows, cols)), shape=(len(entries), len(entries))).toarray()
+  rows = np.searchsorted(entries, result.row)
+  cols = np.searchsorted(entries, result.col)
+  actual = sparse.coo_array((result.data, (rows, cols)), shape=(len(entries), len(entries))).toarray()
   np.testing.assert_allclose(actual, np.diag(3 * data.reshape(-1)))
 
 

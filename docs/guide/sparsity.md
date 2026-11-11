@@ -77,6 +77,10 @@ print(J.toarray())
 #  [ 0.  0.  0. 10.]]
 ```
 
+The derivative matrix's logical size, the product of its dimensions, must fit
+in a signed 64-bit integer. Construction raises `ValueError` otherwise, even
+when the stored pattern has only a few entries.
+
 `layout=` chooses the order of the stored values, with the same choices as any
 [sparse output](sparse_matrices.md#layouts): `"csc"`, `"csr"`, or a
 `SparsityPattern` listing the derivative's stored coordinates in the order a

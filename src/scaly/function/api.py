@@ -325,6 +325,8 @@ def sparse_jacobian(
   listing the same coordinates in the order the caller wants.
   """
   if isinstance(source, Expr):
+    if layout != "csc":
+      raise TypeError("sparse_jacobian Expr form does not accept layout")
     return _expr_sparse_jacobian(source, _expr_wrt("sparse_jacobian", args, wrt, of, name))
   if not isinstance(source, Function | ConcreteFunction):
     raise TypeError("sparse_jacobian source must be an Expr or Function")
@@ -366,6 +368,8 @@ def sparse_hessian(
   for ``sparse_jacobian``.
   """
   if isinstance(source, Expr):
+    if layout != "csc":
+      raise TypeError("sparse_hessian Expr form does not accept layout")
     return _expr_sparse_hessian(source, _expr_wrt("sparse_hessian", args, wrt, of, name), triangle=triangle)
   if not isinstance(source, Function | ConcreteFunction):
     raise TypeError("sparse_hessian source must be an Expr or Function")

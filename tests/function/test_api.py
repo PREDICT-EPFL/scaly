@@ -58,6 +58,14 @@ def test_derivative_names_dispatch_for_expression_and_function_inputs() -> None:
     assert isinstance(build(fn, of="y", wrt="x"), sc.Function)
 
 
+def test_expression_sparse_derivatives_reject_non_default_layouts() -> None:
+  x = sc.sym("x", 2)
+  y = (x * x).sum()
+  for build, layout in ((sc.sparse_jacobian, "csr"), (sc.sparse_hessian, "bogus")):
+    with pytest.raises(TypeError, match=f"{build.__name__} Expr form does not accept layout"):
+      cast(Any, build)(y, x, layout=layout)
+
+
 def test_factory_specs_are_frozen_and_hessian_names_are_doubled() -> None:
   specs = (sc.factory.Jac, sc.factory.Grad, sc.factory.Hess, sc.factory.SpJac, sc.factory.SpHess, sc.factory.Fwd, sc.factory.Adj)
   for spec_type in specs:
