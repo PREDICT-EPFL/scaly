@@ -37,9 +37,6 @@ _NOT_READ = ("input_tree", "output_tree", "_memo")
 _TREE_READ = ("names", "layouts")
 _TREE_NOT_READ = ("decls", "parts", "_layout_decls")
 
-# The array element kinds whose bytes are their value: flags, integers, floats and complex numbers.
-_PLAIN_KINDS = "biufc"
-
 # A Function's own digest, with its callees in the order it meets them, and the digest of the whole
 # graph it roots. A callee enters its caller's own digest by its place in that order alone.
 _LOCAL: weakref.WeakKeyDictionary[ConcreteFunction, tuple[bytes, tuple[ConcreteFunction, ...]] | None] = weakref.WeakKeyDictionary()
@@ -86,7 +83,7 @@ class _Walk:
       self.put(b"S", v.encode("utf-8", "surrogatepass"))
     elif kind is np.ndarray or (isinstance(v, np.generic) and kind.__module__ == "numpy"):
       array = np.asarray(v)
-      if array.dtype.kind not in _PLAIN_KINDS:
+      if array.dtype.kind not in "biufc":  # flags, integers, floats and complex numbers: their bytes are their value
         raise Unkeyed(f"an array of {array.dtype}")
       self.put(b"A" if kind is np.ndarray else b"G", f"{array.dtype.str}{array.shape}".encode())
       self.put(b"a", np.ascontiguousarray(array).tobytes())
