@@ -9,7 +9,7 @@ from operator import or_
 
 import numpy as np
 
-from ...ad.rules import ELEMENTWISE
+from ...ad.rules import ELEMENTWISE, _mask_of
 from ...function.concrete import ConcreteFunction
 from ...ir.expr import Expr, ExprOp
 from ...ir.support import Support
@@ -81,7 +81,18 @@ def _reads(node: Expr) -> list[tuple[Expr, int]]:
   from a buffer, as calls, prints and sparse plans do."""
   op = ExprOp(node.op)
   if node.type.pattern is not None or any(a.type.pattern is not None for a in node.args):
-    return [(a, _BUFFER) for a in node.args]
+    reads = [(a, _BUFFER) for a in node.args]
+    if op == ExprOp.MATMUL and node.attrs.get("sampled") is not None:
+      for current in node.args:
+        while True:
+          if current.op in (ExprOp.PACK, ExprOp.VALUES, ExprOp.SLICE, ExprOp.TRANSPOSE, ExprOp.RESHAPE):
+            current = current.args[0]
+          elif (mask := _mask_of(current)) is not None:
+            reads.append((mask[0], _BUFFER))
+            current = mask[1]
+          else:
+            break
+    return reads
   if op in ELEMENTWISE:
     return [(a, _ONCE if a.size == node.size else _MANY) for a in node.args]
   if op == ExprOp.MATMUL:
@@ -144,7 +155,13 @@ def plan_fusion(
         edges.append((consumer.id, _BUFFER if shares else kind, True))
     terminal[node.id] = edges
     dense = all(e.type.pattern is None for e in (node, *node.args))
-    if node.id not in outputs and dense and ExprOp(node.op) in MOVEMENT and all(k == _ONCE or k == _MANY and _free(node) for _, k, _ in edges):
+    if (
+      node.id not in outputs
+      and dense
+      and ExprOp(node.op) in MOVEMENT
+      and (len(edges) <= 1 or _free(node))
+      and all(k == _ONCE or k == _MANY and _free(node) for _, k, _ in edges)
+    ):
       deferred.add(node.id)
   position = {x.id: 1 << k for k, x in enumerate(fun.inputs)}
   depends: dict[int, int] = {}

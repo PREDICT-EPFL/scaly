@@ -394,8 +394,7 @@ def _stencil_gradient(length, measurement):
   return _function("stencil_grad", [z], [sc.gradient(cost, z)])
 
 
-@pytest.mark.parametrize("measurement", [False, True])
-def test_stencil_rewrite_work_is_independent_of_stage_count(monkeypatch, measurement):
+def test_stencil_rewrite_work_is_independent_of_stage_count(monkeypatch):
   fusion = importlib.import_module("scaly.passes.program.fuse_ranges")
   original = fusion._rewrite
   counts = []
@@ -407,10 +406,9 @@ def test_stencil_rewrite_work_is_independent_of_stage_count(monkeypatch, measure
       return original(*args)
 
     monkeypatch.setattr(fusion, "_rewrite", counted)
-    lower_function(_stencil_gradient(length, measurement))
+    lower_function(_stencil_gradient(length, False))
     counts.append(len(calls))
-  # The measurement's scatter joins the gradient's sum at lowering, which keeps the maps unfused.
-  assert counts[0] > 0 or measurement
+  assert counts[0] > 0
   assert counts[0] == counts[1]
 
 

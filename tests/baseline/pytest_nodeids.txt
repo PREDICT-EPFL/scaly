@@ -5020,7 +5020,9 @@ tests/passes/lowering/test_ctx.py::test_non_float64_leaves_refused[output-float3
 tests/passes/lowering/test_fusion.py::test_a_carried_range_is_never_merged_split_or_reordered
 tests/passes/lowering/test_fusion.py::test_a_libm_call_is_not_duplicated_by_two_reads[False]
 tests/passes/lowering/test_fusion.py::test_a_libm_call_is_not_duplicated_by_two_reads[True]
+tests/passes/lowering/test_fusion.py::test_automatic_scalarization_preserves_known_zeros_with_infinity
 tests/passes/lowering/test_fusion.py::test_broadcast_inputs_of_a_map_keep_their_work_apart
+tests/passes/lowering/test_fusion.py::test_empty_reshape_transpose_keeps_the_nonempty_concat_piece
 tests/passes/lowering/test_fusion.py::test_loop_body_fuses_within_one_trip_and_keeps_shared_work_apart
 tests/passes/lowering/test_fusion.py::test_loop_operands_are_computed_once_outside_the_carried_range
 tests/passes/lowering/test_fusion.py::test_matmul_operand_read_once_is_inlined
@@ -5030,6 +5032,8 @@ tests/passes/lowering/test_fusion.py::test_movement_is_an_index_remap[reshape_tr
 tests/passes/lowering/test_fusion.py::test_movement_is_an_index_remap[strided_slice]
 tests/passes/lowering/test_fusion.py::test_movement_is_an_index_remap[transpose]
 tests/passes/lowering/test_fusion.py::test_reduction_evaluates_its_operand_in_the_reduction_loop
+tests/passes/lowering/test_fusion.py::test_reused_selection_stores_only_the_selected_exp_values
+tests/passes/lowering/test_fusion.py::test_sampled_product_counts_its_select_condition_read
 tests/passes/lowering/test_fusion.py::test_scatter_of_a_mapped_transpose_reads_by_affine_indices
 tests/passes/lowering/test_fusion.py::test_single_consumer_chain_is_one_loop
 tests/passes/lowering/test_fusion.py::test_sum_of_scatters_accumulates_into_one_buffer[False]
@@ -5707,8 +5711,7 @@ tests/passes/test_fuse_ranges.py::test_sparse_hessian_lower_triangle_has_only_su
 tests/passes/test_fuse_ranges.py::test_sparse_hessian_lower_triangle_has_only_surviving_stage_stores[22-3]
 tests/passes/test_fuse_ranges.py::test_stencil_gradient_matches_numpy[False]
 tests/passes/test_fuse_ranges.py::test_stencil_gradient_matches_numpy[True]
-tests/passes/test_fuse_ranges.py::test_stencil_rewrite_work_is_independent_of_stage_count[False]
-tests/passes/test_fuse_ranges.py::test_stencil_rewrite_work_is_independent_of_stage_count[True]
+tests/passes/test_fuse_ranges.py::test_stencil_rewrite_work_is_independent_of_stage_count
 tests/passes/test_fuse_ranges.py::test_transpose_gather_discards_unused_scalar_outputs[31]
 tests/passes/test_fuse_ranges.py::test_transpose_gather_discards_unused_scalar_outputs[4]
 tests/passes/test_fuse_ranges.py::test_two_block_gathers_upstream_of_map_still_fuse

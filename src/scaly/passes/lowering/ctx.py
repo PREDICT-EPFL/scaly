@@ -357,7 +357,7 @@ class LowerCtx:
     self.deferred, self.sums = plan_fusion(
       self.fun,
       self.invariant,
-      scalar=self.scalarize and self.fun._effective_lowering == "scalar",
+      scalar=self.scalarize,
       seed_pairs=self.seed_pairs,
       support_of=self.support_of,
     )
@@ -636,8 +636,6 @@ class LowerCtx:
     return self._finish(self._step((expr, True, (flat,))))
 
   def _finish(self, step: _Step) -> ProgramNode:
-    if isinstance(step, ProgramNode):
-      return step
     reads, build = step
     return build([self._resolve(r) for r in reads])
 
@@ -655,14 +653,10 @@ class LowerCtx:
       if k not in plans:
         expr, flat, at = top
         if expr.id in self.value_buffers or expr.id not in self.deferred:
-          step: _Step = p.load(p.view(self.buf_of(expr), [at[0] if flat else _flat(expr.shape, at)]))
-        else:
-          step = self._step(top)
-        if isinstance(step, ProgramNode):
-          self._reads[k] = step
+          self._reads[k] = p.load(p.view(self.buf_of(expr), [at[0] if flat else _flat(expr.shape, at)]))
           stack.pop()
           continue
-        plans[k] = step
+        plans[k] = self._step(top)
       reads, build = plans[k]
       missing = [r for r in reads if key(r) not in self._reads]
       if missing:
@@ -688,8 +682,8 @@ class LowerCtx:
     position = at[0] if flat else _flat(expr.shape, at)
     if op == ExprOp.CONST:
       if (value := _uniform(expr)) is not None:
-        return constant(value, expr.type.dtype)
-      return p.load(p.view(self.raw_buf_of(expr), [position]))
+        return [], lambda _: constant(value, expr.type.dtype)
+      return [], lambda _: p.load(p.view(self.raw_buf_of(expr), [position]))
     src = expr.args[0]
     if op in ALIASES:
       if not flat and src.id in self.deferred and src.id not in self.value_buffers and ExprOp(src.op) in (ExprOp.TRANSPOSE, ExprOp.SLICE):
@@ -699,7 +693,7 @@ class LowerCtx:
       return [(src, True, (_shift(position, offset),))], _only
     if op == ExprOp.GATHER or op in (ExprOp.TRANSPOSE, ExprOp.SLICE) and flat and position in self._indexed:
       table = _source_positions(expr)
-      if (known := self._indexed.get(position)) is not None and known[0].max() < len(table):
+      if (known := self._indexed.get(position)) is not None:
         return [(src, True, (self.index_at(table[known[0]], known[1]),))], _only
       return [(src, True, (self.index_at(table, position),))], _only
     coords = _flat_coordinates(at[0], expr.shape) if flat else at
@@ -834,7 +828,7 @@ def _source_positions(expr: Expr) -> np.ndarray:
 
 
 _Read = tuple[Expr, bool, tuple[ProgramNode, ...]]
-_Step = ProgramNode | tuple[list[_Read], Callable[[list[ProgramNode]], ProgramNode]]
+_Step = tuple[list[_Read], Callable[[list[ProgramNode]], ProgramNode]]
 
 
 def _only(values: list[ProgramNode]) -> ProgramNode:

@@ -12,6 +12,7 @@ from scaly.codegen.toolchain import find_c_compiler
 from scaly.function.sugar import _mapped_call
 from scaly.ir import program as p
 from scaly.ir.expr import Expr
+from scaly.ir.types import CanonicalPattern
 from scaly.ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
 from scaly.passes.lowering import ctx, lower_function, main_proc
 from scaly.passes.lowering.schedule import emit_reduction
@@ -45,6 +46,8 @@ def _work(proc: ProgramNode, op: ProgramOp) -> int:
   stack = [(stmt, 1) for stmt in proc.args]
   while stack:
     node, trips = stack.pop()
+    if not any(n.op == op for n in walk_program(node)):
+      continue
     if node.op == ProgramOp.FOR:
       count = trip_count(node.args[0])
       assert count is not None
@@ -86,6 +89,14 @@ def test_movement_is_an_index_remap(case: str) -> None:
   fn = _function(f"remap_{case}", shapes, lambda *xs: body(*xs).sin())
   assert not _privates(_lowered(fn))
   _check(fn, shapes, lambda *xs: np.sin(reference(*xs)))
+
+
+@needs_cc
+def test_empty_reshape_transpose_keeps_the_nonempty_concat_piece() -> None:
+  shapes = ((0, 3, 4), (4, 2))
+  fn = _function("empty_reshape_concat", shapes, lambda a, b: sc.concat((a.transpose((2, 0, 1)).reshape((4, 0)), b), axis=1))
+  assert not _privates(_lowered(fn))
+  _check(fn, shapes, lambda a, b: np.concatenate((a.transpose(2, 0, 1).reshape(4, 0), b), axis=1))
 
 
 @needs_cc
@@ -145,6 +156,40 @@ def test_a_libm_call_is_not_duplicated_by_two_reads(expensive: bool) -> None:
   else:
     assert not _privates(proc)
   _check(fn, ((8,),), (lambda x: np.sin(x) ** 2) if expensive else (lambda x: (3 * x) ** 2))
+
+
+@needs_cc
+def test_automatic_scalarization_preserves_known_zeros_with_infinity() -> None:
+  stage = _function("known_zero_stage", ((2,), (2,)), lambda x, w: (x * sc.const([0.0, 1.0])) * sc.const([np.inf, 1.0]) + w)
+
+  @sc.function(sc.group(sc.arg("z", 4), sc.arg("v", 4)), outputs=sc.arg("y", 4), name="known_zero_map")
+  def fn(inputs):
+    z, v = inputs
+    return _mapped_call(stage, 2, [(z, 0, 2), (v, 0, 2)])
+
+  np.testing.assert_array_equal(fn((np.array([1.0, 2.0, 3.0, 4.0]), np.array([5.0, 6.0, 7.0, 8.0]))), [5.0, 8.0, 7.0, 12.0])
+
+
+def test_reused_selection_stores_only_the_selected_exp_values() -> None:
+  def body(x):
+    picked = sc.gather(x.exp(), [3, 7])
+    return picked * picked
+
+  proc = _lowered(_function("reused_exp_selection", ((1000,),), body))
+  assert _work(proc, ProgramOp.EXP) == 2
+  assert [buf.attrs["shape"] for buf in _privates(proc)] == [(2,)]
+
+
+def test_sampled_product_counts_its_select_condition_read() -> None:
+  a = CanonicalPattern((3, 3), (0, 1, 1, 2), (0, 0, 2, 1))
+  b = CanonicalPattern((3, 3), (0, 0, 1, 2), (0, 2, 1, 2))
+  output = CanonicalPattern((3, 3), (0, 1, 2), (0, 2, 1))
+
+  def body(v, w):
+    masked = sc.pack(sc.where(v.sin() > 0, v, 0.0), a)
+    return sc.values(sc.matmul(masked, sc.pack(w, b), sampled=output)).block()
+
+  assert _work(_lowered(_function("sampled_condition", ((4,), (4,)), body)), ProgramOp.SIN) == 4
 
 
 @needs_cc
