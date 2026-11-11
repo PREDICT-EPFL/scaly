@@ -90,7 +90,7 @@ class _LinkerNamespace:
   id: int
   external: bool
   libraries: list[ctypes.CDLL]
-  dependencies: dict[str, str]
+  dependencies: dict[str, tuple[str, str]]
   environ: ctypes.c_void_p | None = None
 
 
@@ -98,7 +98,8 @@ _LINKER_NAMESPACES: list[_LinkerNamespace] = []
 _LINKER_NAMESPACE_LOCK = threading.Lock()
 
 
-def _elf_identity(path: Path) -> tuple[str | None, str]:
+@functools.lru_cache(maxsize=128)
+def _elf_identity(path: Path, _size: int, _mtime_ns: int) -> tuple[str | None, str]:
   data = path.read_bytes()
   endian = "<" if data[5] == 1 else ">"
   wide = data[4] == 2
@@ -127,12 +128,32 @@ def _elf_identity(path: Path) -> tuple[str | None, str]:
   return soname, hashlib.sha256(data).hexdigest()
 
 
-def _namespace_dependencies(path: Path) -> dict[str, str]:
-  # ldd asks the platform loader to resolve the full closure without running initializers.
-  result = subprocess.run(["ldd", str(path)], capture_output=True, text=True, env={**os.environ, "LC_ALL": "C"})
+@functools.cache
+def _linux_loader() -> tuple[str, str]:
+  libc = ctypes.CDLL("libc.so.6")
+  getauxval = libc.getauxval
+  getauxval.argtypes = [ctypes.c_ulong]
+  getauxval.restype = ctypes.c_void_p
+  dladdr = libc.dladdr
+  dladdr.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+  dladdr.restype = ctypes.c_int
+
+  def location(address: int | None) -> str:
+    info = (ctypes.c_void_p * 4)()  # Dl_info: filename, load address, symbol name, symbol address.
+    if not dladdr(address, info):
+      raise OSError("cannot locate the process's ELF loader and libc")
+    return os.fsdecode(ctypes.string_at(info[0]))
+
+  return location(getauxval(7)), location(ctypes.cast(libc.getpid, ctypes.c_void_p).value)  # AT_BASE is the loader's address.
+
+
+def _namespace_dependencies(path: Path) -> dict[str, tuple[str, str]]:
+  loader, libc_path = _linux_loader()
+  # --list resolves the full closure without initializers or an ldd shell-script dependency.
+  result = subprocess.run([loader, "--list", str(path)], capture_output=True, text=True, env={**os.environ, "LC_ALL": "C"})
   if result.returncode and "statically linked" not in result.stdout:
     raise OSError(f"cannot inspect dependencies of {path}: {result.stderr or result.stdout}")
-  paths = [(str(path), path)]
+  paths = [(str(path), path), (libc_path, Path(libc_path))]
   for line in result.stdout.splitlines():
     name, _, resolved = line.strip().rpartition(" => ")
     resolved = resolved.rsplit(" (", 1)[0].strip()
@@ -140,8 +161,11 @@ def _namespace_dependencies(path: Path) -> dict[str, str]:
       paths.append((name or resolved, Path(resolved)))
   dependencies = {}
   for requested, library in paths:
-    soname, identity = _elf_identity(library.resolve())
-    for name in (requested, str(library), str(library.resolve()), *((soname,) if soname else ())):
+    canonical = library.resolve()
+    stat = canonical.stat()
+    soname, content = _elf_identity(canonical, stat.st_size, stat.st_mtime_ns)
+    identity = str(canonical), content
+    for name in (requested, str(library), str(canonical), *((soname,) if soname else ())):
       if name in dependencies and dependencies[name] != identity:
         raise OSError(f"conflicting dependencies for {name} in {path}")
       dependencies[name] = identity
@@ -151,7 +175,7 @@ def _namespace_dependencies(path: Path) -> dict[str, str]:
 def load_library(path: Path, *, isolated: bool, namespace: tuple[str, ...] = ()) -> ctypes.CDLL:
   """Load a shared library, isolating incompatible Linux dependency builds from one another.
 
-  External kernels reuse a namespace when all shared paths and SONAMEs have identical content,
+  External kernels reuse a namespace when shared names identify the same path and content,
   including transitive dependencies. The solver namespace stays separate. Loaded handles and
   namespaces live until process exit, so old compiled handles remain callable after a rebuild.
   Environment changes after the last load remain subject to the limitation tracked in #159.
@@ -170,6 +194,23 @@ def load_library(path: Path, *, isolated: bool, namespace: tuple[str, ...] = ())
   dlerror = libc.dlerror
   dlerror.argtypes = []
   dlerror.restype = ctypes.c_char_p
+
+  def open_library(namespace_id: int, name: str) -> ctypes.CDLL:
+    dlerror()
+    handle = dlmopen(namespace_id, os.fsencode(name), os.RTLD_NOW | os.RTLD_LOCAL)
+    if not handle:
+      error = dlerror()
+      reason = error.decode(errors="replace") if error else "unknown loader error"
+      advice = (
+        ". Use a fresh process with fewer incompatible dependency versions." if "no more namespaces" in reason or "static TLS" in reason else ""
+      )
+      raise OSError(f"dlmopen failed for {name}: {reason}{advice}")
+    # Python 3.14 reopens a path even when CDLL receives a handle, so bind it directly.
+    lib = ctypes.CDLL(None)
+    lib._handle = handle
+    lib._name = name
+    return lib
+
   with _LINKER_NAMESPACE_LOCK:
     dependencies = _namespace_dependencies(path) if namespace else {}
     previous = next(
@@ -181,42 +222,37 @@ def load_library(path: Path, *, isolated: bool, namespace: tuple[str, ...] = ())
       ),
       None,
     )
-    namespace_id = previous.id if previous is not None else _LM_ID_NEWLM
-    environ = previous.environ if previous is not None else None
-    # A namespace's libc retains the process environment array from its first load. Refresh it
-    # before another initializer calls getenv, since Python may have replaced that array.
-    if environ is not None:
-      environ.value = ctypes.c_void_p.in_dll(libc, "environ").value
-    dlerror()
-    # Prefer this kernel's own dependencies over the namespace anchor's exported symbols.
-    mode = os.RTLD_NOW | os.RTLD_LOCAL | (os.RTLD_DEEPBIND if namespace else 0)
-    handle = dlmopen(namespace_id, os.fsencode(path), mode)
-    if not handle:
-      error = dlerror()
-      reason = error.decode(errors="replace") if error else "unknown loader error"
-      advice = (
-        ". Use a fresh process with fewer incompatible dependency versions." if "no more namespaces" in reason or "static TLS" in reason else ""
-      )
-      raise OSError(f"dlmopen failed for {path}: {reason}{advice}")
-    # Python 3.14 reopens a path even when CDLL receives a handle, so bind it directly.
-    lib = ctypes.CDLL(None)
-    lib._handle = handle
-    lib._name = str(path)
+    anchor = None
     if previous is None:
+      # A libc-only anchor leaves other symbols in each kernel's local dependency scope.
+      # DEEPBIND can split libc's allocator calls from a kernel's free; the extern buffer
+      # contract does not prevent that internal mismatch. Keep ordinary LOCAL lookup.
+      anchor = open_library(_LM_ID_NEWLM, _linux_loader()[1] if namespace else str(path))
       dlinfo = libc.dlinfo
       dlinfo.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
       dlinfo.restype = ctypes.c_int
       resolved = ctypes.c_long()
-      if dlinfo(handle, _RTLD_DI_LMID, ctypes.byref(resolved)) != 0:
+      if dlinfo(anchor._handle, _RTLD_DI_LMID, ctypes.byref(resolved)) != 0:
         raise OSError(f"dlinfo failed for {path}")
-      previous = _LinkerNamespace(resolved.value, bool(namespace), [], {})
+      previous = _LinkerNamespace(resolved.value, bool(namespace), [anchor], {})
       _LINKER_NAMESPACES.append(previous)
+      try:
+        previous.environ = ctypes.c_void_p.in_dll(anchor, "environ")
+      except ValueError:
+        pass  # A self-contained solver kernel need not link libc.
+    environ = previous.environ
+    # A namespace's libc retains the process environment array from its first load. Refresh it
+    # before another initializer calls getenv, since Python may have replaced that array.
+    if environ is not None:
+      environ.value = ctypes.c_void_p.in_dll(libc, "environ").value
+    lib = anchor if anchor is not None and not namespace else open_library(previous.id, str(path))
     if environ is None:
       try:
         environ = ctypes.c_void_p.in_dll(lib, "environ")
       except ValueError:
         pass  # A self-contained external kernel need not link libc.
-    previous.libraries.append(lib)
+    if lib is not anchor:
+      previous.libraries.append(lib)
     previous.dependencies.update(dependencies)
     previous.environ = environ
   return lib

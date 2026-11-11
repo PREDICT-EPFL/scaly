@@ -76,14 +76,38 @@ itself reports that requirement. Flatten order, NULL workspace and the current f
 are explicit in the extern docstring.
 
 #357 makes compatible external kernels share Linux linker namespaces. Before loading, the JIT
-uses glibc's `ldd` to resolve transitive dependencies without running initializers, and reads ELF
-shared-object names and content identities. A namespace is compatible when every common requested
-name, path and shared-object name identifies the same binary. Independent dependencies can join
+asks the running process's ELF loader to list transitive dependencies without running
+initializers, and reads shared-object names and content identities. It locates the loader and libc
+through glibc's `getauxval` and `dladdr`, so loading needs neither `ldd` nor a shell. Metadata and
+content hashes are cached by canonical path, file size and modification time. A namespace is
+compatible when every common requested name, path and shared-object name identifies the same
+canonical path and binary content. Identical copies at different paths stay separate because their
+`$ORIGIN`-relative plugins can differ. Independent dependencies can join
 it. Conflicting versions use separate namespaces, even when their files live in different
-directories. `RTLD_DEEPBIND` makes each kernel resolve symbols through its own dependencies before
-the namespace's first kernel, whose dependencies otherwise take precedence. The solver namespace
-remains separate and keeps its existing load flags. #342 should preserve this rule when moving
-solver libraries onto externs.
+directories.
+
+Each external namespace starts with the process's libc as its anchor. Kernels then load with
+`RTLD_NOW | RTLD_LOCAL`. Only libc and the dynamic loader occupy the namespace's shared lookup
+scope, so other symbols resolve through each kernel's own dependencies. The solver namespace
+remains separate and keeps its existing first-kernel anchor and load flags.
+
+The correctness review rejected `RTLD_DEEPBIND`. It split `strdup`'s allocation in the shared libc
+from a later kernel's `free`, which bound to a dependency's replacement allocator, and crashed in
+both load orders. The extern buffer contract does not constrain allocation inside dependencies,
+so it cannot justify that flag. A libc anchor keeps these allocation and release calls together.
+Replacement allocator symbols in dependencies do not override libc through ordinary lookup.
+#342 should retain this binding rule when moving solver libraries onto externs and must not rely
+on an allocator interposer overriding libc.
+
+Dependency inspection covers linked dependencies, not libraries opened later with `dlopen`.
+Do not change `LD_LIBRARY_PATH` during the process: glibc retains its startup search path, while a
+new inspection process sees the current environment. Use a fresh process after changing it.
+C++ allocation and release pairs must follow the dependencies' own ABI, which the extern
+buffer contract does not validate. C++ inline-function and template statics can have different copies across separately built
+libraries unless their compiler gives them unique binding within the namespace. Namespace reuse
+does not promise process-wide C++ singleton identity. AddressSanitizer-instrumented dependencies
+and tools that require process-wide symbol interposition remain unsupported in isolated
+namespaces, as before this change. Removing deep binding does not provide that support.
 
 Loaded handles, namespace records and their accumulated dependency identities stay alive until
 process exit. Dropping a Python compiled handle does not unload its code or free a namespace.

@@ -2299,6 +2299,10 @@ tests/codegen/test_external.py::test_compatible_linker_namespaces[path]
 tests/codegen/test_external.py::test_compatible_linker_namespaces[soname]
 tests/codegen/test_external.py::test_compatible_linker_namespaces[transitive]
 tests/codegen/test_external.py::test_external_and_generated_prints_survive_redirected_stdout
+tests/codegen/test_external.py::test_external_dependency_inspection_does_not_need_shell_tools
+tests/codegen/test_external.py::test_external_namespace_keeps_libc_allocation_and_free_together[allocator,plain]
+tests/codegen/test_external.py::test_external_namespace_keeps_libc_allocation_and_free_together[plain,allocator]
+tests/codegen/test_external.py::test_identical_dependencies_at_different_paths_keep_their_own_plugins
 tests/codegen/test_external.py::test_include_header_edit_misses_the_index_in_another_process[extra.h-index]
 tests/codegen/test_external.py::test_include_header_edit_misses_the_index_in_another_process[extra.h-verify]
 tests/codegen/test_external.py::test_include_header_edit_misses_the_index_in_another_process[value.h-index]

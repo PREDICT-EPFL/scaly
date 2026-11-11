@@ -12,10 +12,13 @@ roadmap's external-code decision and the project contribution rules.
   cached artifacts and process-lifetime handles. Record the rule for #342.
 - [x] Run focused extern/JIT/solver checks with at most two workers, prove the gates
   reject broken reuse/isolation, and keep C snapshots byte-identical.
-- [ ] Run all merge checks detached through `~/.scaly-suite/run`, then commit, push
+- [x] Run all merge checks detached through `~/.scaly-suite/run`, then commit, push
   once and open/link a draft PR against main.
 - [ ] Obtain one Opus 5.5 high correctness review, fix findings and obtain one short
   delta check. Settle both delegate threads after using their results.
+- [ ] Confirm the review explicitly evaluates deep binding, allocator ownership and
+  interposing tools. Record the chosen binding rule beside the load flags, in
+  `extern.md` and in the PR description before deciding to queue.
 - [ ] Remove this temporary plan, finish checks and the PR evidence, mark ready and
   queue once with `gh pr merge N --squash --auto`. Watch until landed or blocked.
 
@@ -30,3 +33,19 @@ passed with 368 passed and 2 skipped. Collection has 4,758 tests. Ruff and ty pa
 The detached full merge check passed through the shared runner: 4,702 passed and
 56 skipped, then benchmark smoke, documentation build and private-name checks passed.
 Logs and exit status are at `/tmp/scaly357-full.log` and `/tmp/scaly357-full.exit`.
+
+Opus high requested changes and its completed review thread has been settled. It
+reproduced allocator crashes in both load orders under deep binding. The fix uses
+a libc-only namespace anchor with ordinary LOCAL lookup. Notes addressed: direct
+loader inspection avoids ldd/bash, metadata hashing is cached, canonical paths
+prevent identical launcher copies sharing different origin-relative plugins, and
+runtime search-path/C++ singleton/tooling limits are recorded in the section note.
+
+The four added review regression cases failed on the reviewed implementation and
+pass now. Replacing the libc anchor with the first kernel fails the independent
+gate. Focused checks now pass with 372 passed, 2 skipped; collection is 4,762 tests.
+Ruff, ty including Windows, and unchanged C baseline checks pass. The final shared
+runner log/exit files are `/tmp/scaly357-fixed-full.log` and `.exit`. After it
+passes: commit all review fixes, obtain one low-effort Opus delta check against
+the reviewed state, remove PLAN.md, push the final fixes once, update the review
+line/evidence, mark ready, queue once and watch. PR is #424.
