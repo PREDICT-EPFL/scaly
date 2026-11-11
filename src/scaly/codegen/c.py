@@ -26,6 +26,7 @@ from .casadi import casadi_defines, casadi_gather, casadi_scratch, render_casadi
 from ..ad.rules import ELEMENTWISE
 from ..function.concrete import ConcreteFunction
 from ..passes.lowering import LoweringError, main_proc
+from ..passes.arith import SIGNED_WRAP_OPS
 from ..ir import program as p
 from ..ir.expr import OP_INFO
 from ..ir.match import Pattern, rewrite
@@ -299,6 +300,23 @@ def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dic
       lines.append(f"{pad}{stmt.dtype.c_type} {name}[{size}];")
 
 
+def _has_integer_data(body: list[ProgramNode]) -> bool:
+  """Detect signed data without visiting address and range expressions."""
+  pending = list(body)
+  seen: set[ProgramNode] = set()
+  while pending:
+    node = pending.pop()
+    if node in seen or node.op in (ProgramOp.VIEW, ProgramOp.RANGE):
+      continue
+    seen.add(node)
+    if node.op == ProgramOp.LOAD and node.args[0].attrs.get("index_table"):
+      continue
+    if node.dtype.is_integer and not node.dtype.is_unsigned and node.op in (ProgramOp.CAST, ProgramOp.SELECT, ProgramOp.LOAD):
+      return True
+    pending.extend(node.args)
+  return False
+
+
 def _emit_body(
   body: list[ProgramNode],
   ptr_expr: dict[str, str],
@@ -308,12 +326,17 @@ def _emit_body(
   dialect: CDialect = "gnu",
   solver_callees: frozenset[str] = frozenset(),
   options_name: str = "solver_options",
+  integer_data: bool | None = None,
 ) -> None:
   """Render Program statements in order."""
+  if integer_data is None:
+    integer_data = _has_integer_data(body)
   for stmt in body:
     if stmt.op == ProgramOp.BUFFER:
       continue
-    _emit_statement(stmt, ptr_expr, lines, indent, dialect=dialect, solver_callees=solver_callees, options_name=options_name)
+    _emit_statement(
+      stmt, ptr_expr, lines, indent, dialect=dialect, solver_callees=solver_callees, options_name=options_name, integer_data=integer_data
+    )
 
 
 def _emit_statement(
@@ -325,24 +348,43 @@ def _emit_statement(
   dialect: CDialect = "gnu",
   solver_callees: frozenset[str] = frozenset(),
   options_name: str = "solver_options",
+  integer_data: bool,
 ) -> None:
   pad = " " * indent
   if stmt.op == ProgramOp.BLOCK:
-    _emit_body(list(stmt.args), ptr_expr, lines, indent, dialect=dialect, solver_callees=solver_callees, options_name=options_name)
+    _emit_body(
+      list(stmt.args),
+      ptr_expr,
+      lines,
+      indent,
+      dialect=dialect,
+      solver_callees=solver_callees,
+      options_name=options_name,
+      integer_data=integer_data,
+    )
   elif stmt.op == ProgramOp.FOR and "vector_helper" in stmt.attrs:
     _emit_vector_calls(stmt, ptr_expr, lines, indent)
   elif stmt.op == ProgramOp.FOR:
     rng = stmt.args[0]
     name = c_ident(rng.attrs["name"])
-    start = _emit_scalar(rng.args[0], ptr_expr)
-    stop = _emit_scalar(rng.args[1], ptr_expr)
-    step = _emit_scalar(rng.args[2], ptr_expr)
+    start = _emit_scalar(rng.args[0], ptr_expr, index=True)
+    stop = _emit_scalar(rng.args[1], ptr_expr, index=True)
+    step = _emit_scalar(rng.args[2], ptr_expr, index=True)
     incr = f"++{name}" if step == "1" else f"{name} += {step}"
     if stmt.attrs.get("exit_var"):
       lines.append(f"{pad}long long {name} = {start};")
     declaration = "" if stmt.attrs.get("exit_var") else "long long "
     lines.append(f"{pad}for ({declaration}{name} = {start}; {name} < {stop}; {incr}) {{")
-    _emit_body(list(stmt.args[1:]), ptr_expr, lines, indent + 2, dialect=dialect, solver_callees=solver_callees, options_name=options_name)
+    _emit_body(
+      list(stmt.args[1:]),
+      ptr_expr,
+      lines,
+      indent + 2,
+      dialect=dialect,
+      solver_callees=solver_callees,
+      options_name=options_name,
+      integer_data=integer_data,
+    )
     lines.append(f"{pad}}}")
   elif stmt.op == ProgramOp.BREAK_IF:
     lines.append(f"{pad}if ({_emit_scalar(stmt.args[0], ptr_expr)}) break;")
@@ -351,7 +393,7 @@ def _emit_statement(
   elif stmt.op == ProgramOp.STORE_PAIR:
     view = stmt.args[0]
     ptr = ptr_expr.get(view.attrs["buffer"], c_ident(view.attrs["buffer"]))
-    index = _emit_scalar(view.args[0], ptr_expr)
+    index = _emit_scalar(view.args[0], ptr_expr, index=True)
     if dialect == "c":
       for offset, value in enumerate(stmt.args[1:]):
         _emit_assignment(f"{ptr}[({index}) + {offset}]", [value], ptr_expr, lines, indent)
@@ -360,7 +402,7 @@ def _emit_statement(
       _emit_assignment(target, list(stmt.args[1:]), ptr_expr, lines, indent)
   elif stmt.op == ProgramOp.ASSIGN:
     declaration = f"{stmt.dtype.c_type} " if stmt.attrs.get("declare") else ""
-    _emit_assignment(c_ident(stmt.attrs["target"]), [stmt.args[0]], ptr_expr, lines, indent, declaration)
+    _emit_assignment(c_ident(stmt.attrs["target"]), [stmt.args[0]], ptr_expr, lines, indent, declaration, index=not integer_data)
   elif stmt.op == ProgramOp.CALL:
     n_in, n_out = int(stmt.attrs["n_in"]), int(stmt.attrs["n_out"])
     ptrs = [_emit_call_arg(a, ptr_expr) for a in stmt.args[: n_in + n_out]]
@@ -384,10 +426,19 @@ def _emit_statement(
     raise LoweringError(f"Program IR C renderer: statement op {stmt.op} not yet handled")
 
 
-def _emit_assignment(target: str, values: list[ProgramNode], ptr_expr: dict[str, str], lines: list[str], indent: int, declaration: str = "") -> None:
+def _emit_assignment(
+  target: str,
+  values: list[ProgramNode],
+  ptr_expr: dict[str, str],
+  lines: list[str],
+  indent: int,
+  declaration: str = "",
+  *,
+  index: bool = False,
+) -> None:
   """Render one scalar or paired assignment."""
   pad = " " * indent
-  parts = [_emit_scalar(value, ptr_expr) for value in values]
+  parts = [_emit_scalar(value, ptr_expr, index=index) for value in values]
   rhs = parts[0] if len(parts) == 1 else f"(double2){{{', '.join(parts)}}}"
   lines.append(f"{pad}{declaration}{target} = {rhs};")
 
@@ -398,7 +449,7 @@ def _emit_call_arg(node: ProgramNode, ptr_expr: dict[str, str]) -> str:
     return ptr_expr.get(node.attrs["name"], c_ident(node.attrs["name"]))
   if node.op == ProgramOp.VIEW:
     ptr = ptr_expr.get(node.attrs["buffer"], c_ident(node.attrs["buffer"]))
-    idx = _emit_scalar(node.args[0], ptr_expr)
+    idx = _emit_scalar(node.args[0], ptr_expr, index=True)
     return ptr if idx == "0" else f"({ptr} + {idx})"
   raise LoweringError(f"unsupported CALL arg op {node.op}")
 
@@ -407,7 +458,7 @@ def _emit_view(view: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, 
   if view.op != ProgramOp.VIEW:
     raise LoweringError(f"expected a VIEW, got {view.op}")
   ptr = ptr_expr.get(view.attrs["buffer"], c_ident(view.attrs["buffer"]))
-  idx = _emit_scalar(view.args[0], ptr_expr, var_expr)
+  idx = _emit_scalar(view.args[0], ptr_expr, var_expr, index=True)
   return f"{ptr}[{idx}]"
 
 
@@ -444,7 +495,7 @@ def _c_float(value: float, dtype: DType) -> str:
   return "-0.0" if value == 0 and math.copysign(1, value) < 0 else f"{value:.17g}"
 
 
-def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, str] | None = None) -> str:
+def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, str] | None = None, *, index: bool = False) -> str:
   """Render a prepared scalar tree bottom up."""
   text: dict[int, str] = {}
   stack = [(n, False)]
@@ -469,6 +520,12 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, s
       s = (var_expr or {}).get(node.attrs["name"], c_ident(node.attrs["name"]))
     elif op == ProgramOp.LOAD:
       s = (var_expr or {}).get(f"@load{id(node)}") or _emit_view(node.args[0], ptr_expr, var_expr)
+    elif not index and node.dtype.is_integer and not node.dtype.is_unsigned and op in SIGNED_WRAP_OPS:
+      # Compiler indices are bounded by static shapes. User arithmetic wraps before every use,
+      # including a comparison or another operation without an intervening store.
+      unsigned = [f"((uint{node.dtype.bits}_t)({a}))" for a in args]
+      value = f"0 - {unsigned[0]}" if op == ProgramOp.NEG else f"{unsigned[0]} {_BIN_SYM[op]} {unsigned[1]}"
+      s = f"(({node.dtype.c_type})({value}))"
     elif op in _PREFIX:
       s = f"({_PREFIX[op]}{args[0]})"
     elif op in _INTEGER_C and node.dtype.is_integer:
@@ -483,7 +540,9 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, s
       s = f"{_BINARY_C[op]}{'f' if node.dtype == dtypes.float32 else ''}({args[0]}, {args[1]})"
     elif op == ProgramOp.BIT_SELECT:
       zero = "0.0f" if node.dtype.bits == 32 else "0.0"
-      s = f"(((((int64_t)({args[0]})) >> ({args[1]})) & 1) ? {args[2]} : {zero})"
+      word = _emit_scalar(node.args[0], ptr_expr, var_expr, index=True)
+      bit = _emit_scalar(node.args[1], ptr_expr, var_expr, index=True)
+      s = f"(((((int64_t)({word})) >> ({bit})) & 1) ? {args[2]} : {zero})"
     else:
       raise LoweringError(f"Program IR C renderer: scalar op {op} not yet handled")
     text[id(node)] = s
@@ -697,6 +756,7 @@ def _emit_vector_body(
   body: list[ProgramNode], vec: str, start: str, lane: str, width: str, lines: list[str], scope: NameScope, valid_count: str, dtype: DType
 ) -> None:
   vector_vars: set[str] = set()
+  integer_data = _has_integer_data(body)
   lane_vars: dict[str, str] = {}
   per_lane = {lane}
   clamp = p.add(p.var(start), p.var(lane))
@@ -731,8 +791,8 @@ def _emit_vector_body(
         word_node, bit_node, value_node = node.args
         # A word that is the same in every lane, as pack_masks emits it, is read once and broadcast.
         uniform = not varies(word_node)
-        word_text = _emit_scalar(word_node, {}, first_lane() if uniform else lane_vars)
-        bit_text = _emit_scalar(bit_node, {}, lane_vars)
+        word_text = _emit_scalar(word_node, {}, first_lane() if uniform else lane_vars, index=True)
+        bit_text = _emit_scalar(bit_node, {}, lane_vars, index=True)
         if dtype.bits == 32:
           hit = scope.allocate("kh")
           lines.append(f"  {vec}_i{dtype.bits} {hit};")
@@ -797,7 +857,7 @@ def _emit_vector_body(
       if stmt.op == ProgramOp.FOR:
         rng = stmt.args[0]
         name = c_ident(rng.attrs["name"])
-        start, stop, step = (_emit_scalar(n, {}) for n in rng.args)
+        start, stop, step = (_emit_scalar(n, {}, index=True) for n in rng.args)
         lines.append(f"  for (long long {name} = {start}; {name} < {stop}; {name} += {step}) {{")
         first = len(lines)
         emit(list(stmt.args[1:]))
@@ -812,12 +872,12 @@ def _emit_vector_body(
           vector_vars.add(stmt.attrs["target"])
         elif varies(stmt.args[0]):
           lines.append(f"  {stmt.dtype.c_type} {name}[{width}];")
-          value = _emit_scalar(stmt.args[0], {}, lane_vars)
+          value = _emit_scalar(stmt.args[0], {}, lane_vars, index=not integer_data)
           lines.append(f"  for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}[{lane}] = {value};")
           lane_vars[stmt.attrs["target"]] = f"{name}[{lane}]"
           per_lane.add(stmt.attrs["target"])
         else:
-          lines.append(f"  {stmt.dtype.c_type} {name} = {_emit_scalar(stmt.args[0], {}, lane_vars)};")
+          lines.append(f"  {stmt.dtype.c_type} {name} = {_emit_scalar(stmt.args[0], {}, lane_vars, index=not integer_data)};")
       elif stmt.op == ProgramOp.STORE and stmt.attrs.get("ordered_reduction"):
         target, value = stmt.args
         staged = dict(lane_vars)
@@ -834,14 +894,14 @@ def _emit_vector_body(
           view = stmt.args[0]
           pointer = c_ident(view.attrs["buffer"])
           if view.attrs.get("lane_stride") == 1:
-            first = _emit_scalar(rewrite(view.args[0], unclamped, rebuild=rebuild_program, fixpoint=False), {}, first_lane())
+            first = _emit_scalar(rewrite(view.args[0], unclamped, rebuild=rebuild_program, fixpoint=False), {}, first_lane(), index=True)
             if view.attrs.get("lane_local"):
               lines.append(f"  *({vec}_mem*)(&{pointer}[({first}) + {offset}]) = {value};")
             else:
               lines.append(f"  {vec}_st(&{pointer}[({first}) + {offset}], {value}, {valid_count});")
           else:
             name = scope.allocate("r")
-            index = _emit_scalar(view.args[0], {}, lane_vars)
+            index = _emit_scalar(view.args[0], {}, lane_vars, index=True)
             valid = width if view.attrs.get("lane_local") else valid_count
             lines.append(f"  {vec} {name} = {value};")
             lines.append(f"  for (long long {lane} = 0; {lane} < {valid}; ++{lane}) {pointer}[({index}) + {offset}] = {name}[{lane}];")

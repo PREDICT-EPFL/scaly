@@ -338,7 +338,10 @@ def view(buf: ProgramNode, index: Sequence[ProgramNode]) -> ProgramNode:
     raise ValueError("view requires exactly one flat index")
   if index[0].op not in SCALAR_OPS:
     raise TypeError(f"view index must be a scalar ProgramNode, got {index[0].op}")
-  return ProgramNode(ProgramOp.VIEW, tuple(index), attrs={"buffer": buf.attrs["name"]}, dtype=buf.dtype)
+  attrs = {"buffer": buf.attrs["name"]}
+  if buf.attrs.get("index_table"):
+    attrs["index_table"] = True
+  return ProgramNode(ProgramOp.VIEW, tuple(index), attrs=attrs, dtype=buf.dtype)
 
 
 def load(view_node: ProgramNode) -> ProgramNode:

@@ -19,7 +19,8 @@ COUNT = 37  # not a multiple of any lane width, so the last chunk is partial
 
 
 @pytest.mark.parametrize("lanes", [1, 2, 4, 8])
-def test_lane_varying_word_matches_numpy(tmp_path, lanes):
+@pytest.mark.parametrize("dialect", ["gnu", "c"])
+def test_lane_varying_word_matches_numpy(tmp_path, lanes, dialect):
   words = np.random.default_rng(lanes).integers(0, 256, size=COUNT)
   x = p.buffer("x", dtypes.float64, (COUNT,))
   y = p.buffer("y", dtypes.float64, (COUNT,))
@@ -32,7 +33,8 @@ def test_lane_varying_word_matches_numpy(tmp_path, lanes):
     n.op == ProgramOp.FOR and "vector_helper" in n.attrs and any(m.op == ProgramOp.BIT_SELECT for m in walk_program(n)) for n in walk_program(prog)
   )
 
-  source = "\n".join([*_includes(dialect="gnu", prog=prog), *_render_raw_callee(prog.args[0], dialect="gnu")])
+  source = "\n".join([*_includes(dialect=dialect, prog=prog), *_render_raw_callee(prog.args[0], dialect=dialect)])
+  assert "uint64_t" not in source
   source += "\nvoid run(double *x, double *y) { double w[1]; kernel_raw(x, y, w); }\n"
   path, library = tmp_path / "kernel.c", tmp_path / "kernel.so"
   path.write_text(source)
