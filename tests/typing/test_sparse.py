@@ -1,6 +1,6 @@
 """Static sparse numerical declarations, inferred results, calls and maps."""
 
-from typing import TYPE_CHECKING, assert_type
+from typing import TYPE_CHECKING, Any, assert_type
 
 import numpy as np
 from scipy import sparse
@@ -247,3 +247,24 @@ if TYPE_CHECKING:
   assert_type(sc.sparse_hessian(sparse_cost)(matrix), np.ndarray)
   assert_type(sc.lagrangian_hessian(hole)(matrix, matrix), np.ndarray)
   assert_type(sc.sparse_lagrangian_hessian(hole)(matrix, matrix), np.ndarray)
+
+
+if TYPE_CHECKING:
+
+  @sc.function()
+  def bare_cost(x: sc.Expr) -> sc.Expr:
+    return (x * x).sum()
+
+  @sc.function(sc.arg("x", 2))
+  def packed_pair(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    return sc.pack(x, diagonal), x
+
+  # Any trees can still select a dense overload; #381 owns preserving their uncertainty.
+  assert_type(bare_cost, sc.Function[tuple[sc.Expr], Any, sc.Expr, Any])
+  assert_type(sc.gradient(bare_cost), sc.Function[tuple[sc.Expr], Any, sc.Expr, np.ndarray])
+  assert_type(sc.gradient(bare_cost)(matrix), np.ndarray)
+  assert_type(packed_pair, sc.Function[tuple[sc.Expr], tuple[np.ndarray], tuple[sc.Expr, sc.Expr], Any])
+  assert_type(sc.forward(packed_pair, of="out0")(np.ones(2), np.ones(2)), np.ndarray)
+  assert_type(sc.forward(packed_pair.instantiate(), of="out0").numerical_call(np.ones(2), np.ones(2)), np.ndarray)
+  assert_type(sc.vmap(sc.forward(packed_pair, of="out0"), 2)(np.ones((2, 2)), np.ones((2, 2))), np.ndarray)
+  assert_type(sc.adjoint(packed_pair, of="out0"), sc.Function[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray], sc.Expr, np.ndarray])

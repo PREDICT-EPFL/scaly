@@ -855,6 +855,11 @@ input tree's. Selecting a leaf by its string name cannot narrow a mixed tree sta
 shape-hole traces therefore keep the union where the shared `Tree` type cannot prove density;
 separate accepted-input and result types remain outside this model ([#191]).
 
+These rules require declared numerical trees. Bare numerical inputs and arbitrary inferred output
+pytrees still use `Any`, which can satisfy a dense overload's bound and give a NumPy result or seed
+annotation even for a sparse trace ([#381]). Preserving uncertainty for those `Any` trees remains
+separate from the declared-tree guarantees above.
+
 **What a binding carries.** The playground keys instances on shapes only (`LeafKey(shape)` in
 `trees.py`). The key becomes the bound leaf type, `(shape, dtype, diff, pattern)` with a layout for
 sparse leaves, and a leaf declaration gains optional dtype and pattern fields, each of which may be
@@ -1502,6 +1507,8 @@ writing the guide).
 [#56]: https://github.com/PREDICT-EPFL/scaly/issues/56
 [#109]: https://github.com/PREDICT-EPFL/scaly/issues/109
 [#115]: https://github.com/PREDICT-EPFL/scaly/issues/115
+[#191]: https://github.com/PREDICT-EPFL/scaly/issues/191
+[#381]: https://github.com/PREDICT-EPFL/scaly/issues/381
 [#40]: https://github.com/PREDICT-EPFL/scaly/issues/40
 [#35]: https://github.com/PREDICT-EPFL/scaly/issues/35
 [#15]: https://github.com/PREDICT-EPFL/scaly/issues/15
