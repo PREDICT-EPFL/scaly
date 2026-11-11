@@ -126,9 +126,10 @@ def test_sparse_maps_use_stored_widths_and_return_batched_sparse_arrays(length: 
 
 @pytest.mark.parametrize("layout", LAYOUTS)
 @pytest.mark.parametrize("length", [0, 1, 3])
-def test_sparse_map_broadcast_and_raw_windows_use_canonical_stored_slots(layout, length: int) -> None:
+def test_sparse_map_broadcast_and_raw_windows_use_declared_layout(layout, length: int) -> None:
   type_ = sc.TensorType(PATTERN.shape, pattern=PATTERN)
-  stage = sc.function(sc.arg("x", type_, layout=layout), name="sparse_windows_stage")(lambda x: x.sin())
+  leaf = sc.arg("x", type_, layout=layout)
+  stage = sc.function(leaf, name="sparse_windows_stage")(lambda x: x.sin())
   mapped = sc.vmap(stage, length)
   source = sparse.coo_array(([2.0, 5.0, 0.0, -3.0], (PATTERN.rows, PATTERN.cols)), shape=PATTERN.shape)
   broadcast = mapped(sc.broadcast(source))
@@ -143,14 +144,71 @@ def test_sparse_map_broadcast_and_raw_windows_use_canonical_stored_slots(layout,
   direct = mapped(sc.window(data, 1, 6))
   assert isinstance(compiled, sparse.coo_array) and isinstance(direct, sparse.coo_array)
   expected = np.zeros((length, *PATTERN.shape))
+  declared = leaf.layouts[0]
+  assert isinstance(declared, SparseLayout)
   for i in range(length):
-    expected[i, PATTERN.rows, PATTERN.cols] = np.sin(data[1 + 6 * i : 1 + 6 * i + PATTERN.nnz])
+    compact = data[1 + 6 * i : 1 + 6 * i + PATTERN.nnz]
+    expected[i, declared.rows, declared.cols] = np.sin(compact)
+    np.testing.assert_allclose(stage(compact).toarray(), expected[i])
   np.testing.assert_allclose(compiled.toarray(), expected)
   np.testing.assert_allclose(direct.toarray(), expected)
   other = CanonicalPattern(PATTERN.shape, (0, 1, 2, 2), (0, 1, 0, 3))
   wrong = sc.arg("wrong", replace(type_, shape=(length, *PATTERN.shape), pattern=other)).symbols()
   with pytest.raises(ValueError, match="pattern"):
     mapped.symbolic_call(wrong)
+
+
+@pytest.mark.parametrize("layout", ["csc", "csr", "coordinate"])
+@pytest.mark.parametrize("batch", [(), (2, 3), (0,)])
+@pytest.mark.parametrize("empty", [False, True])
+@pytest.mark.parametrize("length", [0, 1, 3])
+def test_sparse_window_layout_matches_direct_values_for_batches_and_empty_patterns(layout, batch, empty: bool, length: int) -> None:
+  pattern = CanonicalPattern((3, 4), (), ()) if empty else CanonicalPattern((3, 4), (0, 0, 1, 2, 2), (0, 3, 1, 0, 2))
+  order = SparsityPattern(pattern.shape, (2, 0, 2, 0, 1), (2, 0, 0, 3, 1)) if not empty else SparsityPattern(pattern.shape, (), ())
+  leaf = sc.arg("x", sc.TensorType((*batch, *pattern.shape), pattern=pattern), layout=order if layout == "coordinate" else layout)
+  stage = sc.function(leaf, name="sparse_batched_window_stage")(lambda x: x.sin())
+  mapped = sc.vmap(stage, length)
+  declared = leaf.layouts[0]
+  assert isinstance(declared, SparseLayout)
+  width = leaf.types[0].storage_size
+  stride = width + 2
+  data = np.arange(1 + length * stride, dtype=float) / 7
+  raw = data[::-1]
+  compact = np.asarray([raw[1 + i * stride : 1 + i * stride + width] for i in range(length)]).reshape((length, *leaf.types[0].storage_shape))
+  expected = np.zeros((length, *batch, *pattern.shape))
+  expected[..., declared.rows, declared.cols] = np.sin(compact)
+  wrapper = sc.function(sc.arg("raw", data.size), name="sparse_batched_window_outer")(lambda raw: mapped(sc.window(raw[::-1], 1, stride)))
+  for result in (mapped(compact), mapped(sc.window(raw, 1, stride)), wrapper(data)):
+    assert isinstance(result, sparse.coo_array)
+    assert result.nnz == length * width
+    np.testing.assert_allclose(result.toarray(), expected)
+  for i in range(length):
+    np.testing.assert_allclose(stage(compact[i]).toarray(), expected[i])
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+@pytest.mark.parametrize("stride", [0, 1, 6])
+def test_sparse_window_layout_routes_overlapping_values_and_derivatives(layout, stride: int) -> None:
+  leaf = sc.arg("x", sc.TensorType(PATTERN.shape, pattern=PATTERN), layout=layout)
+  weights = np.arange(1.0, 13.0).reshape(PATTERN.shape)
+  stage = sc.function(leaf, name="sparse_window_weighted_stage")(lambda x: (sc.to_dense(x.sin()) * weights).sum())
+  mapped = sc.vmap(stage, 3)
+  size = 1 + 2 * stride + PATTERN.nnz
+  data = np.arange(size, dtype=float) / 7
+  wrapper = sc.function(sc.arg("raw", size), name="sparse_window_weighted_outer")(lambda raw: mapped(sc.window(raw, 1, stride)))
+  declared = leaf.layouts[0]
+  assert isinstance(declared, SparseLayout)
+  indices = 1 + np.arange(3)[:, None] * stride + np.arange(PATTERN.nnz)
+  factors = weights[declared.rows, declared.cols]
+  expected = (np.sin(data[indices]) * factors).sum(axis=1)
+  for result in (mapped(data[indices]), mapped(sc.window(data, 1, stride)), wrapper(data)):
+    assert isinstance(result, np.ndarray)
+    np.testing.assert_allclose(result, expected)
+  jac = np.zeros((3, size))
+  jac[np.arange(3)[:, None], indices] = np.cos(data[indices]) * factors
+  np.testing.assert_allclose(sc.jacobian(wrapper)(data), jac)
+  objective = sc.function(sc.arg("raw", size), name="sparse_window_weighted_sum")(lambda raw: wrapper(raw).sum())
+  np.testing.assert_allclose(sc.gradient(objective)(data), jac.sum(axis=0))
 
 
 @pytest.mark.parametrize("layout", LAYOUTS)

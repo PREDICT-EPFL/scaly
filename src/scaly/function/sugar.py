@@ -24,7 +24,7 @@ def _mapped_call(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr
   ``stride=0`` broadcasts one slice to every call. The verifier refuses a window that reads past its
   outer when the function holding the node is built. Formals and outputs may be rank-2; the node
   has shape ``(length * callee.results[output].type.storage_size,)``, with the calls' results concatenated flat.
-  Compact sparse windows use canonical pattern order; lowering applies the callee leaf's layout.
+  Internal compact sparse windows use canonical pattern order; lowering applies the callee leaf's layout.
   """
   callee = as_concrete(callee)
   out_expr = callee.results[output]
@@ -141,6 +141,7 @@ class _Mapped(_Derived):
   def _arguments(self, args: tuple[Any, ...]) -> tuple[ConcreteFunction, list[Any], list[tuple[int, int]], Any]:
     actuals = []
     layouts = []
+    canonical_inputs: dict[int, np.ndarray] = {}
 
     def resolve(tree: Tree | None, value: Any) -> Any:
       if isinstance(tree, _G) or (tree is None and isinstance(value, tuple)):
@@ -175,6 +176,7 @@ class _Mapped(_Derived):
           )
           decl = TensorType(shape, decl.dtype, decl.diff, pattern)
         if canonical is not None:
+          canonical_inputs[len(actuals)] = canonical
           actual = cast(Any, canonical)
       pattern = None if decl is None else decl.pattern
       if isinstance(marker, _Window):
@@ -209,7 +211,7 @@ class _Mapped(_Derived):
           if pattern is not None and canonical is None:
             layout = cast(_Leaf, tree).layouts[0]
             assert layout is not None
-            actual = layout.numerical_values(actual, shape if repeated else (self._length, *shape))[..., layout.inverse_permutation]
+            actual = layout.numerical_values(actual, shape if repeated else (self._length, *shape))
           actual = actual.reshape(-1)
           start, stride = 0, 0 if repeated else width
       if decl is not None and shape != decl.shape:
@@ -220,12 +222,23 @@ class _Mapped(_Derived):
       expected_dtype = TensorType(()).dtype if decl is None else decl.dtype
       if isinstance(actual, Expr) and actual.type.dtype != expected_dtype:
         raise ValueError(f"{self.name}: expected dtype {expected_dtype}, got {actual.type.dtype}")
+      if isinstance(marker, _Window) and isinstance(actual, Expr) and pattern is not None:
+        layout = cast(_Leaf, tree).layouts[0]
+        assert layout is not None and decl is not None
+        if not np.array_equal(layout.permutation, np.arange(pattern.nnz)):
+          slots = np.arange(width).reshape(decl.storage_shape)[..., layout.inverse_permutation].reshape(-1)
+          actual = actual.gather(start + np.arange(self._length)[:, None] * stride + slots).vec()
+          start, stride = 0, width
       actuals.append(actual)
       layouts.append((start, stride))
       return TensorType(shape, expected_dtype, True if decl is None else decl.diff, pattern)
 
     skeleton = resolve(self._source.inputs, args)
     concrete = self._source._bind(skeleton, self.name)
+    for index, canonical in canonical_inputs.items():
+      layout = concrete.input_tree.layouts[index]
+      assert layout is not None
+      actuals[index] = canonical[..., layout.permutation].reshape(-1)
     return concrete, actuals, layouts, skeleton
 
   @overload
@@ -273,11 +286,11 @@ class _Mapped(_Derived):
       raise ValueError(f"{self.name}: numerical_call needs numerical leaves")
     mapped = self._mapped_instance(skeleton)
     arrays = []
-    for actual, (start, stride), formal, layout in zip(actuals, layouts, concrete.inputs, concrete.input_tree.layouts, strict=True):
+    for actual, (start, stride), formal in zip(actuals, layouts, concrete.inputs, strict=True):
       array = np.asarray([actual[start + i * stride : start + i * stride + formal.type.storage_size] for i in range(self._length)]).reshape(
         (self._length, *formal.type.storage_shape)
       )
-      arrays.append(array[..., layout.permutation] if formal.type.pattern is not None and layout is not None else array)
+      arrays.append(array)
 
     return mapped.numerical_call(*mapped.input_tree.unflatten(tuple(arrays)))
 
