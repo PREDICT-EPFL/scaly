@@ -79,3 +79,10 @@ The mapped while-loop finite-difference check is a permanent test. The four sol
 findings and the neighboring step-number cache case have failing regressions that
 pass with their fixes. C snapshot files remain byte-identical. The RK4 source sizes
 and program counts remained identical after these fixes.
+
+## Final validation after review fixes
+
+The final detached `~/.scaly-suite/run` exited successfully: 4,829 tests passed,
+56 skipped, benchmark smoke passed, documentation built without warnings and the
+private-name check passed. Ruff formatting, lint and ty passed. The 4,885-test
+collection includes all review regressions. C snapshots remained unchanged.
