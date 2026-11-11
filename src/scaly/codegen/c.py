@@ -70,18 +70,7 @@ _FLOOR_HELPERS = {
     "}",
   ],
 }
-_EXTREMA_HELPERS = {
-  ProgramOp.MINIMUM: [
-    "static inline double scaly_minimum(double x, double y) {",
-    "  return x != x ? x : (x < y ? x : y);",
-    "}",
-  ],
-  ProgramOp.MAXIMUM: [
-    "static inline double scaly_maximum(double x, double y) {",
-    "  return x != x ? x : (x > y ? x : y);",
-    "}",
-  ],
-}
+_EXTREMA_HELPERS = {ProgramOp.MINIMUM: "<", ProgramOp.MAXIMUM: ">"}
 # Predicates and NaN-propagating extrema require the compiler to keep nonfinite values.
 _FAST_MATH_GUARD = [
   "#if defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__",
@@ -116,7 +105,16 @@ def _includes(
     *(_FAST_MATH_GUARD if nonfinite else []),
     *(_PRINTF_DEFINES if prog is not None and prints(prog) else []),
     *(line for op, helper in _FLOOR_HELPERS.items() if op in ops for line in helper),
-    *(line for op, helper in _EXTREMA_HELPERS.items() if any(n.op == op and n.dtype.is_floating for n in nodes) for line in helper),
+    *(
+      line
+      for op, comparison in _EXTREMA_HELPERS.items()
+      for dtype in sorted({n.dtype for n in nodes if n.op == op and n.dtype.is_floating}, key=lambda dtype: dtype.bits)
+      for line in [
+        f"static inline {dtype.c_type} {_BINARY_C[op]}{'f' if dtype.bits == 32 else ''}({dtype.c_type} x, {dtype.c_type} y) {{",
+        f"  return x != x ? x : (x {comparison} y ? x : y);",
+        "}",
+      ]
+    ),
     *([_VECTOR_TYPEDEF] if dialect == "gnu" else []),
     *_lane_defines(prog, dialect=dialect, vector_libm=vector_libm),
   ]
@@ -679,7 +677,7 @@ def _render_vector_helpers(proc: ProgramNode, *, dialect: CDialect, vector_libm:
 
 def _vector_math(helper: str, vec: str, width: str, op: ProgramOp, vector_libm: VectorLibm, dtype: DType) -> list[str]:
   name = _UNARY_C.get(op, _VECTOR_BINARY.get(op, ""))
-  function = name + ("f" if dtype.bits == 32 else "")
+  function = _UNARY_C.get(op, _BINARY_C.get(op, "")) + ("f" if dtype.bits == 32 else "")
   binary = op in _VECTOR_BINARY
   params = f"{vec} x, {vec} y" if binary else f"{vec} x"
   args = "x[i], y[i]" if binary else "x[i]"
@@ -709,7 +707,7 @@ def _vector_math(helper: str, vec: str, width: str, op: ProgramOp, vector_libm: 
         f"  return {symbol}(x{', y' if binary else ''});",
       ]
     lines += ["#endif", "#else"]
-  scalar = f"{_UNARY_C.get(op, _BINARY_C.get(op))}({args})"
+  scalar = f"{function}({args})"
   lines += [f"  {vec} result;", f"  for (int i = 0; i < {width}; ++i) result[i] = {scalar};", "  return result;"]
   if glibc:
     lines.append("#endif")

@@ -3070,6 +3070,10 @@ tests/codegen/test_external.py::test_linked_library_swap_misses_the_index_in_ano
 tests/codegen/test_external.py::test_linked_library_swap_misses_the_index_in_another_process[verify]
 tests/codegen/test_external.py::test_manifest_consumer_compiles_each_translation_unit_and_links
 tests/codegen/test_external.py::test_missing_external_symbol_names_loader_error
+tests/codegen/test_extrema.py::test_extremum_operands_appear_once_in_scalar_source[float32]
+tests/codegen/test_extrema.py::test_extremum_operands_appear_once_in_scalar_source[float64]
+tests/codegen/test_extrema.py::test_nested_extrema_source_grows_linearly[float32]
+tests/codegen/test_extrema.py::test_nested_extrema_source_grows_linearly[float64]
 tests/codegen/test_float32.py::test_adjacent_int64_constants_compare_exactly_through_float64_entry[nonuniform_table-block]
 tests/codegen/test_float32.py::test_adjacent_int64_constants_compare_exactly_through_float64_entry[nonuniform_table-scalar]
 tests/codegen/test_float32.py::test_adjacent_int64_constants_compare_exactly_through_float64_entry[scalar-block]
@@ -3287,7 +3291,9 @@ tests/codegen/test_jit.py::test_distinct_solver_functions_with_same_exported_nam
 tests/codegen/test_jit.py::test_environment_change_before_next_isolated_load
 tests/codegen/test_jit.py::test_exported_symbol_clash_is_a_plain_user_error[log]
 tests/codegen/test_jit.py::test_exported_symbol_clash_is_a_plain_user_error[scaly_maximum]
+tests/codegen/test_jit.py::test_exported_symbol_clash_is_a_plain_user_error[scaly_maximumf]
 tests/codegen/test_jit.py::test_exported_symbol_clash_is_a_plain_user_error[scaly_minimum]
+tests/codegen/test_jit.py::test_exported_symbol_clash_is_a_plain_user_error[scaly_minimumf]
 tests/codegen/test_jit.py::test_folded_extrema_nan_match_runtime_and_numpy
 tests/codegen/test_jit.py::test_hoisted_solver_oracles_compile_and_run[False]
 tests/codegen/test_jit.py::test_hoisted_solver_oracles_compile_and_run[True]

@@ -715,7 +715,7 @@ def test_folded_extrema_nan_match_runtime_and_numpy(isolated_cache: Path) -> Non
     np.testing.assert_array_equal(got[1], np.maximum(a, b))
 
 
-@pytest.mark.parametrize("name", ["log", "scaly_minimum", "scaly_maximum"])
+@pytest.mark.parametrize("name", ["log", "scaly_minimum", "scaly_maximum", "scaly_minimumf", "scaly_maximumf"])
 def test_exported_symbol_clash_is_a_plain_user_error(isolated_cache: Path, name: str) -> None:
   @sc.function(sc.arg("x", 2), outputs=sc.arg("y", 2), name=name)
   def fun(x):

@@ -30,7 +30,10 @@ def emit_reduction(
   their output coordinates outside the reduction and disable lane expansion.
   """
   if identity is None:
-    identity = constant(9223372036854775807 if value.dtype == dtypes.int64 and kind == "min" else {"add": 0, "max": -float("inf"), "min": float("inf")}[kind], value.dtype)
+    identity = constant(
+      9223372036854775807 if value.dtype == dtypes.int64 and kind == "min" else {"add": 0, "max": -float("inf"), "min": float("inf")}[kind],
+      value.dtype,
+    )
 
   def combine(a: ProgramNode, b: ProgramNode) -> ProgramNode:
     return combine_reduction(a, b, kind)
