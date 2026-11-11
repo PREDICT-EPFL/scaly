@@ -24,6 +24,8 @@ EXISTING_ELEMENTWISE_REFERENCES = {
   ("ad/rules.py", "_mask_of"): "SELECT",
   ("ad/rules.py", "_extremum_partial"): "MAXIMUM",
   ("ir/expr_spec.py", "_elementwise_shape_dtype"): "CAST",
+  # A sum of scatters accumulates into one buffer at lowering.
+  ("passes/lowering/fusion.py", "plan_fusion"): "ADD",
 }
 
 

@@ -7,7 +7,8 @@ import numpy as np
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
 from ...ir.types import _uniform_value
-from .ctx import LowerCtx, lowers, _contiguous_slice_offset, _flat_coordinates, _shape_or_scalar, _shift, _slice_coords
+from .ctx import LowerCtx, lowers, _flat_coordinates, _shape_or_scalar, _shift, _slice_coords
+from .fusion import _contiguous_slice_offset
 from .plans import lower_movement, emit_map
 
 

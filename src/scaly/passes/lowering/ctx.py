@@ -25,7 +25,7 @@ from ...utils.names import NameScope
 from ..affine import affine_index_map
 from ..arith import constant
 from ...ad.rules import ELEMENTWISE
-from .fusion import ALIASES, plan_fusion
+from .fusion import ALIASES, _contiguous_slice_offset, plan_fusion
 from ..arith import fold_program
 from ..program.fold_arith import _fold_index as _fold_bounded
 from ..expr import cse_many, simplify
@@ -846,42 +846,6 @@ def _uniform(expr: Expr) -> int | float | None:
   assert value is not None
   flat = value.reshape(-1)
   return flat[0].item() if flat.size and flat.tobytes() == flat[:1].tobytes() * flat.size else None
-
-
-def _contiguous_slice_offset(index: tuple[object, ...], in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> int | None:
-  """If the slice selects a contiguous sub-block of ``src`` at a constant flat offset (no stride,
-  at most one partial leading slice with full trailing dims), return that offset; else None. Port
-  of ``codegen/c.py::_contiguous_slice_offset`` — the precondition for pointer aliasing."""
-  if not out_shape:
-    offset = 0
-    for dim, item in enumerate(index):
-      if not isinstance(item, int):
-        return None
-      offset += (item if item >= 0 else in_shape[dim] + item) * _stride(in_shape, dim)
-    return offset
-  first_slice = None
-  offset = 0
-  out_dim = 0
-  for dim, item in enumerate(index):
-    stride = _stride(in_shape, dim)
-    if isinstance(item, int):
-      if first_slice is not None and in_shape[dim] != 1:
-        return None
-      offset += (item if item >= 0 else in_shape[dim] + item) * stride
-      continue
-    assert isinstance(item, slice)
-    start, stop, step = item.indices(int(in_shape[dim]))
-    if step != 1:
-      return None
-    if first_slice is None:
-      first_slice = dim
-      offset += start * stride
-      out_dim += 1
-      continue
-    if start != 0 or stop != int(in_shape[dim]) or out_shape[out_dim] != int(in_shape[dim]):
-      return None
-    out_dim += 1
-  return offset
 
 
 def _slice_coords(index: tuple[object, ...], src_shape: tuple[int, ...], coords: Sequence[ProgramNode]) -> list[ProgramNode]:
