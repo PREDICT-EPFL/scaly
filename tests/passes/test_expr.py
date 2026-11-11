@@ -108,12 +108,19 @@ def test_matmul_with_ones_vector_becomes_sums() -> None:
   vv = rng.normal(size=3)
 
   dot = sc.simplify(v @ ones)
-  assert dot.op == sc.ExprOp.SUM and dot.args[0] is v
+  assert dot.op == sc.ExprOp.REDUCE and dot.args[0] is v
   assert sc.simplify(ones @ v) is dot
   np.testing.assert_allclose(_eval("ones_dot", sc.arg("v", 3), lambda v: sc.simplify(v @ ones), vv), vv.sum(), rtol=1e-14)
 
-  assert sc.simplify(A @ ones).op == sc.ExprOp.MATMUL  # matrix forms wait for an axis reduction
-  assert sc.simplify(sc.const(np.ones(2)) @ A).op == sc.ExprOp.MATMUL
+  row_sum = sc.simplify(A @ ones)
+  col_sum = sc.simplify(sc.const(np.ones(2)) @ A)
+  assert row_sum.op == col_sum.op == sc.ExprOp.REDUCE
+  assert row_sum.args[0] is col_sum.args[0] is A
+  assert row_sum.attrs == {"kind": "add", "axes": (1,)}
+  assert col_sum.attrs == {"kind": "add", "axes": (0,)}
+  data = rng.normal(size=(2, 3))
+  np.testing.assert_allclose(_eval("ones_rows", sc.arg("A", (2, 3)), lambda A: sc.simplify(A @ ones), data), data.sum(axis=1))
+  np.testing.assert_allclose(_eval("ones_cols", sc.arg("A", (2, 3)), lambda A: sc.simplify(sc.const(np.ones(2)) @ A), data), data.sum(axis=0))
   not_ones = sc.simplify(A @ sc.const([1.0, 2.0, 1.0]))
   assert not_ones.op == sc.ExprOp.MATMUL
 

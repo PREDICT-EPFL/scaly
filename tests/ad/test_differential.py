@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import combinations
 from typing import Any, Callable
 
 import numpy as np
@@ -148,10 +149,57 @@ def _cases() -> list[Case]:
       [
         Case(f"input-{label}", ExprOp.INPUT, (x,), lambda x: x, lambda x: x),
         Case(f"const-{label}", ExprOp.CONST, (x,), lambda x: sc.const(np.full(x.shape, 0.4)), lambda x: np.full(x.shape, 0.4)),
-        Case(f"sum-{label}", ExprOp.SUM, (x,), lambda x: x.sum(), np.sum),
+        Case(f"sum-{label}", ExprOp.REDUCE, (x,), lambda x: x.sum(), np.sum),
         Case(f"reshape-{label}", ExprOp.RESHAPE, (x,), lambda x: x.reshape((x.size,)), lambda x: x.reshape(-1)),
       ]
     )
+  for shape in [(), (4,), (2, 3, 4), (2, 0, 3), (1, 3, 1)]:
+    value = np.linspace(0.2, 0.7, int(np.prod(shape))).reshape(shape)
+    for count in range(len(shape) + 1):
+      for axes in combinations(range(len(shape)), count):
+        for keepdims in (False, True):
+          cases.append(
+            Case(
+              f"axis-sum-{shape}-{axes}-{keepdims}",
+              ExprOp.RESHAPE if keepdims else ExprOp.REDUCE,
+              (value,),
+              lambda x, axes=axes, keepdims=keepdims: x.sum(axes, keepdims=keepdims),
+              lambda x, axes=axes, keepdims=keepdims: x.sum(axis=axes, keepdims=keepdims),
+            )
+          )
+          if all(shape[axis] for axis in axes):
+            cases.append(
+              Case(
+                f"axis-mean-{shape}-{axes}-{keepdims}",
+                ExprOp.DIV,
+                (value,),
+                lambda x, axes=axes, keepdims=keepdims: x.mean(axes, keepdims=keepdims),
+                lambda x, axes=axes, keepdims=keepdims: x.mean(axis=axes, keepdims=keepdims),
+              )
+            )
+  for axis in (0, 1):
+    for mean in (False, True):
+      cases.append(
+        Case(
+          f"sparse-axis-{axis}-{mean}",
+          ExprOp.DIV if mean else ExprOp.REDUCE,
+          (np.array([0.2, -0.5, 0.7]),),
+          lambda v, axis=axis, mean=mean: (sc.pack(v, pattern).mean if mean else sc.pack(v, pattern).sum)(axis),
+          lambda v, axis=axis, mean=mean: (packed_numpy(np.arcsin(v)).mean if mean else packed_numpy(np.arcsin(v)).sum)(axis=axis),
+        )
+      )
+  for shape in [(3,), (2, 4)]:
+    for offset in (-1, 0, 2):
+      value = np.arange(np.prod(shape), dtype=float).reshape(shape) / 7
+      cases.append(
+        Case(
+          f"diag-{shape}-{offset}",
+          ExprOp.SCATTER if len(shape) == 1 else ExprOp.GATHER,
+          (value,),
+          lambda x, offset=offset: sc.diag(x, offset),
+          lambda x, offset=offset: np.diag(x, offset),
+        )
+      )
   x = np.arange(6.0).reshape(2, 3) / 7
   cases.extend(
     [

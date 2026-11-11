@@ -355,3 +355,35 @@ def test_substitute_rebuilds_call_and_vmap_actuals_without_entering_callees() ->
 def test_print_rejects_a_format_it_cannot_render(fmt, values, error, message) -> None:
   with pytest.raises(error, match=message):
     sc.print(fmt, *values)
+
+
+def test_reduction_axes_are_normalized_and_interned() -> None:
+  x = sc.sym("axis_x", (2, 3, 4))
+  assert x.sum((2, 0)) is x.sum((-1, -3)) is x.sum((0, 2))
+  assert x.sum(axis=None).shape == ()
+  assert x.sum(axis=()).shape == x.shape
+  assert x.sum(axis=-1, keepdims=True).shape == (2, 3, 1)
+  assert x.mean(axis=(0, 2), keepdims=True).shape == (1, 3, 1)
+  for axis in ((0, -3), (3,), (-4,)):
+    with pytest.raises(ValueError, match="axis"):
+      x.sum(axis)
+  with pytest.raises(TypeError, match="integers"):
+    x.sum((0.5,))  # ty: ignore[invalid-argument-type]
+  for shape in ((), (2, 3, 4)):
+    with pytest.raises(ValueError, match="vector or a matrix"):
+      sc.diag(sc.sym("bad_diag", shape))
+  with pytest.raises(TypeError, match="offset"):
+    sc.diag(x, k=0.5)  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize("axis", [True, np.bool_(True), [0], (True,)])
+@pytest.mark.parametrize("method", ["sum", "mean"])
+def test_reduction_rejects_boolean_and_list_axes(axis, method) -> None:
+  with pytest.raises(TypeError, match="integer"):
+    getattr(sc.sym("invalid_axis", (2, 3)), method)(axis)
+
+
+@pytest.mark.parametrize("method", ["sum", "mean"])
+def test_reduction_keepdims_is_keyword_only(method) -> None:
+  with pytest.raises(TypeError):
+    getattr(sc.sym("keepdims_keyword", (2, 3)), method)(1, True)

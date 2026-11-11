@@ -27,7 +27,7 @@ _EXPR_COLORS = {
   ExprOp.MUL: "#ffffc0",
   ExprOp.DIV: "#ffffc0",
   ExprOp.NEG: "#ffffc0",
-  ExprOp.SUM: "#ffb0b0",
+  ExprOp.REDUCE: "#ffb0b0",
   ExprOp.MATMUL: "#ffb0b0",
   ExprOp.RESHAPE: "#d8f9e4",
   ExprOp.TRANSPOSE: "#d8f9e4",

@@ -72,7 +72,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
 
 # Structural ops whose transposes weigh each entry by 0 or 1, so a select's mask passes through them.
 _SELECTIONS = {
-  ExprOp.SUM,
+  ExprOp.REDUCE,
   ExprOp.RESHAPE,
   ExprOp.TRANSPOSE,
   ExprOp.SLICE,
@@ -95,8 +95,11 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
       raise NotImplementedError(f"VJP for nonsmooth op {expr.op!r} is not implemented")
     assert active is not None
     return tuple(cotangent(expr, cot, i) if i in active else None for i in range(len(args)))
-  if expr.op == ExprOp.SUM:
-    return (cot * _ones_like(args[0]),)
+  if expr.op == ExprOp.REDUCE:
+    if expr.attrs["kind"] != "add":
+      raise NotImplementedError(f"VJP for REDUCE {expr.attrs['kind']} awaits #65")
+    shape = tuple(1 if i in expr.attrs["axes"] else n for i, n in enumerate(args[0].shape))
+    return (cot.reshape(shape) * _ones_like(args[0]),)
   if expr.op == ExprOp.RESHAPE:
     return (cot.reshape(args[0].shape),)
   if expr.op == ExprOp.PRINT:

@@ -20,7 +20,7 @@ from typing import Any, Generator, Iterable, Literal, Mapping
 
 import numpy as np
 
-from .support import Support, compute_support, slice_entries, transpose_entries
+from .support import Support, compute_support, reduce_entries, slice_entries, transpose_entries
 from .types import (
   CanonicalPattern,
   SparsityPattern,
@@ -85,7 +85,7 @@ class ExprOp(StrEnum):
   CAST = "cast"
   FLOORDIV = "floordiv"
   MOD = "mod"
-  SUM = "sum"
+  REDUCE = "reduce"
   RESHAPE = "reshape"
   TRANSPOSE = "transpose"
   SLICE = "slice"
@@ -153,7 +153,7 @@ COMMON_STRUCTURAL = {
   ExprOp.CONST,
   ExprOp.PACK,
   ExprOp.VALUES,
-  ExprOp.SUM,
+  ExprOp.REDUCE,
   ExprOp.RESHAPE,
   ExprOp.TRANSPOSE,
   ExprOp.SLICE,
@@ -193,7 +193,7 @@ class OpInfo:
       "union",
       "select",
       "numerator",
-      "sum",
+      "reduce",
       "transpose",
       "slice",
       "gather",
@@ -256,7 +256,7 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   # A zero divisor gives 0, so the dividend's zeros stay.
   ExprOp.FLOORDIV: OpInfo(ExprOp.FLOORDIV, 2, False, support_rule="numerator"),
   ExprOp.MOD: OpInfo(ExprOp.MOD, 2, False, support_rule="numerator"),
-  ExprOp.SUM: OpInfo(ExprOp.SUM, 1, support_rule="sum"),
+  ExprOp.REDUCE: OpInfo(ExprOp.REDUCE, 1, support_rule="reduce"),
   ExprOp.RESHAPE: OpInfo(ExprOp.RESHAPE, 1, support_rule="preserve"),
   ExprOp.TRANSPOSE: OpInfo(ExprOp.TRANSPOSE, 1, support_rule="transpose"),
   ExprOp.SLICE: OpInfo(ExprOp.SLICE, 1, support_rule="slice"),
@@ -322,6 +322,16 @@ def stored_pattern(
   """Apply the fixed storage rule, also usable for support restricted to sparse operands."""
   if not any(t.pattern is not None for t in types):
     return None
+  if op == ExprOp.REDUCE:
+    assert attrs is not None
+    if len(shape) < 2 or (attrs["kind"] != "add" and any(types[0].shape[axis] == 0 for axis in attrs["axes"])):
+      return None
+    if all(axis < types[0].ndim - 2 for axis in attrs["axes"]) and all(types[0].shape[axis] for axis in attrs["axes"]):
+      return types[0].pattern
+    entries = reduce_entries(stored_indices(types[0]), types[0].shape, attrs["axes"])
+    width = shape[-2] * shape[-1]
+    local = np.unique(entries % width) if width else np.empty(0, dtype=np.int64)
+    return CanonicalPattern((shape[-2], shape[-1]), tuple(map(int, local // shape[-1])), tuple(map(int, local % shape[-1])))
   if op == ExprOp.RESHAPE and shape == types[0].shape:
     return types[0].pattern
   if op == ExprOp.TRANSPOSE and attrs is not None and attrs["axes"] == tuple(range(types[0].ndim)):
@@ -378,8 +388,6 @@ def check_stored_pattern(op: ExprOp | str, args: tuple[Expr, ...], type_: Tensor
     return
   if op in (ExprOp.CALL, ExprOp.VMAP):
     return  # The verifier checks the callee signature.
-  if op == ExprOp.SUM and type_.pattern is None:
-    return
   expected = stored_pattern(op, tuple(arg.type for arg in args), type_.shape, attrs)
   if type_.pattern is not expected:
     raise ValueError(
@@ -686,10 +694,31 @@ class Expr:
     """Place stored values at their logical coordinates, filling other entries with zero."""
     return to_dense(self)
 
-  def sum(self) -> Expr:
+  def sum(self, axis: int | tuple[int, ...] | None = None, *, keepdims: bool = False) -> Expr:
+    """Sum over the chosen axes, or every axis when ``axis`` is ``None``.
+
+    Negative axes count from the end. An empty tuple leaves every entry unchanged.
+    ``keepdims`` retains the reduced axes with extent one. Empty domains sum to zero.
+    """
     if not self.type.dtype.is_floating:
       raise TypeError(f"sum takes floating values, got {self.type.dtype}; convert with sc.cast")
-    return Expr(ExprOp.SUM, (self,), TensorType((), dtype=self.type.dtype, diff=self.type.diff), lowering=self.lowering)
+    result = _reduce(self, "add", axis)
+    return result.reshape(tuple(1 if i in result.attrs["axes"] else n for i, n in enumerate(self.shape))) if keepdims else result
+
+  def mean(self, axis: int | tuple[int, ...] | None = None, *, keepdims: bool = False) -> Expr:
+    """Average over the chosen axes, counting structural zeros in sparse inputs.
+
+    Axes and ``keepdims`` follow ``sum``. An empty reduction domain returns NaN.
+    """
+    result = _reduce(self, "add", axis)
+    count = int(np.prod([self.shape[i] for i in result.attrs["axes"]], dtype=np.int64))
+    if keepdims:
+      result = result.reshape(tuple(1 if i in result.attrs["axes"] else n for i, n in enumerate(self.shape)))
+    if count == 0:
+      return _uniform(np.nan, result.shape, dtype=self.type.dtype, lowering=self.lowering)
+    if result.type.pattern is not None:
+      return pack(values(result) / count, result.type.pattern, shape=result.shape)
+    return result / count
 
   def dot(self, other: Any) -> Expr:
     return dot(self, other)
@@ -1242,6 +1271,53 @@ def matmul(x: Expr, y: Expr) -> Expr:
     TensorType(shape, dtype=promote_dtype(x, y), diff=diff_any(x, y), pattern=stored_pattern(ExprOp.MATMUL, (x.type, y.type), shape)),
     lowering=common_lowering(x, y),
   )
+
+
+def _reduce(x: Expr, kind: str, axis: int | tuple[int, ...] | None = None) -> Expr:
+  if kind not in {"add", "max", "min"}:
+    raise ValueError(f"unknown reduction kind {kind!r}")
+  if axis is not None and not isinstance(axis, int | np.integer | tuple):
+    raise TypeError("reduction axis must be an integer or a tuple of integers")
+  axes = tuple(range(len(x.shape))) if axis is None else (axis,) if isinstance(axis, int | np.integer) else axis
+  if any(isinstance(i, bool | np.bool_) or not isinstance(i, int | np.integer) for i in axes):
+    raise TypeError("reduction axes must be integers")
+  if any(i < -len(x.shape) or i >= len(x.shape) for i in axes):
+    raise ValueError(f"reduction axis out of range for shape {x.shape}")
+  axes = tuple(sorted(int(i) % len(x.shape) for i in axes))
+  if len(set(axes)) != len(axes):
+    raise ValueError("duplicate reduction axis")
+  shape = tuple(n for i, n in enumerate(x.shape) if i not in axes)
+  attrs = {"kind": kind, "axes": axes}
+  return Expr(
+    ExprOp.REDUCE,
+    (x,),
+    TensorType(shape, dtype=x.type.dtype, diff=x.type.diff, pattern=stored_pattern(ExprOp.REDUCE, (x.type,), shape, attrs)),
+    attrs=attrs,
+    lowering=x.lowering,
+  )
+
+
+def diag(x: Any, k: int = 0) -> Expr:
+  """Build a diagonal matrix from a vector, or extract a matrix's diagonal.
+
+  ``k`` selects the diagonal above the main one when positive, below when negative.
+  Only rank-one and rank-two inputs are accepted, following ``numpy.diag``.
+  """
+  x = as_expr(x)
+  if not isinstance(k, int | np.integer):
+    raise TypeError("diagonal offset must be an integer")
+  k = int(k)
+  if len(x.shape) == 1:
+    n = x.size + abs(k)
+    rows = np.arange(x.size, dtype=np.int64) + max(-k, 0)
+    cols = np.arange(x.size, dtype=np.int64) + max(k, 0)
+    return scatter(x, rows * n + cols, (n, n))
+  if len(x.shape) == 2:
+    rows, cols = x.shape
+    count = max(0, min(rows + min(k, 0), cols - max(k, 0)))
+    i = np.arange(count, dtype=np.int64)
+    return gather(x, (i + max(-k, 0)) * cols + i + max(k, 0))
+  raise ValueError("diag requires a vector or a matrix")
 
 
 def dot(x: Any, y: Any) -> Expr:

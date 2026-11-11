@@ -10,9 +10,8 @@ import numpy as np
 
 from ..ir.expr import Expr, ExprOp, cast, gather, not_equal, pack, scatter, values, where
 from ..ir.program import ProgramOp
-from ..ir.support import support_indices, project_entries
+from ..ir.support import project_entries
 from ..ir.types import TensorType, stored_indices
-from .sparsity import _prunable_support
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,12 +325,8 @@ def _broadcast_tangent(tangent: Expr, operand: Expr, output: Expr, nseed: int) -
 def _unbroadcast(cot: Expr, in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> Expr:
   if in_shape == out_shape:
     return cot
-  if not in_shape:
-    return cot.sum()
-  if (support := _prunable_support(cot)) is not None and len(support) < cot.size:
-    entries = support_indices(support)
-    source = project_entries(entries, in_shape, out_shape)
-    return scatter(gather(cot, entries), source, in_shape)
-  source = np.arange(int(np.prod(in_shape, dtype=int))).reshape(in_shape)
-  source = np.broadcast_to(source, out_shape).reshape(-1)
-  return scatter(cot, source, in_shape)
+  padded = (1,) * (len(out_shape) - len(in_shape)) + in_shape
+  axes = tuple(
+    i for i, (small, large) in enumerate(zip(padded, out_shape, strict=True)) if i < len(out_shape) - len(in_shape) or small == 1 and large != 1
+  )
+  return cot.sum(axes).reshape(in_shape)

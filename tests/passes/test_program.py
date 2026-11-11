@@ -159,7 +159,7 @@ def test_fusion_skips_matmul_operand() -> None:
 
 
 def test_fusion_into_reduction() -> None:
-  """An elementwise producer feeding a SUM fuses into the reduce loop (each element read once)."""
+  """An elementwise producer feeding a reduction fuses into its loop (each element read once)."""
 
   @sc.function(sc.arg("x", 8), outputs=sc.arg("out0"), name="sumf")
   def f(x: sc.Expr) -> sc.Expr:

@@ -290,11 +290,30 @@ The condition has no derivative, and neither has any comparison.
 
 `Expr` supports fixed shapes, indexing, broadcasting, and common arithmetic.
 The available operations cover part of the NumPy API, and a NumPy operation
-missing from the reference is not available on `Expr`. For example, `x.sum()` reduces all
-elements, but it has no `axis` argument. The
+missing from the reference is not available on `Expr`. The
 [expression reference](../api/core.md#expressions) lists supported methods.
 NumPy arrays are numerical data, so use Scaly operations to construct symbolic
 calculations rather than assuming a NumPy function accepts `Expr`.
+
+`x.sum()` reduces every axis. `x.sum(axis=1)` sums each row of a matrix,
+and `x.mean(axis=(0, 2), keepdims=True)` averages over two axes while retaining
+them with extent one. Negative axes count from the end, as in NumPy. An empty
+axis tuple leaves each entry unchanged. An empty reduction domain sums to zero
+and has a mean of NaN.
+
+```python
+@sc.function(sc.arg("x", (2, 3)), outputs=sc.arg("centered"))
+def center_rows(x: sc.Expr) -> sc.Expr:
+    return x - x.mean(axis=1, keepdims=True)
+
+print(center_rows(np.arange(6.0).reshape(2, 3)))
+# [[-1.  0.  1.]
+#  [-1.  0.  1.]]
+```
+
+`sc.diag(vector)` builds a diagonal matrix, and `sc.diag(matrix)` extracts
+its diagonal. The optional integer `k` selects a diagonal above the main one
+when positive and below when negative.
 
 `sc.gather(x, indices)` reads flat entries of `x`, with the result shaped like
 `indices`. `sc.scatter(values, indices, shape)` places values into a zero array.

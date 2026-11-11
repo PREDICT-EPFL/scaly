@@ -82,6 +82,26 @@ def test_reshape_size_mismatch_caught() -> None:
     verify_expr(bad)
 
 
+@pytest.mark.parametrize(
+  "attrs,shape,dtype",
+  [
+    ({"axes": (0,)}, (3,), dtypes.float64),
+    ({"kind": "mul", "axes": (0,)}, (3,), dtypes.float64),
+    ({"kind": "add"}, (3,), dtypes.float64),
+    ({"kind": "add", "axes": (-1,)}, (2,), dtypes.float64),
+    ({"kind": "add", "axes": (2,)}, (2,), dtypes.float64),
+    ({"kind": "add", "axes": (1, 0)}, (), dtypes.float64),
+    ({"kind": "add", "axes": (0, 0)}, (3,), dtypes.float64),
+    ({"kind": "add", "axes": (0,)}, (), dtypes.float64),
+    ({"kind": "add", "axes": (0,)}, (3,), dtypes.float32),
+  ],
+)
+def test_reduction_metadata_is_verified(attrs, shape, dtype) -> None:
+  bad = Expr(ExprOp.REDUCE, (sc.sym("reduce_verify", (2, 3)),), TensorType(shape, dtype=dtype), attrs=attrs)
+  with pytest.raises(VerifyError, match="reduce-shape-kind"):
+    verify_expr(bad)
+
+
 def test_transpose_axes_must_be_permutation() -> None:
   x = sc.sym("x", (2, 3))
   bad = Expr(ExprOp.TRANSPOSE, (x,), TensorType((3, 2), dtype=dtypes.float64, diff=True), attrs={"axes": (0, 0)})
