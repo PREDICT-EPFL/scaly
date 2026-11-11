@@ -490,7 +490,8 @@ def test_inner_mapped_masks_accumulate_shared_and_overlapping_inputs(stride: int
 
 
 @pytest.mark.parametrize(
-  "operation", ["mul", "div", "neg", "cast", "reshape", "sum", "other_branch", "merged", "nested_active", "broadcast", "stack", "concat"]
+  "operation",
+  ["mul", "div", "neg", "cast", "reshape", "sum", "other_branch", "merged", "nested_active", "broadcast", "selected_broadcast", "stack", "concat"],
 )
 def test_forward_mask_survives_operations_before_a_singular_partial(operation: str) -> None:
   @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("t"), sc.arg("g")), name=f"sd_forward_mask_{operation}")
@@ -514,6 +515,8 @@ def test_forward_mask_survives_operations_before_a_singular_partial(operation: s
       y = sc.where(x > 0.0, sc.where(x > 1.0, x, 0.0), sc.where(x < -1.0, -x, 0.0)).sqrt().sum()
     elif operation == "broadcast":
       y = (selected + np.zeros((2, 2))).sqrt().sum() / 2.0
+    elif operation == "selected_broadcast":
+      y = sc.where(x > 0.0, x[1], 0.0).sqrt().sum()
     elif operation == "stack":
       y = sc.stack([selected, selected]).sqrt().sum() / 2.0
     elif operation == "concat":

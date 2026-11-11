@@ -106,6 +106,11 @@ def _select_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
   zero = _const(0, e)
   condition = _seed_axis(e.args[0], e)
   result = where(condition, zero if dx is None else dx, zero if dy is None else dy)
+  if any(t is not None and t.shape != result.shape for t in (dx, dy)):
+    ones = _full_like(1, result)
+    dx = None if dx is None else _masked(dx, lambda t: t * ones)
+    dy = None if dy is None else _masked(dy, lambda t: t * ones)
+    result = where(condition, zero if dx is None else dx, zero if dy is None else dy)
   masks = [None if t is None else cotangent_mask(t) for t in (dx, dy)]
   if any(mask is not None for mask in masks):
     activity = [Expr.const(t is not None, dtype=condition.type.dtype) if mask is None else mask for t, mask in zip((dx, dy), masks, strict=True)]
