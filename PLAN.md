@@ -39,3 +39,8 @@ failed because the shared tangent routine named CAST and SELECT. Moved those cho
 existing table rules and shared their partial sum. The unchanged coverage gate, select regressions
 and C snapshots now pass together (88 cases); Ruff, types and the six-file C comparison pass too.
 The next full hook uses a fresh queue ticket because the first run consumed its slot.
+
+The fresh full merge hook passed through the shared runner, exit 0, with 5,310 tests passing
+and 56 skips. Benchmark smoke, documentation build and the private-name check also passed.
+Log: `/tmp/scaly-364-suite-pBCJnx/recheck.log`. The latest origin/main merges cleanly into this
+branch, so do not rebase merely to catch up. #65/#408 is still needed for the maximum criterion.
