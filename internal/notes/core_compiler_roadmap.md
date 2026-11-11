@@ -720,6 +720,13 @@ strided reduce axis goes outermost. Each output keeps the summation order of the
 (decision 13). Gates: npmpc N=12 and unbumpercars C=8 within 5% of the C-43 kernels. Regenerates
 snapshots.
 
+As built by [#45] (recorded 2026-11-11): the four lanes are written out during lowering under a
+block range of the axis's own kind, each with its own accumulator and a tail range, instead of an
+`UNROLL` range; the strided schedule carries its partial sums in the destination instead of
+`ASSIGN` accumulators, because extra scalar assignments changed the automatic scalarization
+budgets; and a reduce range with loaded bounds gets no lanes and no interchange until [#71]. The
+run-time gate was not measured during the compiler run and is [#436].
+
 **[#66]. Axis reductions.** `ExprOp.REDUCE` with `kind` (`add`, `max`, `min`) and `axes` replaces
 `SUM`, a mechanical rename across `ad/`, `passes/expr.py` and lowering. `sum(axes, keepdims)`, `mean`
 and `sc.diag` are builder sugar. AD: the reverse rule of an axis reduction is a broadcast, which
@@ -1047,10 +1054,20 @@ Moved max and min over stored entries to [#66] because `REDUCE` with `kind` is i
 Each region takes one of four forms: straight-line code when small, a loop over constant tables when
 irregular, an affine loop when `LowerCtx.index_at` recovers the index (regular runs, repeated stage
 blocks), or a dense block. Output values are written straight into a boundary's declared layout.
+As built by [#46] (recorded 2026-11-11), replacing four separate forms and unconditional direct
+writes and loaded bounds: a region of at most four writes is straight-line code and any other is one
+loop, and `LowerCtx.index_at` chooses a constant table, affine arithmetic or a dense block per
+index map; a dense output with a declared layout and the results of calls, maps and loops are
+written to a temporary and reordered, since dense kernels write row-major; and a product or sum
+small enough for scalar expansion uses constant row bounds, with loaded bounds kept for block
+kernels.
 Movement operations returning a scalar or vector have dense storage, as do `A @ x` and `x @ A`
 with a dense vector `x`.
 AD: the tangent of a sparse value carries its pattern, several seeds store `(nseed, nnz)` against
 one shared index table, and the elementwise partials of [#20] are evaluated on stored coordinates.
+As built by [#46] (recorded 2026-11-11): the tangents of sparse `MATMUL`, `GATHER` and `SCATTER`
+are a stack of one kernel per seed, whose index tables are shared by content, instead of one kernel
+over `(nseed, nnz)`; the code growth with the number of seeds is left to [#225].
 The reverse rule of `MATMUL` with a sparse operand samples the cotangent on the pattern
 (`Abar[p] = ybar[row[p]] * x[col[p]]`) instead of building the outer product
 `ybar[:, None] * x[None, :]` that `ad/reverse.py::_matmul_vjp` builds today. `ad/sparsity.py`'s
@@ -1606,3 +1623,4 @@ writing the guide).
 [#334]: https://github.com/PREDICT-EPFL/scaly/issues/334
 [#359]: https://github.com/PREDICT-EPFL/scaly/issues/359
 [#193]: https://github.com/PREDICT-EPFL/scaly/issues/193
+[#436]: https://github.com/PREDICT-EPFL/scaly/issues/436

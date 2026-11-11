@@ -1,0 +1,7 @@
+# main at 6c29ef45, 2026-11-11T11:45Z
+## KKT assembly and products on the Maros-Meszaros subset, no dense buffer
+$ uv run pytest -n 2 -q tests/integration/test_sparse_kkt.py
+48 passed in 39.24s
+## Sparse algebra against SciPy and finite differences
+$ uv run pytest -n 2 -q tests/ad/test_sparse_kernels.py tests/ad/test_sparse_products.py tests/ad/test_sparse_select.py tests/passes/lowering/test_sparse_plans.py tests/passes/lowering/test_sparse_products.py
+215 passed in 10.64s
