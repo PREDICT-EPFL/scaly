@@ -8,6 +8,7 @@ from __future__ import annotations
 from .program import ADDRESS_SPACES, SCALAR_OPS, ProgramNode, ProgramOp, RangeKind, walk_program
 from .spec import Rule, Spec, VerifyError
 from .types import DType, DeviceSpec
+from ..utils.names import c_ident
 
 
 def verify_program(root: ProgramNode, spec: "Spec | None" = None) -> None:
@@ -26,22 +27,33 @@ def verify_program(root: ProgramNode, spec: "Spec | None" = None) -> None:
       raise VerifyError(f"verify_program: node op={node.op.value} failed rule {rule.description!r}: {diag}")
   pending: list[tuple[ProgramNode, bool, set[str]]] = [(root, False, set())]
   while pending:
-    node, can_break, exit_vars = pending.pop()
+    node, can_break, declared = pending.pop()
     if node.op == ProgramOp.BREAK_IF and not can_break:
       raise VerifyError("verify_program: BREAK_IF requires the nearest loop to be carried with exit_var")
     if node.op == ProgramOp.PROC:
       can_break = False
-      exit_vars = set()
+      declared = {"w"}  # raw procedures also take a workspace pointer
+      pc = int(node.attrs["param_count"])
+      names = [arg.attrs["name"] for arg in node.args[:pc]]
+      names.extend(dict.fromkeys(arg.attrs["name"] for arg in node.args[pc:] if arg.op == ProgramOp.BUFFER))
+      for name in names:
+        _declare_name(name, declared)
     elif node.op == ProgramOp.FOR:
       can_break = bool(node.attrs.get("exit_var"))  # the FOR rule has checked that its range is carried
       if can_break:
-        name = node.args[0].attrs["name"]
-        if name in exit_vars:
-          raise VerifyError(f"verify_program: duplicate exit variable {name!r} in one scope")
-        exit_vars.add(name)
-      exit_vars = set()
+        _declare_name(node.args[0].attrs["name"], declared)
+      declared = set()
+    elif node.op == ProgramOp.ASSIGN and node.attrs.get("declare"):
+      _declare_name(node.attrs["target"], declared)
     if node.op in (ProgramOp.PROGRAM, ProgramOp.PROC, ProgramOp.BLOCK, ProgramOp.FOR):
-      pending.extend((arg, can_break, exit_vars) for arg in node.args)
+      pending.extend((arg, can_break, declared) for arg in node.args)
+
+
+def _declare_name(name: str, declared: set[str]) -> None:
+  ident = c_ident(name)
+  if ident in declared:
+    raise VerifyError(f"verify_program: duplicate C identifier {ident!r} in one scope")
+  declared.add(ident)
 
 
 # ---------- shared rules ----------

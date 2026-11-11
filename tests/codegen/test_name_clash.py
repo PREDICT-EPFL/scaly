@@ -8,7 +8,101 @@ import pytest
 import scaly as sc
 from scaly.codegen import render_c_module
 from scaly.codegen.jit import JitUnavailable
-from tests.compilers import c_compiler, cxx_compiler
+from scaly.codegen.c import _includes, _render_raw_callee
+from scaly.ir import program as p
+from scaly.ir.program_spec import verify_program
+from scaly.ir.spec import VerifyError
+from scaly.ir.types import dtypes
+from tests.compilers import c_compiler, check_c_syntax, cxx_compiler
+
+
+@pytest.mark.parametrize(
+  "first,second",
+  [
+    ("exit", "exit"),
+    ("exit", "buffer"),
+    ("exit", "assign"),
+    ("exit", "param"),
+    ("buffer", "buffer"),
+    ("buffer", "assign"),
+    ("buffer", "param"),
+    ("assign", "assign"),
+    ("assign", "param"),
+    ("param", "param"),
+  ],
+)
+@pytest.mark.parametrize("names,collide", [(("i.0", "i_0"), True), (("i_0", "j_0"), False)])
+def test_program_declaration_collisions_match_c99(tmp_path, first, second, names, collide):
+  params, body = [], []
+  for kind, name in zip((first, second), names, strict=True):
+    if kind == "param":
+      params.append(p.buffer(name, dtypes.float64, (1,)))
+    elif kind == "buffer":
+      body.append(p.buffer(name, dtypes.float64, (1,)))
+    elif kind == "assign":
+      body.append(p.assign(name, p.const_float(0), declare=True))
+    else:
+      body.append(p.for_(p.range_(name, 0, 4, carried=True), [], exit_var=True))
+  proc = p.proc("declarations", params, body)
+  prog = p.program([proc])
+  path = tmp_path / "declarations.c"
+  path.write_text("\n".join([*_includes(dialect="c", prog=prog), *_render_raw_callee(proc, dialect="c")]))
+  result = check_c_syntax(path)
+  assert (result.returncode != 0) == collide, result.stderr
+  if collide:
+    with pytest.raises(VerifyError, match="duplicate C identifier 'i_0'"):
+      verify_program(prog)
+  else:
+    verify_program(prog)
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_scalar_declarations_follow_c99_block_and_loop_scopes(tmp_path, nested):
+  first = p.assign("value.0", p.const_float(0), declare=True)
+  second = p.assign("value_0", p.const_float(1), declare=True)
+  scope = p.for_(p.range_("i", 0, 1), [second]) if nested else p.block(p.block(second))
+  proc = p.proc("scopes", [], [p.block(first), scope])
+  prog = p.program([proc])
+  path = tmp_path / "scopes.c"
+  path.write_text("\n".join([*_includes(dialect="c", prog=prog), *_render_raw_callee(proc, dialect="c")]))
+  result = check_c_syntax(path)
+  assert (result.returncode == 0) == nested, result.stderr
+  if nested:
+    verify_program(prog)
+  else:
+    with pytest.raises(VerifyError, match="duplicate C identifier 'value_0'"):
+      verify_program(prog)
+
+
+def test_repeated_local_buffers_and_scalar_updates_are_not_redeclarations(tmp_path):
+  buf = p.buffer("value", dtypes.float64, (1,))
+  proc = p.proc("repeated", [], [buf, buf, p.assign("scalar", p.const_float(0), declare=True), p.assign("scalar", p.const_float(1))])
+  prog = p.program([proc])
+  verify_program(prog)
+  path = tmp_path / "repeated.c"
+  path.write_text("\n".join([*_includes(dialect="c", prog=prog), *_render_raw_callee(proc, dialect="c")]))
+  result = check_c_syntax(path)
+  assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("kind", ["exit", "buffer", "assign"])
+@pytest.mark.parametrize("parameter", ["flags", "w"])
+def test_local_declarations_cannot_redefine_a_buffer_parameter(tmp_path, kind, parameter):
+  params = [p.buffer(parameter, dtypes.bool_, (4,))] if parameter != "w" else []
+  if kind == "exit":
+    local = p.for_(p.range_(parameter, 0, 4, carried=True), [], exit_var=True)
+  elif kind == "buffer":
+    local = p.buffer(parameter, dtypes.float64, (1,))
+  else:
+    local = p.assign(parameter, p.const_float(0), declare=True)
+  proc = p.proc("parameter", params, [local])
+  prog = p.program([proc])
+  path = tmp_path / "parameter.c"
+  path.write_text("\n".join([*_includes(dialect="c", prog=prog), *_render_raw_callee(proc, dialect="c")]))
+  result = check_c_syntax(path)
+  assert result.returncode != 0
+  with pytest.raises(VerifyError, match=f"duplicate C identifier '{parameter}'"):
+    verify_program(prog)
 
 
 def test_same_named_callees_on_same_arguments() -> None:

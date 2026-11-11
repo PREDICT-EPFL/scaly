@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -18,6 +19,19 @@ def c_compiler() -> tuple[str, ...]:
   if compiler is None:
     pytest.skip("no C compiler")
   return compiler.command
+
+
+def check_c_syntax(path: Path) -> subprocess.CompletedProcess[str]:
+  """Run a C99 syntax check with the selected compiler."""
+  command = c_compiler()
+  args, source = [str(path)], None
+  if Path(command[0]).stem == "zig":
+    # zig cc expects an object even with -fsyntax-only: ziglang/zig#17361.
+    source = subprocess.run([*command, "-std=c99", "-E", str(path)], check=True, capture_output=True, text=True).stdout
+    target = subprocess.run([*command, "-dumpmachine"], check=True, capture_output=True, text=True).stdout.strip()
+    command = (command[0], "clang", "-target", target)
+    args = ["-x", "cpp-output", "-"]
+  return subprocess.run([*command, "-std=c99", "-fsyntax-only", *args], input=source, capture_output=True, text=True)
 
 
 def cxx_compiler() -> tuple[str, ...]:
