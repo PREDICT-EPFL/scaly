@@ -42,7 +42,7 @@ def counts(node, factor=1):
 
 def measure(label):
   program = lower_function(loop)
-  module = render_c_module(loop)
+  module = render_c_module(loop, header_name=f"{label}.h", source_name=f"{label}.c")
   source = module.source
   path = Path(__file__).parent / f"{label}.c"
   path.write_text(source)
@@ -67,7 +67,9 @@ if __name__ == "__main__":
   with patch("scaly.passes.lowering.calls.carry_reuse", return_value={}):
     baseline = measure("alternating")
   reused = measure("reused")
-  result = {"carry_entries": 100_000, "updated_entries_per_step": 4, "steps": 100,
+  result = {"counting": "Scalar-equivalent Program IR operations before lane widening, including constant-table loads",
+            "compile_command": "cc -O3 -c <label>.c -o <label>.o",
+            "carry_entries": 100_000, "updated_entries_per_step": 4, "steps": 100,
             "baseline": baseline, "reused": reused}
   report = json.dumps(result, indent=2) + "\n"
   (Path(__file__).parent / "measurement.json").write_text(report)

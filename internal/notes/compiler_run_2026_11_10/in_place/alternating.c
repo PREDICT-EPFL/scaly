@@ -2,11 +2,11 @@
  * CPU baseline: generic
  * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
  * Math library: scalar libm
- * gcc -O3 -fno-math-errno -c update_loop.c
- * clang -O3 -fno-math-errno -c update_loop.c
+ * gcc -O3 -fno-math-errno -c alternating.c
+ * clang -O3 -fno-math-errno -c alternating.c
  * Link with: -lm
  */
-#include "update_loop.h"
+#include "alternating.h"
 
 #include <math.h>
 #include <stddef.h>

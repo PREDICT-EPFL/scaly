@@ -2,8 +2,8 @@
  * CPU baseline: generic
  * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
  * Math library: scalar libm
- * gcc -O3 -fno-math-errno -c update_loop.c
- * clang -O3 -fno-math-errno -c update_loop.c
+ * gcc -O3 -fno-math-errno -c alternating.c
+ * clang -O3 -fno-math-errno -c alternating.c
  * Link with: -lm
  */
 #pragma once
@@ -39,7 +39,7 @@
 #define update_loop_SZ_ARG 1
 #define update_loop_SZ_RES 1
 #define update_loop_SZ_IW 0
-#define update_loop_SZ_W 100000
+#define update_loop_SZ_W 200000
 
 // The pointer ABI for update_loop.
 #ifdef __cplusplus
