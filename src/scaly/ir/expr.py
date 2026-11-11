@@ -185,8 +185,8 @@ class OpInfo:
   has derivative rules. ``OP_INFO`` holds one per op.
 
   ``pattern_rule`` gives the stored pattern of an elementwise op or ``MATMUL`` with a sparse
-  operand. An elementwise op without one refuses a sparse operand. Movement ops move the stored
-  coordinates instead. ``support_rule`` names how ``Expr.support`` follows the op, ``None`` when
+  operand. An elementwise op without one refuses a sparse operand. Movement ops and reductions
+  compute the pattern from the stored coordinates instead. ``support_rule`` names how ``Expr.support`` follows the op, ``None`` when
   any entry may be nonzero.
   """
 

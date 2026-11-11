@@ -91,10 +91,10 @@ print(type(B_value).__name__)  # csr_array
 print(B_value.data)            # [ 8. -2. -2.  8. -2. -2.  8.]
 ```
 
-An output declared without a type comes back in CSC order. A layout needs a
-declared pattern, so `sc.arg("B", layout="csr")` raises
-`ValueError: a layout requires a declared sparse pattern`, and a result whose
-pattern you do not declare, such as a product, always comes back as CSC. A
+An output declared without a type comes back in CSC order. Without a type,
+`sc.arg("B", layout="csr")` declares a dense output and raises
+`ValueError: dense layout must be 'row-major' or 'column-major'`, so a result
+whose pattern you do not declare, such as a product, always comes back as CSC. A
 batched result comes back as an N-dimensional `coo_array`. Each
 call returns a new array of values, but the index arrays are shared between calls
 and read-only.
@@ -210,13 +210,15 @@ their values:
 | `A + B`, `A - B` | The union of the patterns. A dense operand stores every entry |
 | `A * B` | The intersection. With a dense operand, the pattern of the sparse one |
 | Slicing, transposition, reshaping, `sc.stack`, `sc.concat`, `sc.gather`, `sc.scatter` | The stored entries, moved. Matrices stacked along a batch axis share the union of their patterns. A result with fewer than two axes is dense |
+| `sc.where(condition, A, B)` | The union of the branches' patterns. A dense branch, including a scalar, stores every entry |
 | `A @ B` | See [products](#products) |
-| `A.sum()` | A dense scalar |
+| `A.sum(axis)`, `A.mean(axis)` | Over batch axes, the pattern of `A`. Over a matrix axis, the entries the sum reaches. A result with fewer than two axes, such as `A.sum()`, is dense |
 
 So `A_const + 0.0` stores all nine entries while `A_const * 0.0` keeps seven.
 The unary operations in the table map zero to zero. Any other elementwise
 operation raises as the expression is built, including `exp`, `log`, `cos`,
-powers, division, `sc.atan2`, `sc.minimum` and `sc.maximum`:
+powers, division, comparisons, `sc.isfinite`, `sc.cast`, `sc.atan2`,
+`sc.minimum` and `sc.maximum`:
 
 ```python
 A_const.exp()
@@ -226,6 +228,21 @@ A_const.exp()
 `A_const.to_dense().exp()` computes the dense result. Division by a scalar
 refuses a sparse operand too, while multiplication by its reciprocal,
 `A_const * (1 / s)`, keeps the pattern.
+
+`sc.where` chooses between sparse branches entry by entry over the stored
+entries of the result. Its condition comes from a dense expression, since a
+comparison refuses a sparse operand:
+
+```python
+@sc.function(sc.arg("A", A_type), sc.arg("s", ()), outputs=sc.arg("B"))
+def choose(A: sc.Expr, s: sc.Expr) -> sc.Expr:
+    return sc.where(s > 0, A, 2.0 * A)
+
+print(choose(A_value, np.array(1.0)).data)   # [ 4. -1. -1.  4. -1. -1.  4.]
+print(choose(A_value, np.array(-1.0)).data)  # [ 8. -2. -2.  8. -2. -2.  8.]
+```
+
+As with dense values, the branch not chosen does not contribute to derivatives.
 
 ## Structural zeros
 
