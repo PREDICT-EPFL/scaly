@@ -2,7 +2,10 @@
 
 import ctypes
 import json
+import os
 from pathlib import Path
+import shlex
+import shutil
 import subprocess
 import sys
 
@@ -149,6 +152,224 @@ def test_changed_linked_binary_changes_key_and_linux_namespace(isolated_cache, m
   assert first.cache_key != second.cache_key
   np.testing.assert_allclose(first.run([np.array(3.0)]), [15])
   np.testing.assert_allclose(second.run([np.array(3.0)]), [21])
+
+
+def _namespace_libraries(root, kind):
+  compiler = find_c_compiler()
+  assert compiler is not None
+  source = root / "dependency.c"
+  source.write_text(SOURCE)
+
+  def build(directory, name, scale, *, soname=None, nested=False):
+    directory.mkdir(exist_ok=True)
+    target = directory / f"lib{name}.so"
+    temporary = directory / "new.so"
+    inputs = [str(source), f"-DLOCAL_ONLY={scale}"]
+    if nested:
+      wrapper = directory / "wrapper.c"
+      wrapper.write_text(
+        "double nested_scale(void);\n"
+        "void external_double(const double* x, double* y, double* w) { y[0] = nested_scale()*x[0]; }\n"
+        "void external_triple(const double* x, double* y, double* w) { y[0] = (nested_scale()+1)*x[0]; }\n"
+      )
+      dependency = directory / "nested.c"
+      dependency.write_text(f"double nested_scale(void) {{ return {scale}; }}\n")
+      subprocess.run(
+        [*compiler.command, "-shared", "-fPIC", str(dependency), "-Wl,-soname,libnested.so", "-o", str(directory / "libnested.so")],
+        capture_output=True,
+        check=True,
+      )
+      inputs = [str(wrapper), "-L" + str(directory), "-lnested", "-Wl,-rpath," + str(directory)]
+    subprocess.run(
+      [*compiler.command, "-shared", "-fPIC", *inputs, "-Wl,-soname," + (soname or target.name), "-o", str(temporary)],
+      capture_output=True,
+      check=True,
+    )
+    temporary.replace(target)
+    os.environ["SCALY_CC"] = shlex.join((*compiler.command, "-L" + str(directory)))
+    host = library_host(sc.CLibrary(name, link=(name,)))
+    handle = get_compiled(host)
+    cached = get_compiled(host)
+    assert handle.cache_key == cached.cache_key
+    np.testing.assert_allclose(cached.run([np.array(3.0)]), [(2 * scale + 1) * 3])
+    return handle
+
+  handles = []
+  if kind != "exhaustion":
+    for i in range(24):
+      handles.append((build(root, f"independent{i}", i + 2), (2 * i + 5) * 3))
+  if kind in ("path", "soname", "transitive"):
+    for i in range(2):
+      directory = root if kind == "path" else root / f"version{i}"
+      name = f"versioned{i}" if kind == "transitive" else "versioned"
+      soname = None if kind == "transitive" else "libversioned.so"
+      handles.append((build(directory, name, i + 2, soname=soname, nested=kind == "transitive"), (2 * i + 5) * 3))
+  if kind == "exhaustion":
+    for i in range(32):
+      try:
+        handle = build(root, "versioned", i + 2)
+      except OSError as exc:
+        message = str(exc)
+        assert "dlmopen failed" in message
+        assert "no more namespaces" in message or "static TLS" in message, message
+        assert "fresh process" in message and "versions" in message, message
+        break
+      handles.append((handle, (2 * i + 5) * 3))
+    else:
+      raise AssertionError("32 incompatible live dependencies unexpectedly fit")
+  for handle, expected in reversed(handles):
+    np.testing.assert_allclose(handle.run([np.array(3.0)]), [expected])
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="glibc linker namespaces")
+@pytest.mark.parametrize("kind", ["independent", "path", "soname", "transitive", "exhaustion"])
+def test_compatible_linker_namespaces(tmp_path, kind):
+  script = "from pathlib import Path; import sys; from tests.codegen.test_external import _namespace_libraries; _namespace_libraries(Path(sys.argv[1]), sys.argv[2])"
+  result = subprocess.run(
+    [sys.executable, "-c", script, str(tmp_path), kind],
+    env={**os.environ, "SCALY_CACHE_DIR": str(tmp_path / "cache")},
+    capture_output=True,
+    text=True,
+    timeout=300,
+  )
+  assert result.returncode == 0, result.stderr
+
+
+def _namespace_allocators(root, order):
+  compiler = find_c_compiler()
+  assert compiler is not None
+  allocator = root / "allocator.c"
+  allocator.write_text("""#include <stddef.h>
+#include <stdlib.h>
+#include <sys/mman.h>
+typedef union { struct { size_t size, tag; } info; max_align_t alignment; } Header;
+void* malloc(size_t n) {
+  Header* h = mmap(NULL, n + sizeof(Header), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (h == MAP_FAILED) return NULL;
+  h->info.size = n + sizeof(Header); h->info.tag = 0xfeedbeef;
+  return h + 1;
+}
+void free(void* p) {
+  if (!p) return;
+  Header* h = (Header*)p - 1;
+  if (h->info.tag != 0xfeedbeef) abort();
+  munmap(h, h->info.size);
+}
+void allocator_marker(void) {}
+""")
+  subprocess.run([*compiler.command, "-shared", "-fPIC", str(allocator), "-o", str(root / "liballocator.so")], capture_output=True, check=True)
+  os.environ["SCALY_CC"] = shlex.join((*compiler.command, "-L" + str(root)))
+  handles = []
+  for kind in order.split(","):
+    marker = "void allocator_marker(void);" if kind == "allocator" else ""
+    call = "allocator_marker();" if kind == "allocator" else ""
+    library = sc.CLibrary(
+      kind,
+      sources={
+        "allocating.c": "#include <stdlib.h>\n#include <string.h>\n" + marker + "\n"
+        "void external_allocating(const double* x, double* y, double* w) { " + call + 'char* s = strdup("hello"); y[0] = x[0] + strlen(s); free(s); }'
+      },
+      compile_flags=("-fno-builtin",),
+      link=("allocator",) if kind == "allocator" else (),
+    )
+    external = sc.extern(library, "external_allocating", inputs=(sc.arg("x", ()),), outputs=sc.arg("y", ()))
+    handles.append(get_compiled(external._function))
+  for handle in handles:
+    np.testing.assert_allclose(handle.run([np.array(3.0)]), [8])
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="glibc allocator binding")
+@pytest.mark.parametrize("order", ["plain,allocator", "allocator,plain"])
+def test_external_namespace_keeps_libc_allocation_and_free_together(tmp_path, order):
+  script = (
+    "import resource, sys; from pathlib import Path; resource.setrlimit(resource.RLIMIT_CORE, (0, 0)); "
+    "from tests.codegen.test_external import _namespace_allocators; _namespace_allocators(Path(sys.argv[1]), sys.argv[2])"
+  )
+  result = subprocess.run(
+    [sys.executable, "-c", script, str(tmp_path), order],
+    env={**os.environ, "SCALY_CACHE_DIR": str(tmp_path / "cache")},
+    capture_output=True,
+    text=True,
+    timeout=120,
+  )
+  assert result.returncode == 0, result.stderr
+
+
+def _namespace_origins(root):
+  compiler = find_c_compiler()
+  assert compiler is not None
+  launcher = root / "launcher.c"
+  launcher.write_text("""#include <dlfcn.h>
+double relative_value(void) {
+  void* handle = dlopen("libplugin.so", RTLD_NOW | RTLD_LOCAL);
+  if (!handle) return -1;
+  double (*value)(void) = dlsym(handle, "value");
+  double result = value ? value() : -2;
+  dlclose(handle);
+  return result;
+}
+""")
+  handles = []
+  for i in range(2):
+    directory = root / f"version{i}"
+    directory.mkdir()
+    plugin = directory / "plugin.c"
+    plugin.write_text(f"double value(void) {{ return {i + 7}; }}\n")
+    subprocess.run([*compiler.command, "-shared", "-fPIC", str(plugin), "-o", str(directory / "libplugin.so")], capture_output=True, check=True)
+    if i == 0:
+      subprocess.run(
+        [
+          *compiler.command,
+          "-shared",
+          "-fPIC",
+          str(launcher),
+          "-Wl,-soname,liblauncher.so",
+          "-Wl,-rpath,$ORIGIN",
+          "-ldl",
+          "-o",
+          str(directory / "liblauncher.so"),
+        ],
+        capture_output=True,
+        check=True,
+      )
+    else:
+      shutil.copyfile(root / "version0" / "liblauncher.so", directory / "liblauncher.so")
+    os.environ["SCALY_CC"] = shlex.join((*compiler.command, "-L" + str(directory)))
+    library = sc.CLibrary(
+      f"origin{i}",
+      sources={
+        "wrapper.c": "double relative_value(void);\n"
+        "void external_double(const double* x, double* y, double* w) { y[0] = relative_value()*x[0]; }\n"
+        "void external_triple(const double* x, double* y, double* w) { y[0] = (relative_value()+1)*x[0]; }\n"
+      },
+      link=("launcher",),
+    )
+    handles.append(get_compiled(library_host(library)))
+  for i, handle in enumerate(handles):
+    np.testing.assert_allclose(handle.run([np.array(3.0)]), [(2 * i + 15) * 3])
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="glibc origin-relative plugin lookup")
+def test_identical_dependencies_at_different_paths_keep_their_own_plugins(tmp_path):
+  script = "from pathlib import Path; import sys; from tests.codegen.test_external import _namespace_origins; _namespace_origins(Path(sys.argv[1]))"
+  result = subprocess.run(
+    [sys.executable, "-c", script, str(tmp_path)],
+    env={**os.environ, "SCALY_CACHE_DIR": str(tmp_path / "cache")},
+    capture_output=True,
+    text=True,
+    timeout=120,
+  )
+  assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="glibc dependency inspection")
+def test_external_dependency_inspection_does_not_need_shell_tools(isolated_cache, monkeypatch):
+  from scaly.codegen import jit
+
+  library = sc.CLibrary("without_shell", sources={"shared.c": SOURCE}, defines={"LOCAL_ONLY": 2})
+  compiled = get_compiled(library_host(library))
+  monkeypatch.setenv("PATH", str(isolated_cache / "empty"))
+  assert str(compiled.lib_path.resolve()) in jit._namespace_dependencies(compiled.lib_path)
 
 
 def test_external_and_generated_prints_survive_redirected_stdout():
