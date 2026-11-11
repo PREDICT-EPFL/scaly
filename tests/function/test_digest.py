@@ -310,3 +310,13 @@ def test_a_sparse_leafs_layout_is_part_of_the_digest() -> None:
   csc, csr = identity("csc"), identity("csr")
   assert csc.inputs[0] is csr.inputs[0]  # one graph, two layouts at its boundary
   assert digest.graph_digest(csc) not in (None, digest.graph_digest(csr))
+
+
+def test_a_dense_leafs_layout_is_part_of_the_digest() -> None:
+  def identity(layout: str) -> ConcreteFunction:
+    leaf = sc.arg("x", (2, 3), layout=layout)
+    return as_concrete(sc.function(leaf, outputs=leaf.relabel("out_"), name="digest_dense_layout")(lambda x: x))
+
+  rows, columns = identity("row-major"), identity("column-major")
+  assert rows.inputs[0] is columns.inputs[0]
+  assert digest.graph_digest(rows) not in (None, digest.graph_digest(columns))
