@@ -11,7 +11,7 @@ import numpy as np
 from ..ir.expr import Expr, ExprOp, _full_like, _uniform, cast, equal, gather, not_equal, pack, scatter, to_dense, values, where, zeros_like
 from ..ir.program import ProgramOp
 from ..ir.support import project_entries
-from ..ir.types import TensorType, stored_indices
+from ..ir.types import TensorType, stored_indices, stored_slots
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,10 +261,8 @@ def cotangent(expr: Expr, cot: Expr, position: int) -> Expr:
     def transpose(c: Expr) -> tuple[Expr]:
       if operand.type.pattern is None:
         return (scatter(c, projected, operand.shape),)
-      entries = stored_indices(operand.type)
-      slots = np.searchsorted(entries, projected)
-      keep = slots < len(entries)
-      keep[keep] &= entries[slots[keep]] == projected[keep]
+      slots = stored_slots(operand.type, projected)
+      keep = slots >= 0
       result = scatter(gather(c, np.flatnonzero(keep)), slots[keep], operand.type.storage_shape)
       return (pack(result, operand.type.pattern, shape=operand.shape),)
 
@@ -366,10 +364,8 @@ def _sample_stored_unmasked(expr: Expr, output: TensorType) -> Expr:
   logical = project_entries(stored_indices(output), expr.shape, output.shape)
   if expr.type.pattern is None:
     return gather(expr, logical).reshape(output.storage_shape)
-  entries = stored_indices(expr.type)
-  slots = np.searchsorted(entries, logical)
-  keep = slots < len(entries)
-  keep[keep] &= entries[slots[keep]] == logical[keep]
+  slots = stored_slots(expr.type, logical)
+  keep = slots >= 0
   sampled = gather(values(expr), slots[keep])
   return scatter(sampled, np.flatnonzero(keep), output.storage_shape)
 

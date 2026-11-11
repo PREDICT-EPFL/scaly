@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Mapping, cast
 
 import numpy as np
 
-from .types import CanonicalPattern, _uniform_value, stored_indices
+from .types import CanonicalPattern, _uniform_value, stored_indices, stored_slots
 
 if TYPE_CHECKING:
   from .expr import Expr, ExprOp, OpInfo
@@ -314,10 +314,8 @@ def _constant_condition(condition: Expr, entries: np.ndarray, shape: tuple[int, 
   logical = project_entries(entries, condition.shape, shape)
   if condition.type.pattern is None:
     return source.value.reshape(-1)[logical]
-  stored = stored_indices(condition.type)
-  slots = np.searchsorted(stored, logical)
-  keep = slots < len(stored)
-  keep[keep] &= stored[slots[keep]] == logical[keep]
+  slots = stored_slots(condition.type, logical)
+  keep = slots >= 0
   selected = np.zeros(len(entries), dtype=bool)
   selected[keep] = source.value.reshape(-1)[slots[keep]]
   return selected
