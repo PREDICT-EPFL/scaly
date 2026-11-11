@@ -24,17 +24,24 @@ def verify_program(root: ProgramNode, spec: "Spec | None" = None) -> None:
     if result is not None:
       rule, diag = result
       raise VerifyError(f"verify_program: node op={node.op.value} failed rule {rule.description!r}: {diag}")
-  pending = [(root, False)]
+  pending: list[tuple[ProgramNode, bool, set[str]]] = [(root, False, set())]
   while pending:
-    node, can_break = pending.pop()
+    node, can_break, exit_vars = pending.pop()
     if node.op == ProgramOp.BREAK_IF and not can_break:
       raise VerifyError("verify_program: BREAK_IF requires the nearest loop to be carried with exit_var")
     if node.op == ProgramOp.PROC:
       can_break = False
+      exit_vars = set()
     elif node.op == ProgramOp.FOR:
       can_break = bool(node.attrs.get("exit_var"))  # the FOR rule has checked that its range is carried
+      if can_break:
+        name = node.args[0].attrs["name"]
+        if name in exit_vars:
+          raise VerifyError(f"verify_program: duplicate exit variable {name!r} in one scope")
+        exit_vars.add(name)
+      exit_vars = set()
     if node.op in (ProgramOp.PROGRAM, ProgramOp.PROC, ProgramOp.BLOCK, ProgramOp.FOR):
-      pending.extend((arg, can_break) for arg in node.args)
+      pending.extend((arg, can_break, exit_vars) for arg in node.args)
 
 
 # ---------- shared rules ----------

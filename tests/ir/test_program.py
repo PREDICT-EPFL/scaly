@@ -298,6 +298,34 @@ def test_nested_carried_breaks_and_blocks_verify():
   verify_program(p.for_(p.range_("i", 0, 3, carried=True), [inner, stop], exit_var=True))
 
 
+@pytest.mark.parametrize("where", ["procedure", "blocks", "loop_body"])
+def test_exit_loops_cannot_redeclare_a_variable_in_one_scope(where):
+  flags = p.buffer("flags", dtypes.bool_, (4,))
+  count = p.buffer("count", dtypes.int64, (2,))
+  loop = p.for_(p.range_("i", 0, 4, carried=True), [p.break_if(p.load(p.view(flags, [p.var("i")])))], exit_var=True)
+  first = [loop, p.store(p.view(count, [p.const_int(0)]), p.var("i"))]
+  second = [loop, p.store(p.view(count, [p.const_int(1)]), p.var("i"))]
+  body = [*first, *second]
+  if where == "blocks":
+    body = [p.block(*first), p.block(p.block(*second))]
+  elif where == "loop_body":
+    body = [p.for_(p.range_("j", 0, 2), body)]
+  with pytest.raises(VerifyError, match="duplicate exit variable 'i'"):
+    verify_program(p.program([p.proc("twice", [flags, count], body)]))
+
+
+@pytest.mark.parametrize("where", ["different_names", "procedures", "sibling_loops"])
+def test_exit_loops_can_declare_distinct_or_separately_scoped_variables(where):
+  loop = p.for_(p.range_("i", 0, 4, carried=True), [], exit_var=True)
+  if where == "different_names":
+    root = p.proc("distinct", [], [loop, p.for_(p.range_("j", 0, 4, carried=True), [], exit_var=True)])
+  elif where == "procedures":
+    root = p.program([p.proc("first", [], [loop]), p.proc("second", [], [loop])])
+  else:
+    root = p.proc("siblings", [], [p.for_(p.range_("j", 0, 2), [loop]), p.for_(p.range_("j", 0, 3), [loop])])
+  verify_program(root)
+
+
 @pytest.mark.parametrize("value", [p.const_int(1), p.const_float(1), p.buffer("not_scalar", dtypes.bool_, (1,))])
 def test_break_if_requires_a_boolean_scalar(value):
   with pytest.raises(TypeError, match="bool scalar"):

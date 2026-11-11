@@ -15,6 +15,37 @@ from scaly.passes.program import optimize_program
 from tests.compilers import c_compiler
 
 
+@pytest.mark.parametrize("outer_exit", [False, True])
+def test_nested_exit_variable_shadows_the_outer_loop_index(tmp_path, outer_exit):
+  flags = p.buffer("flags", dtypes.bool_, (4,))
+  count = p.buffer("count", dtypes.int64, (3,))
+  inner = p.for_(p.range_("i", 0, 4, carried=True), [p.break_if(p.load(p.view(flags, [p.var("i")])))], exit_var=True)
+  outer = p.for_(
+    p.range_("i", 0, 3, carried=outer_exit),
+    [p.assign("outer_i", p.var("i"), declare=True), p.block(inner), p.store(p.view(count, [p.var("outer_i")]), p.var("i"))],
+    exit_var=outer_exit,
+  )
+  proc = p.proc("shadow", [flags, count], [outer])
+  prog = p.program([proc])
+  verify_program(prog)
+  source = "\n".join([*_includes(dialect="c", prog=prog), *_render_raw_callee(proc, dialect="c")])
+  path, library = tmp_path / "shadow.c", tmp_path / "shadow.so"
+  path.write_text(source + "\nvoid run(uint8_t *flags, int64_t *count) { shadow_raw(flags, count, NULL); }\n")
+  subprocess.run([*c_compiler(), "-shared", "-fPIC", "-std=c99", str(path), "-o", str(library)], check=True, capture_output=True)
+  run = ctypes.CDLL(str(library)).run
+  run.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_int64)]
+  values = np.array([0, 0, 1, 0], dtype=np.uint8)
+  result = np.full(3, -1, dtype=np.int64)
+  run(values.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), result.ctypes.data_as(ctypes.POINTER(ctypes.c_int64)))
+  expected = np.empty_like(result)
+  for outer_i in range(3):
+    i = 0
+    while i < len(values) and not values[i]:
+      i += 1
+    expected[outer_i] = i
+  np.testing.assert_array_equal(result, expected)
+
+
 @pytest.mark.parametrize("dialect", ["c", "gnu"])
 @pytest.mark.parametrize("lanes,reciprocal", [(1, False), (2, False), (1, True), (2, True)])
 @pytest.mark.parametrize("dynamic", [False, True])

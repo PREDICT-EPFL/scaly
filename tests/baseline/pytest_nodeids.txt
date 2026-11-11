@@ -1549,6 +1549,8 @@ tests/codegen/test_carried_ranges.py::test_carried_recurrence_and_trip_count_mat
 tests/codegen/test_carried_ranges.py::test_carried_recurrence_and_trip_count_match_numpy[6-6-True-2-False-gnu]
 tests/codegen/test_carried_ranges.py::test_carried_recurrence_and_trip_count_match_numpy[6-6-True-2-True-c]
 tests/codegen/test_carried_ranges.py::test_carried_recurrence_and_trip_count_match_numpy[6-6-True-2-True-gnu]
+tests/codegen/test_carried_ranges.py::test_nested_exit_variable_shadows_the_outer_loop_index[False]
+tests/codegen/test_carried_ranges.py::test_nested_exit_variable_shadows_the_outer_loop_index[True]
 tests/codegen/test_casadi.py::test_casadi_column_major_cpp_buffer_indexing
 tests/codegen/test_casadi.py::test_casadi_cpp_rejects_a_function_named_like_the_column_major_template
 tests/codegen/test_casadi.py::test_casadi_dense_matrices_match_numpy[shape0-c]
@@ -2355,6 +2357,12 @@ tests/ir/test_program.py::test_carried_ranges_cannot_be_vectorized[False]
 tests/ir/test_program.py::test_carried_ranges_cannot_be_vectorized[True]
 tests/ir/test_program.py::test_elementwise_proc_verifies_and_prints
 tests/ir/test_program.py::test_every_observed_program_stage_verifies
+tests/ir/test_program.py::test_exit_loops_can_declare_distinct_or_separately_scoped_variables[different_names]
+tests/ir/test_program.py::test_exit_loops_can_declare_distinct_or_separately_scoped_variables[procedures]
+tests/ir/test_program.py::test_exit_loops_can_declare_distinct_or_separately_scoped_variables[sibling_loops]
+tests/ir/test_program.py::test_exit_loops_cannot_redeclare_a_variable_in_one_scope[blocks]
+tests/ir/test_program.py::test_exit_loops_cannot_redeclare_a_variable_in_one_scope[loop_body]
+tests/ir/test_program.py::test_exit_loops_cannot_redeclare_a_variable_in_one_scope[procedure]
 tests/ir/test_program.py::test_exit_variable_is_a_trip_count[0-2]
 tests/ir/test_program.py::test_exit_variable_is_a_trip_count[1-1]
 tests/ir/test_program.py::test_for_first_arg_must_be_range
