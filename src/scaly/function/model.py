@@ -292,7 +292,8 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
 
     Pass the same arguments as a call to select its binding. Fully specified functions also
     accept no arguments. ``of`` selects an output by name and is required for multiple outputs.
-    Dense outputs return ``None``; sparse derivative patterns index their compact values.
+    Sparse derivative outputs return the pattern that indexes their compact values. Other outputs
+    return ``None``, including sparse matrices, whose pattern is in their type.
     """
     instance = self._resolve(args, f"{self.name}.sparsity") if args or self.inputs is None else self.instantiate()
     if of is None:

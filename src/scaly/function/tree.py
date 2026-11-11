@@ -274,9 +274,12 @@ def arg(name: str, shape: ShapeDecl = None, /, *, layout: Layout = None, pattern
   """Declare one named tensor, optionally leaving its shape to a call or trace.
 
   A leaf is passed and returned as a bare value. Use ``group`` to declare tuple structure.
-  A ``TensorType`` sets the dtype and differentiability explicitly.
-  Dense leaves use row-major buffers by default. ``layout="column-major"`` orders each
-  matrix's values by column, keeping leading batch axes in row-major order.
+  A ``TensorType`` sets the dtype and differentiability explicitly, and a stored pattern for a
+  sparse matrix. Dense leaves use row-major buffers by default. ``layout="column-major"`` orders
+  each matrix's values by column, keeping leading batch axes in row-major order. A sparse leaf's
+  ``layout`` is ``"csc"`` (the default), ``"csr"``, or the coordinate order of a
+  ``SparsityPattern``. ``pattern=...`` leaves the pattern to the call, with a ``"csc"`` or
+  ``"csr"`` layout.
   """
   return _Leaf(name, shape, layout=layout, pattern=pattern)
 

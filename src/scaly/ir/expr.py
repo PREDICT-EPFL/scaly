@@ -182,7 +182,12 @@ COMMON_OPS = COMMON_STRUCTURAL | COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_B
 @dataclass(frozen=True, slots=True)
 class OpInfo:
   """What the compiler knows about one ``ExprOp``: its arity (``None`` for variadic) and whether it
-  has derivative rules. ``OP_INFO`` holds one per op."""
+  has derivative rules. ``OP_INFO`` holds one per op.
+
+  ``pattern_rule`` gives the stored pattern of a result with a sparse operand, ``None`` when the op
+  refuses one. ``support_rule`` names how ``Expr.support`` follows the op, ``None`` when any entry
+  may be nonzero.
+  """
 
   op: ExprOp
   arity: int | None
@@ -550,6 +555,10 @@ class Expr:
     A NumPy array or scalar keeps its dtype, and anything else becomes ``float64``, unless
     ``dtype`` says otherwise. Constants are never differentiable: a derivative with respect to one
     is structurally zero.
+
+    A SciPy sparse array becomes a sparse constant with its pattern. Duplicate entries are summed
+    and explicitly stored zeros stay stored. ``pattern`` instead makes ``value`` the stored values
+    of a sparse constant, in the pattern's coordinate order.
     """
     from scipy import sparse
 
@@ -586,9 +595,10 @@ class Expr:
 
   @property
   def support(self) -> Support:
-    """Flat logical entries that may be nonzero, or ``None`` when any entry may be nonzero.
+    """Flat row-major indices of the entries that may be nonzero, or ``None`` when any may be.
 
-    Computed iteratively on first access and cached per node, outside the intern key.
+    Every other entry is zero for all input values. The result is a set or a sorted array of
+    indices, computed on first access and cached.
     """
     return compute_support(self, OP_INFO)
 
@@ -704,11 +714,11 @@ class Expr:
     return gather(self, indices)
 
   def values(self) -> Expr:
-    """Expose the stored values in canonical coordinate order."""
+    """Return the stored values in row-major coordinate order, as ``sc.values`` does."""
     return values(self)
 
   def to_dense(self) -> Expr:
-    """Place stored values at their logical coordinates, filling other entries with zero."""
+    """Place stored values at their coordinates, filling other entries with zero."""
     return to_dense(self)
 
   def sum(self, axis: int | tuple[int, ...] | None = None, *, keepdims: bool = False) -> Expr:
@@ -1526,7 +1536,12 @@ def zeros_like(x: Expr) -> Expr:
 
 
 def pack(value: Any, pattern: CanonicalPattern | SparsityPattern, *, shape: tuple[int, ...] | None = None) -> Expr:
-  """Build a sparse tensor from stored values, including explicit zeros."""
+  """Build a sparse tensor from its stored values, including explicit zeros.
+
+  A ``SparsityPattern`` takes the values in its own coordinate order, a canonical pattern in
+  row-major order. Leading axes of ``value`` are batch axes. ``shape`` defaults to those axes
+  followed by the pattern's shape.
+  """
   x = as_expr(value)
   if isinstance(pattern, SparsityPattern):
     pattern, permutation = pattern.canonicalize()
@@ -1542,7 +1557,10 @@ def pack(value: Any, pattern: CanonicalPattern | SparsityPattern, *, shape: tupl
 
 
 def values(value: Any) -> Expr:
-  """Expose canonical stored values as a dense tensor with the storage shape."""
+  """Return a sparse tensor's stored values, in row-major coordinate order, as a dense tensor.
+
+  The result has the storage shape. A dense tensor is returned unchanged.
+  """
   x = as_expr(value)
   if x.type.pattern is None:
     return x
@@ -1552,7 +1570,7 @@ def values(value: Any) -> Expr:
 
 
 def to_dense(value: Any) -> Expr:
-  """Materialize logical entries, filling coordinates outside the pattern with zero."""
+  """Return a dense tensor with zeros outside the pattern. A dense tensor is returned unchanged."""
   x = as_expr(value)
   if x.type.pattern is None:
     return x
@@ -1560,7 +1578,7 @@ def to_dense(value: Any) -> Expr:
 
 
 def from_dense(value: Any, pattern: CanonicalPattern | SparsityPattern) -> Expr:
-  """Project a dense tensor onto a declared stored pattern."""
+  """Keep the entries of a dense tensor inside ``pattern`` as a sparse tensor and drop the others."""
   x = as_expr(value)
   if x.type.pattern is not None:
     raise ValueError("from_dense requires a dense tensor")
@@ -1570,7 +1588,11 @@ def from_dense(value: Any, pattern: CanonicalPattern | SparsityPattern) -> Expr:
 
 
 def sparsify(value: Any) -> Expr:
-  """Compact a tensor over its support, sharing a pattern across batch axes."""
+  """Store only the entries that ``Expr.support`` says may be nonzero.
+
+  Batch axes share one pattern, covering the entries of every batch entry. A sparse tensor is
+  returned unchanged.
+  """
   x = as_expr(value)
   if x.type.pattern is not None:
     return x

@@ -117,6 +117,7 @@ def test_public_exports_are_canonical() -> None:
     for name in ("DerivSpec", "expr_jacobian", "expr_gradient", "expr_hessian", "jac", "grad", "hess", "spjac", "sphess", "spjacobian", "sphessian")
   )
   assert {"ExprOp", "Rule", "Spec", "VerifyError"} <= set(sc.__all__)
+  assert {"pack", "values", "to_dense", "from_dense", "sparsify", "SparsityPattern", "TensorType"} <= set(sc.__all__)
   assert "vmap" in sc.__all__
   assert {"scan", "while_loop"} <= set(sc.__all__)
   assert "map_" not in sc.__all__
