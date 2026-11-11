@@ -11,6 +11,7 @@ from ...ir import program as p
 from ...ir.expr import Expr, ExprOp, callees_of, invocation_key
 from ...ir.match import Pattern, rewrite
 from ...function.concrete import ConcreteFunction
+from ...function.extern import _Extern
 from ...function.model import Function, as_concrete
 from ...function.tree import flat_tree
 from ...ir.layout import sparse_layout
@@ -111,7 +112,10 @@ def lower_function(
       {**prog.attrs, "solver_oracles": solver_oracles, "solver_external_workspace": solver_external_workspace},
       prog.dtype,
     )
-  prog = ProgramNode(prog.op, prog.args, {**prog.attrs, "function_symbols": tuple(symbols.items())}, prog.dtype)
+  externs = tuple(fn for fn in symbols if isinstance(fn, _Extern))
+  prog = ProgramNode(
+    prog.op, prog.args, {**prog.attrs, "function_symbols": tuple(symbols.items()), **({"externs": externs} if externs else {})}, prog.dtype
+  )
   if observe is not None:
     observe("lowered", prog)
   prog = optimize_program(prog, observe=observe, reciprocal=reciprocal, lanes=lanes)
@@ -696,7 +700,17 @@ def _function_names(root: ConcreteFunction) -> tuple[NameScope, dict[ConcreteFun
   residuals: set[ConcreteFunction] = set()
   oracles: set[ConcreteFunction] = set()
 
+  external_symbols: dict[str, _Extern] = {}
+
   def visit(function: ConcreteFunction) -> None:
+    if isinstance(function, _Extern):
+      previous = external_symbols.setdefault(function.name, function)
+      if (previous.library, previous.signature) != (function.library, function.signature):
+        raise ValueError(f"conflicting external declarations for C symbol {function.name!r}")
+      symbols[function] = function.name
+      names.occupied.add(function.name)
+      _check_float64_leaves(function)
+      return
     if function in seen:
       return
     seen.add(function)

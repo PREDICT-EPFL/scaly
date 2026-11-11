@@ -119,6 +119,7 @@ def render_program_c(
     "#endif",
     "",
   ]
+  lines += extern_declarations(prog)
   reserved_names = _c_reserved_names(prog)
   for callee in callees:
     lines += _render_raw_callee(callee, dialect=dialect, vector_libm=vector_libm, reserved_names=reserved_names)
@@ -128,6 +129,17 @@ def render_program_c(
     lines += ["", *render_casadi_queries(fun, entry_workspace(fun, int(proc.attrs.get("sz_w", 0)), casadi=True))]
   lines += ["", "#ifdef __cplusplus", "}", "#endif"]
   return "\n".join(lines).rstrip() + "\n"
+
+
+def extern_declarations(prog: ProgramNode) -> list[str]:
+  """The concrete pointer signatures of the external symbols reached by this program."""
+  declarations = []
+  for fn in prog.attrs.get("externs", ()):
+    params = [*(f"const {e.type.dtype.c_type}*" for e in fn.inputs), *(f"{e.type.dtype.c_type}*" for e in fn.outputs), "double*"]
+    declaration = f"void {fn.name}({', '.join(params)});"
+    if declaration not in declarations:
+      declarations.append(declaration)
+  return [*declarations, ""] if declarations else []
 
 
 def entry_workspace(fun: ConcreteFunction, sz_w: int, *, casadi: bool) -> int:
@@ -358,7 +370,8 @@ def _emit_statement(
       ptrs.append("NULL")
     if stmt.attrs["callee"] in solver_callees:
       ptrs.append(options_name)
-    lines.append(f"{pad}{c_ident(stmt.attrs['callee'])}_raw({', '.join(ptrs)});")
+    symbol = stmt.attrs["callee"] if stmt.attrs.get("external") else f"{c_ident(stmt.attrs['callee'])}_raw"
+    lines.append(f"{pad}{symbol}({', '.join(ptrs)});")
   elif stmt.op == ProgramOp.PRINT:
     pieces = [piece.replace("%", "%%") for piece in stmt.attrs["pieces"]]
     fmt = pieces[0] + "".join(_PRINTF[a.dtype.name][0] + piece for a, piece in zip(stmt.args, pieces[1:], strict=True))

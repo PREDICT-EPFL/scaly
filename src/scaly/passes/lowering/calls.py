@@ -25,11 +25,12 @@ def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction) -> None:
     )
 
 
-@lowers(ExprOp.CALL)
+@lowers(ExprOp.CALL, ExprOp.EXTERN)
 def _lower_call(ctx: LowerCtx, node: Expr) -> None:
   """Write all used siblings with one call; unused results get scratch storage."""
   callee: ConcreteFunction = node.attrs["callee"]
-  _ensure_callee(ctx, callee)
+  if node.op != ExprOp.EXTERN:
+    _ensure_callee(ctx, callee)
   results = callee.results if callee in ctx.residuals else callee.outputs
   layouts = (*callee.output_tree.layouts, *(None for _ in results[len(callee.outputs) :]))
   buffers, used = _result_buffers(ctx, node)
@@ -43,7 +44,15 @@ def _lower_call(ctx: LowerCtx, node: Expr) -> None:
   ]
   ctx.statements.append(
     ProgramNode(
-      ProgramOp.CALL, tuple(in_bufs + out_bufs), attrs={"callee": ctx.symbols[callee], "n_in": len(in_bufs), "n_out": len(out_bufs), "returns": ()}
+      ProgramOp.CALL,
+      tuple(in_bufs + out_bufs),
+      attrs={
+        "callee": ctx.symbols[callee],
+        "n_in": len(in_bufs),
+        "n_out": len(out_bufs),
+        "returns": (),
+        **({"external": True} if node.op == ExprOp.EXTERN else {}),
+      },
     )
   )
   for i in used:

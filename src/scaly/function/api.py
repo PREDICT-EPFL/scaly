@@ -580,6 +580,8 @@ def custom_derivative[SI, NI, SO, NO](
     raise TypeError("custom_derivative takes fwd and bwd together")
   if jvp is None and fwd is None and sparsity is None:
     raise TypeError("custom_derivative needs at least one of jvp, fwd and bwd, or sparsity")
+  if not isinstance(fn, Function | ConcreteFunction):
+    raise TypeError("sc.custom_derivative needs a Function; wrap an extern call in a Function first")
   source = Function._from_instance(fn) if isinstance(fn, ConcreteFunction) else fn
   return lift(source, source.inputs, source.outputs, lambda concrete: _with_rules(concrete, jvp, fwd, bwd, sparsity), name=source.name)
 

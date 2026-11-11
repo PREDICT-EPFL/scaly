@@ -62,6 +62,7 @@ src/scaly/
   function/              the frontend
     model.py             Function declarations, instance registry, lifted transforms
     concrete.py          concrete expression graphs, graph validation, calls and factory
+    extern.py            frozen C library descriptions and concrete external function declarations
     tree.py              the typed pytree declarations (Tree, arg, group)
     digest.py            the digests of a graph and of the installed source that the JIT index keys on
     factory.py           the typed derivative specs and the AD each dispatches to
@@ -88,6 +89,7 @@ src/scaly/
     aot.py               one lowering -> CModule, the C header, the file-writing driver, the CLI
     jit.py               CModule -> compile, cache, dlopen, ctypes dispatch; the index that skips rendering on a hit
     toolchain.py         CPU build recipes, native feature detection, compiler discovery, cache root
+    external.py          external-library fingerprints, object compilation and build-manifest export
 
   solvers/
     model.py             solver descriptors, stage oracle records and opaque Functions
@@ -128,7 +130,7 @@ one, never a higher one.
 | 0 | `utils/*` | Leaves. Environment, identifier spelling and file parsing; no scaly concepts. |
 | 1 | `ir/*` | The vocabulary. Both dialects, their verifiers, their text, and the machinery for defining passes. |
 | 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/rules`, `ad/sparsity`, `solvers/{stats,stages}` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites, the elementwise table, structural sparsity, solver statistics and stage layouts. Nothing here knows what a `Function` is. |
-| 3 | `function/{model,concrete,tree,digest}` | Function declarations, concrete graph instances, typed trees over import layer 1, and the digest of a graph. |
+| 3 | `function/{model,concrete,tree,digest,extern}` | Function declarations, concrete graph instances, typed trees over import layer 1, external declarations, and the digest of a graph. |
 | 4 | `ad/{forward,reverse,calls,helpers,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the one builder that does too (`vmap`). |
 | 5 | `function/{factory,api}`, the rest of `solvers/` | The user-facing request layer: typed derivative specs, the decorator, the solver builders. |
 | 6 | `passes/lowering/*`, `passes/program/*` | Lower whole Functions, including their solver callees, and optimize the program dialect. |

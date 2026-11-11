@@ -35,6 +35,11 @@ def test_public_exports_are_canonical() -> None:
   assert "segment_sum" in sc.__all__
   assert sc.Expr is Expr
   assert sc.ExprOp is ExprOp
+  from scaly.function.extern import CLibrary, extern
+
+  assert sc.CLibrary is CLibrary
+  assert sc.extern is extern
+  assert {"CLibrary", "extern"} <= set(sc.__all__)
   assert sc.Function is Function
   assert sc.arg is arg
   assert sc.group is group

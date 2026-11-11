@@ -363,3 +363,13 @@ def test_plain_c_module_header_compiles_as_c99(tmp_path):
     text=True,
   )
   assert result.returncode == 0, result.stderr
+
+
+def test_explicit_library_directory_wins_over_the_system_copy(tmp_path):
+  from scaly.codegen.toolchain import resolve_library
+  from tests.compilers import c_compiler
+
+  local = tmp_path / "libm.so"
+  local.write_bytes(b"a local library identity")
+  library = resolve_library("m", (*c_compiler(), "-L" + str(tmp_path)))
+  assert library.path == str(local.resolve())

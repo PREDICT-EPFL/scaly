@@ -51,6 +51,7 @@ from .ir.expr import (
   where,
 )
 from .function import Function, group, arg, factory
+from .function.extern import CLibrary, extern
 from .ir.match import Pattern, PatternMatcher, rewrite
 from .passes.expr import cse, cse_many, simplify
 from .solvers import (
@@ -89,6 +90,8 @@ __all__ = [
   "ScalySolveStatus",
   "Bounded",
   "C_API_SIGNATURE",
+  "CLibrary",
+  "extern",
   "DiscreteOCP",
   "COMMON_OPS",
   "DType",

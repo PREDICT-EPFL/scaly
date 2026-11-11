@@ -120,6 +120,8 @@ def _render_function_module(fun: ConcreteFunction) -> str:
 def _render_function_expr_assembly(fun: ConcreteFunction) -> str:
   ins = ", ".join(f"%{n}: {type_asm(e.type)}" for n, e in zip(fun.input_names, fun.inputs, strict=True))
   outs = ", ".join(f"%{n}: {type_asm(e.type)}" for n, e in zip(fun.output_names, fun.outputs, strict=True))
+  if not fun.nodes:
+    return f"expr.extern @{fun.name}({ins}) -> ({outs})"
   lines = [f"expr.func @{fun.name}({ins}) -> ({outs}) {{"]
   body = _render_expr_region(fun.outputs).splitlines()
   lines += ["  " + line for line in body]

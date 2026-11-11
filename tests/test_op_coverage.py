@@ -41,7 +41,7 @@ def _dispatch_ops(*functions) -> set[ExprOp]:
         continue
       for condition in ast.walk(node.test):
         if isinstance(condition, ast.Call) and isinstance(condition.func, ast.Name) and condition.func.id == "callees_of":
-          ops.update(CALLEE_OPS)
+          ops.update(CALLEE_OPS - {ExprOp.EXTERN})
         if not isinstance(condition, ast.Compare) or ast.unparse(condition.left) not in {"expr.op", "op"}:
           continue
         for comparator in condition.comparators:
@@ -86,7 +86,7 @@ def test_every_expr_op_is_classified_in_every_pass() -> None:
     # INPUT is bound by emit_inputs; SOLVER_CALL is opaque and handled by the solver wrapper.
     "lowering": set(_RULES) | {ExprOp.INPUT, ExprOp.SOLVER_CALL},
     "support": {op for op, info in OP_INFO.items() if info.pattern_rule or info.support_rule}
-    | {ExprOp.INPUT, ExprOp.COS, ExprOp.ACOS, ExprOp.COSH, ExprOp.EXP, ExprOp.LOG, ExprOp.POW, ExprOp.ATAN2, ExprOp.SOLVER_CALL}
+    | {ExprOp.INPUT, ExprOp.COS, ExprOp.ACOS, ExprOp.COSH, ExprOp.EXP, ExprOp.LOG, ExprOp.POW, ExprOp.ATAN2, ExprOp.SOLVER_CALL, ExprOp.EXTERN}
     | {ExprOp.LE, ExprOp.EQ, ExprOp.NOT, ExprOp.ISFINITE},
     # Add graph_digest here in #64. It must cover set(ExprOp).
   }

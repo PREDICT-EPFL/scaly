@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from .abi import C_API_SIGNATURE, c_ident
+from .external import LibraryBuild, compile_library, libraries_of, prepare_library
 from .aot import _RENDER_OBSERVERS, CModule, render_c_module
 from .solver import solver_stats_symbols, solver_functions
 from ..ir.layout import DenseLayout, SparseLayout
@@ -52,7 +53,17 @@ from ..solvers.model import CSolverOption
 from ..solvers.graph import solver_backends_used
 from ..solvers.paths import SolverLibraryError, backend_compile_flags, solver_paths
 from ..solvers.stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats
-from .toolchain import BuildRecipe, Compiler, cache_root, compiler_fingerprint, find_c_compiler, native_recipe, no_gather_flags, vector_libm_flags
+from .toolchain import (
+  BuildRecipe,
+  Compiler,
+  cache_root,
+  directory_fingerprint,
+  compiler_fingerprint,
+  find_c_compiler,
+  native_recipe,
+  no_gather_flags,
+  vector_libm_flags,
+)
 from ..utils.env import ToolchainError, env, shared_lib_ext, shared_lib_flag
 
 if TYPE_CHECKING:
@@ -71,18 +82,15 @@ _C_DOUBLE_P = ctypes.POINTER(ctypes.c_double)
 _C_INT_P = ctypes.POINTER(ctypes.c_int)
 _LM_ID_NEWLM = -1
 _RTLD_DI_LMID = 1
-_SOLVER_NAMESPACE: int | None = None
-_SOLVER_NAMESPACE_ANCHOR: ctypes.CDLL | None = None
-_SOLVER_NAMESPACE_ENVIRON: ctypes.c_void_p | None = None
-_SOLVER_NAMESPACE_LOCK = threading.Lock()
+_LINKER_NAMESPACES: dict[tuple[str, ...], tuple[int, ctypes.CDLL, ctypes.c_void_p | None]] = {}
+_LINKER_NAMESPACE_LOCK = threading.Lock()
 
 
-def load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
-  """Load a shared library. ``isolated`` keeps Linux solver dependencies out of the host process linker namespace."""
-  global _SOLVER_NAMESPACE, _SOLVER_NAMESPACE_ANCHOR, _SOLVER_NAMESPACE_ENVIRON
+def load_library(path: Path, *, isolated: bool, namespace: tuple[str, ...] = ()) -> ctypes.CDLL:
+  """Load a shared library, isolating incompatible Linux dependency builds from one another."""
   if isolated and sys.platform == "win32":
     with ExitStack() as stack:
-      for directory in solver_paths().lib_dirs:
+      for directory in solver_paths(required=False).lib_dirs:
         stack.enter_context(os.add_dll_directory(str(directory.resolve())))
       return ctypes.CDLL(str(path))
   if not isolated or sys.platform != "linux":
@@ -91,29 +99,39 @@ def load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
   dlmopen = libc.dlmopen
   dlmopen.argtypes = [ctypes.c_long, ctypes.c_char_p, ctypes.c_int]
   dlmopen.restype = ctypes.c_void_p
-  with _SOLVER_NAMESPACE_LOCK:
-    # The namespace has its own C library, whose `environ` still points at the environment array
-    # the process had when the namespace was created. Setting a variable since then may have freed
-    # that array, and initializers that call `getenv` (libgfortran's, under IPOPT) would crash on it.
-    if _SOLVER_NAMESPACE_ENVIRON is not None:
-      _SOLVER_NAMESPACE_ENVIRON.value = ctypes.c_void_p.in_dll(libc, "environ").value
-    handle = dlmopen(_LM_ID_NEWLM if _SOLVER_NAMESPACE is None else _SOLVER_NAMESPACE, os.fsencode(path), os.RTLD_NOW | os.RTLD_LOCAL)
+  dlerror = libc.dlerror
+  dlerror.argtypes = []
+  dlerror.restype = ctypes.c_char_p
+  with _LINKER_NAMESPACE_LOCK:
+    previous = _LINKER_NAMESPACES.get(namespace)
+    namespace_id, anchor, environ = previous if previous is not None else (_LM_ID_NEWLM, None, None)
+    # A namespace's libc retains the process environment array from its first load. Refresh it
+    # before another initializer calls getenv, since Python may have replaced that array.
+    if environ is not None:
+      environ.value = ctypes.c_void_p.in_dll(libc, "environ").value
+    dlerror()
+    handle = dlmopen(namespace_id, os.fsencode(path), os.RTLD_NOW | os.RTLD_LOCAL)
     if not handle:
-      raise OSError(f"dlmopen failed for {path}")
+      error = dlerror()
+      raise OSError(f"dlmopen failed for {path}: {error.decode(errors='replace') if error else 'unknown loader error'}")
     # Python 3.14 reopens a path even when CDLL receives a handle, so bind it directly.
     lib = ctypes.CDLL(None)
     lib._handle = handle
     lib._name = str(path)
-    if _SOLVER_NAMESPACE is None:
+    if anchor is None:
       dlinfo = libc.dlinfo
       dlinfo.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
       dlinfo.restype = ctypes.c_int
-      namespace = ctypes.c_long()
-      if dlinfo(handle, _RTLD_DI_LMID, ctypes.byref(namespace)) != 0:
+      resolved = ctypes.c_long()
+      if dlinfo(handle, _RTLD_DI_LMID, ctypes.byref(resolved)) != 0:
         raise OSError(f"dlinfo failed for {path}")
-      _SOLVER_NAMESPACE = namespace.value
-      _SOLVER_NAMESPACE_ANCHOR = lib
-      _SOLVER_NAMESPACE_ENVIRON = ctypes.c_void_p.in_dll(lib, "environ")
+      namespace_id, anchor = resolved.value, lib
+    if environ is None:
+      try:
+        environ = ctypes.c_void_p.in_dll(lib, "environ")
+      except ValueError:
+        pass  # A self-contained external kernel need not link libc.
+    _LINKER_NAMESPACES[namespace] = namespace_id, anchor, environ
   return lib
 
 
@@ -164,7 +182,16 @@ def _render_native(fun: ConcreteFunction, compiler: tuple[str, ...]) -> CModule:
   )
 
 
-def _compile_command(compiler: tuple[str, ...], recipe: BuildRecipe, link_flags: tuple[str, ...], source: str, output: str) -> list[str]:
+def _compile_command(
+  compiler: tuple[str, ...],
+  recipe: BuildRecipe,
+  link_flags: tuple[str, ...],
+  source: str,
+  output: str,
+  objects: tuple[str, ...] = (),
+  *,
+  external: bool = False,
+) -> list[str]:
   # Link libraries (-l in link_flags) MUST come after the source: ld defaults to --as-needed on
   # Linux, so a -lpiqpc/-lipopt placed before the object that references it is dropped (no
   # DT_NEEDED -> "undefined symbol" at dlopen of solver functions).
@@ -178,6 +205,8 @@ def _compile_command(compiler: tuple[str, ...], recipe: BuildRecipe, link_flags:
     shared_lib_flag(),
     source,
     *exports,
+    *objects,
+    *(("-Wl,-Bsymbolic",) if external and sys.platform == "linux" else ()),
     *link_flags,
     "-lm",
     "-o",
@@ -200,24 +229,7 @@ def solver_inputs_fingerprint(link_flags: tuple[str, ...]) -> str:
 
 @functools.cache
 def _solver_directory_fingerprint(directory: Path) -> bytes:
-  h = hashlib.sha256(os.fsencode(directory) + b"\0")
-  for root, subdirs, files in os.walk(directory, followlinks=True):
-    root_path = Path(root)
-    ancestors = {(directory / parent).resolve() for parent in root_path.relative_to(directory).parents}
-    ancestors.add(root_path.resolve())
-    subdirs[:] = sorted(name for name in subdirs if (root_path / name).resolve() not in ancestors)
-    for filename in sorted(files):
-      path = root_path / filename
-      if not path.is_file():
-        continue
-      h.update(os.fsencode(path.relative_to(directory)))
-      h.update(b"\0")
-      try:
-        with path.open("rb") as stream:
-          h.update(b"\1" + hashlib.file_digest(stream, "sha256").digest())
-      except PermissionError:
-        h.update(b"\0")
-  return h.digest()
+  return directory_fingerprint(directory)
 
 
 def _hash_parts(*parts: str) -> str:
@@ -240,11 +252,13 @@ def _compute_cache_key(source: str, *, fun_name: str, command: list[str], toolch
   return _hash_parts(_JIT_CACHE_VERSION, C_API_SIGNATURE, fun_name, source, toolchain, solver_inputs, *command)
 
 
-def _toolchain(fun: ConcreteFunction, compiler: Compiler) -> str:
+def _toolchain(fun: ConcreteFunction, compiler: Compiler, libraries: tuple[LibraryBuild, ...] = ()) -> str:
   try:
     toolchain = compiler_fingerprint(compiler.command)
   except (OSError, subprocess.CalledProcessError) as exc:
     raise JitError(f"failed to identify C compiler {shlex.join(compiler.command)!r}: {exc}") from exc
+  if libraries:
+    toolchain += ":extern:" + ":".join(build.key for build in libraries)
   if epoch := _cache_epochs.get(fun.name, 0):
     toolchain += f":{os.getpid()}:{epoch}"
   return toolchain
@@ -253,9 +267,16 @@ def _toolchain(fun: ConcreteFunction, compiler: Compiler) -> str:
 def _render_and_key(fun: ConcreteFunction, compiler: Compiler) -> tuple[CModule, str]:
   """Render ``fun`` for the host and derive its cache key, which hashes exactly the text handed to the compiler."""
   module = _render_native(fun, compiler.command)
-  command = _compile_command(compiler.command, module.recipe, module.link_flags, "module.c", "module" + shared_lib_ext())
+  try:
+    toolchain = _toolchain(fun, compiler, module._library_builds)
+  except (OSError, subprocess.CalledProcessError) as exc:
+    detail = (exc.stderr or exc.stdout) if isinstance(exc, subprocess.CalledProcessError) else str(exc)
+    raise JitError(f"failed to prepare external libraries for {fun.name!r}: {detail}") from exc
+  command = _compile_command(
+    compiler.command, module.recipe, module.link_flags, "module.c", "module" + shared_lib_ext(), external=bool(module._libraries)
+  )
   solver_inputs = solver_inputs_fingerprint(module.link_flags) if module.backends else ""
-  return module, _compute_cache_key(module.body, fun_name=fun.name, command=command, toolchain=_toolchain(fun, compiler), solver_inputs=solver_inputs)
+  return module, _compute_cache_key(module.body, fun_name=fun.name, command=command, toolchain=toolchain, solver_inputs=solver_inputs)
 
 
 @functools.cache
@@ -279,13 +300,14 @@ def _index_key(fun: ConcreteFunction, compiler: Compiler) -> str | None:
   recipe = _host_recipe(compiler.command)
   backends = solver_backends_used(fun)
   try:
-    link_flags = (*backend_compile_flags(backends), *recipe.link_flags)
-  except SolverLibraryError:
+    libraries = tuple(prepare_library(library, compiler.command) for library in libraries_of(fun))
+    link_flags = (*backend_compile_flags(backends), *recipe.link_flags, *(flag for library in libraries for flag in library.link_flags))
+  except (SolverLibraryError, OSError, subprocess.CalledProcessError):
     return None  # rendering says what is missing
-  command = _compile_command(compiler.command, recipe, link_flags, "module.c", "module" + shared_lib_ext())
+  command = _compile_command(compiler.command, recipe, link_flags, "module.c", "module" + shared_lib_ext(), external=bool(libraries))
   solver_inputs = solver_inputs_fingerprint(link_flags) if backends else ""
   libc = platform.libc_ver() if recipe.vector_libm == "glibc" else ()
-  toolchain = _toolchain(fun, compiler)
+  toolchain = _toolchain(fun, compiler, libraries)
   return _hash_parts(_JIT_CACHE_VERSION, C_API_SIGNATURE, _scaly_version(), source, graph, repr(recipe), toolchain, solver_inputs, *libc, *command)
 
 
@@ -297,6 +319,7 @@ class _Artifact:
   workspace_size: int
   solver_library: bool
   prints: bool
+  namespace: tuple[str, ...] = ()
 
 
 _artifact_cache: dict[str, _Artifact] = {}
@@ -326,7 +349,12 @@ def _index_read(index: str) -> _Artifact | None:
   """The artifact the index names for ``index``, or None when it has no entry."""
   try:
     entry = json.loads(_index_path(index).read_text())
-    return _Artifact(lib_path=cache_root() / entry.pop("library"), flags=tuple(entry.pop("flags")), **entry)
+    return _Artifact(
+      lib_path=cache_root() / entry.pop("library"),
+      flags=tuple(entry.pop("flags")),
+      namespace=tuple(entry.pop("namespace")),
+      **entry,
+    )
   except (OSError, ValueError, KeyError, TypeError, AttributeError):
     return None
 
@@ -386,8 +414,9 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
     key=key,
     flags=module.link_flags,
     workspace_size=module.workspace_size,
-    solver_library=bool(module.backends),
-    prints=prints(module.program),
+    solver_library=bool(module.backends or module._libraries),
+    prints=prints(module.program) or bool(module._libraries),
+    namespace=("extern", *(f"{link.path}:{link.identity}" for build in module._library_builds for link in build.links)) if module._libraries else (),
   )
   if verify and index is not None and indexed is not None and replace(indexed, lib_path=lib_path) != artifact:
     raise JitError(f"the index entry {_index_path(index)} for {fun.name!r} names a library built from other C than {fun.name!r} renders")
@@ -418,8 +447,11 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
     # It is also short, which the function's own directory may not be: Windows refuses a working
     # directory longer than 260 characters.
     try:
+      objects = tuple(obj for build in module._library_builds for obj in compile_library(build, compiler.command))
       subprocess.run(
-        _compile_command(compiler.command, module.recipe, module.link_flags, source_path.as_posix(), tmp_lib.as_posix()),
+        _compile_command(
+          compiler.command, module.recipe, module.link_flags, source_path.as_posix(), tmp_lib.as_posix(), objects, external=bool(module._libraries)
+        ),
         cwd=tempfile.gettempdir(),
         check=True,
         capture_output=True,
@@ -467,7 +499,9 @@ class CompiledFunction:
     fun = as_concrete(fun)
     self._fun = fun
     self._artifact = _build_artifact(fun)
-    self._lib = load_library(self._artifact.lib_path, isolated=self._artifact.solver_library)
+    self._lib = load_library(
+      self._artifact.lib_path, isolated=self._artifact.solver_library, **({"namespace": self._artifact.namespace} if self._artifact.namespace else {})
+    )
     symbol = c_ident(fun.name)
     self._symbol = symbol
     solvers = solver_functions(fun)
@@ -575,7 +609,9 @@ class CompiledFunction:
       sys.stdout.flush()
     status = self._entry(arg_array, res_array, _C_INT_P(), w_ptr, 0, *((self._options,) if self._options else ()))
     if self._artifact.prints:
-      _process_libc().fflush(None)
+      libc = self._lib if self._artifact.solver_library and sys.platform == "linux" else _process_libc()
+      if flush := getattr(libc, "fflush", None):
+        flush(None)
     if status != 0:
       raise JitError(f"{self._fun.name} returned ABI status {status}")
 

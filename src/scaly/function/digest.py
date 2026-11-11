@@ -20,6 +20,7 @@ import numpy as np
 from ..ir.expr import Expr
 from ..utils.env import LOADED_AT_NS
 from .concrete import ConcreteFunction
+from .tree import Tree
 
 
 class Unkeyed(Exception):
@@ -111,6 +112,9 @@ class _Walk:
         self.callees[id(v)] = len(self.called)
         self.called.append(v)
       self.put(b"F", str(self.callees[id(v)]).encode())
+    elif isinstance(v, Tree):
+      self.put(b"tree")
+      self.value((v.names, v.decls, v.layouts))
     elif isinstance(v, enum.Enum):
       self.put(b"M", self.named(kind))
       self.value(v.value)
