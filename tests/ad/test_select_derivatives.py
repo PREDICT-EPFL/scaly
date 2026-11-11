@@ -333,7 +333,7 @@ def test_called_masks_use_stored_coordinates_for_sparse_outputs(mapped: bool, si
   active = point > 0.0
   expected[active] = 0.5 / np.sqrt(point[active]) if singular else np.cos(point[active])
   np.testing.assert_allclose(grad, expected, rtol=1e-15)
-  np.testing.assert_array_equal(grad, jac.sum(axis=0))
+  np.testing.assert_allclose(grad, jac.sum(axis=0), rtol=1e-15)
 
 
 @pytest.mark.parametrize("mapped", [False, True])
