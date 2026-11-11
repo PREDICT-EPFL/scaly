@@ -118,6 +118,18 @@ expression graph for inspection and export.
 
 ::: scaly.ir.expr.sumsqr
 
+::: scaly.ir.expr.reduce_max
+
+::: scaly.ir.expr.reduce_min
+
+::: scaly.ir.expr.argmax
+
+::: scaly.ir.expr.argmin
+
+::: scaly.ir.expr.norm_inf
+
+::: scaly.ir.expr.norm_1
+
 ::: scaly.ir.expr.norm_2
 
 ::: scaly.ir.expr.stack

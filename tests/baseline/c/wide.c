@@ -9,6 +9,15 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+#if defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__
+#error "Scaly nonfinite-value semantics cannot be compiled with -ffast-math or -ffinite-math-only"
+#endif
+static inline double scaly_minimum(double x, double y) {
+  return x != x ? x : (x < y ? x : y);
+}
+static inline double scaly_maximum(double x, double y) {
+  return x != x ? x : (x > y ? x : y);
+}
 typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 #ifndef SCALY_LANES
 #if defined(__AVX512F__)
@@ -109,12 +118,12 @@ static inline __attribute__((always_inline)) lanes_8_8_8_8_vec lanes_8_8_8_8_vec
 }
 static inline __attribute__((always_inline)) lanes_8_8_8_8_vec lanes_8_8_8_8_vec_fmax(lanes_8_8_8_8_vec x, lanes_8_8_8_8_vec y) {
   lanes_8_8_8_8_vec result;
-  for (int i = 0; i < SCALY_WIDTH_8_8_8_8; ++i) result[i] = fmax(x[i], y[i]);
+  for (int i = 0; i < SCALY_WIDTH_8_8_8_8; ++i) result[i] = scaly_maximum(x[i], y[i]);
   return result;
 }
 static inline __attribute__((always_inline)) lanes_8_8_8_8_vec lanes_8_8_8_8_vec_fmin(lanes_8_8_8_8_vec x, lanes_8_8_8_8_vec y) {
   lanes_8_8_8_8_vec result;
-  for (int i = 0; i < SCALY_WIDTH_8_8_8_8; ++i) result[i] = fmin(x[i], y[i]);
+  for (int i = 0; i < SCALY_WIDTH_8_8_8_8; ++i) result[i] = scaly_minimum(x[i], y[i]);
   return result;
 }
 static inline __attribute__((always_inline)) lanes_8_8_8_8_vec lanes_8_8_8_8_vec_pow(lanes_8_8_8_8_vec x, lanes_8_8_8_8_vec y) {

@@ -27,6 +27,7 @@ from ..ir.support import (
   _constant_condition,
 )
 from ..ir.types import SparsityPattern, TensorType, broadcast_shape, stored_indices
+from .rules import ELEMENTWISE, zero_partial
 
 
 def _stored_slots(type_: TensorType, entries: np.ndarray) -> np.ndarray:
@@ -258,7 +259,12 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_a
     entries = support_indices(expr.support) if expr.support is not None else np.arange(wrt.size)
     return _incidence((wrt.size, wrt.size), entries, entries)
   # A bool or integer value, a predicate's or a cast's, has no derivative.
-  if expr.op in {ExprOp.CONST, ExprOp.STOP_GRADIENT} or not expr.type.dtype.is_floating:
+  if (
+    expr.op in {ExprOp.CONST, ExprOp.STOP_GRADIENT}
+    or not expr.type.dtype.is_floating
+    or expr.op in ELEMENTWISE
+    and ELEMENTWISE[expr.op].partials == (zero_partial,)
+  ):
     return _empty((expr.size, wrt.size))
   if expr.op == ExprOp.PACK:
     child = _jac_mask(expr.args[0], wrt, memo)

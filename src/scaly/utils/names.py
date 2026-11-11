@@ -43,7 +43,7 @@ _RESERVED = (
   strlen strcpy strncpy strcat strncat strcmp strncmp strchr strrchr strstr strspn strcspn strpbrk
   strtok strerror strcoll strxfrm abs labs llabs div ldiv lldiv atof atoi atol atoll strtod strtof
   strtold strtol strtoll strtoul strtoull rand srand qsort bsearch getenv atexit quick_exit _Exit
-  aligned_alloc max_align_t offsetof scaly_solver_option scaly_solver_stats
+  aligned_alloc max_align_t offsetof scaly_solver_option scaly_solver_stats scaly_minimum scaly_maximum scaly_minimumf scaly_maximumf
 """.split()
   )
 )

@@ -184,15 +184,19 @@ def test_matmul_graph_does_not_grow_with_seed_count(side):
 
 
 @pytest.mark.parametrize("mapped", [False, True])
-def test_missing_rule_names_the_original_callee(mapped):
+def test_zero_floor_derivative_through_calls(mapped):
   @sc.function(sc.arg("refused_body_x", 2), outputs=sc.arg("y"), name="refused_leaf")
   def leaf(x):
     return x.floor()
 
   x = sc.sym("refused_outer_x", 4 if mapped else 2)
   y = sc.vmap(leaf, 2)(x).vec() if mapped else leaf(x)
-  with pytest.raises(NotImplementedError, match=r"FLOOR.*refused_leaf"):
-    sc.jvp_many(y, x, sc.sym("refused_outer_seed", (3, *x.shape)))
+  tangent = sc.jvp_many(y, x, sc.sym("refused_outer_seed", (3, *x.shape)))
+  from scaly.passes.expr import simplify
+
+  zero = simplify(tangent)
+  assert zero.op == ExprOp.CONST
+  np.testing.assert_equal(zero.value, np.zeros((3, *y.shape)))
 
 
 @pytest.mark.parametrize("nseed", [1, 7])

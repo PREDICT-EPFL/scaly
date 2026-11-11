@@ -256,12 +256,19 @@ def test_broadcasting_shapes_and_values() -> None:
 
 
 @pytest.mark.parametrize("flag", ["-ffast-math", "-ffinite-math-only"])
-def test_isfinite_refuses_fast_math(tmp_path: Path, flag: str) -> None:
+@pytest.mark.parametrize("operation", ["isfinite", "maximum", "minimum", "reduce_max", "reduce_min"])
+def test_nonfinite_operations_refuse_fast_math(tmp_path: Path, flag: str, operation: str) -> None:
   """``isfinite`` needs infinities and NaN, so a build that assumes neither stops at an ``#error``."""
 
   @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="sc_fast_math")
   def finite(x: sc.Expr) -> sc.Expr:
-    return sc.where(sc.isfinite(x), x, 0.0)
+    return {
+      "isfinite": lambda: sc.where(sc.isfinite(x), x, 0.0),
+      "maximum": lambda: sc.maximum(x, 0.0),
+      "minimum": lambda: sc.minimum(x, 0.0),
+      "reduce_max": lambda: sc.reduce_max(x),
+      "reduce_min": lambda: sc.reduce_min(x),
+    }[operation]()
 
   @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="sc_no_isfinite")
   def plain(x: sc.Expr) -> sc.Expr:

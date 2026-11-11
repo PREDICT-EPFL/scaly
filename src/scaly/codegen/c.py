@@ -44,6 +44,7 @@ _PREFIX = {r.program: r.c for op, r in _OPERATORS.items() if OP_INFO[op].arity =
 _BIN_SYM = {ProgramOp.MOD: "%"} | {r.program: r.c for op, r in _OPERATORS.items() if OP_INFO[op].arity == 2}
 _UNARY_C = {r.program: r.c for op, r in ELEMENTWISE.items() if OP_INFO[op].arity == 1 and r.c.isidentifier()}
 _BINARY_C = {r.program: r.c for op, r in ELEMENTWISE.items() if OP_INFO[op].arity == 2 and r.c.isidentifier()}
+_VECTOR_BINARY = _BINARY_C | {ProgramOp.MINIMUM: "fmin", ProgramOp.MAXIMUM: "fmax"}
 _INTEGER_C = {r.program: r.c_integer for r in ELEMENTWISE.values() if r.c_integer is not None}
 # printf conversion and argument by dtype. 17 significant digits read a double back exactly.
 _PRINTF = {
@@ -70,11 +71,11 @@ _FLOOR_HELPERS = {
     "}",
   ],
 }
-# isfinite is only meaningful when the compiler keeps infinities and NaN, which -ffast-math and
-# -ffinite-math-only both drop.
+_EXTREMA_HELPERS = {ProgramOp.MINIMUM: "<", ProgramOp.MAXIMUM: ">"}
+# Predicates and NaN-propagating extrema require the compiler to keep nonfinite values.
 _FAST_MATH_GUARD = [
   "#if defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__",
-  '#error "Scaly code calling isfinite cannot be compiled with -ffast-math or -ffinite-math-only"',
+  '#error "Scaly nonfinite-value semantics cannot be compiled with -ffast-math or -ffinite-math-only"',
   "#endif",
 ]
 # Defining SCALY_PRINTF before this point reroutes prints, and ``-DSCALY_PRINTF(...)=`` removes them.
@@ -86,15 +87,35 @@ def _includes(
 ) -> list[str]:
   # Vector types for coalesced stores (``_emit_body``): ``aligned(8)`` because the ABI only
   # promises double alignment, ``may_alias`` because they access plain double storage.
-  ops = set() if prog is None else {n.op for n in walk_program(prog)}
+  nodes = [] if prog is None else list(walk_program(prog))
+  ops = {n.op for n in nodes}
+  nonfinite = any(
+    n.dtype.is_floating
+    and n.op in _EXTREMA_HELPERS
+    or n.op == ProgramOp.ISFINITE
+    or n.op == ProgramOp.NE
+    and n.args[0] is n.args[1]
+    and n.args[0].dtype.is_floating
+    for n in nodes
+  )
   return [
     "#include <math.h>",
     "#include <stddef.h>",
     "#include <stdint.h>",
     *extra,
-    *(_FAST_MATH_GUARD if ProgramOp.ISFINITE in ops else []),
+    *(_FAST_MATH_GUARD if nonfinite else []),
     *(_PRINTF_DEFINES if prog is not None and prints(prog) else []),
     *(line for op, helper in _FLOOR_HELPERS.items() if op in ops for line in helper),
+    *(
+      line
+      for op, comparison in _EXTREMA_HELPERS.items()
+      for dtype in sorted({n.dtype for n in nodes if n.op == op and n.dtype.is_floating}, key=lambda dtype: dtype.bits)
+      for line in [
+        f"static inline {dtype.c_type} {_BINARY_C[op]}{'f' if dtype.bits == 32 else ''}({dtype.c_type} x, {dtype.c_type} y) {{",
+        f"  return x != x ? x : (x {comparison} y ? x : y);",
+        "}",
+      ]
+    ),
     *([_VECTOR_TYPEDEF] if dialect == "gnu" else []),
     *_lane_defines(prog, dialect=dialect, vector_libm=vector_libm),
   ]
@@ -613,7 +634,7 @@ def _lane_defines(prog: ProgramNode | None, *, dialect: CDialect, vector_libm: V
       if any(n.op == ProgramOp.BIT_SELECT for h in helpers for n in walk_program(h.args[1])):
         # The lane mask uses one integer of the value's width, all ones where the bit is set.
         lines.append(f"typedef int{dtype.bits}_t {vec}_i{dtype.bits} __attribute__((vector_size({size} * {width})));")
-      operations = {n.op for h in helpers for n in walk_program(h.args[1]) if n.op in _UNARY_C or n.op in _BINARY_C and n.dtype.is_floating}
+      operations = {n.op for h in helpers for n in walk_program(h.args[1]) if n.op in _UNARY_C or n.op in _VECTOR_BINARY and n.dtype.is_floating}
       math = [line for op in sorted(operations) for line in _vector_math(vec, vec, width, op, vector_libm, dtype)]
       if math and vector_libm == "glibc":
         # The wrappers declare the libmvec symbols; a C++ build must see them with C linkage.
@@ -714,9 +735,9 @@ def _render_vector_helpers(proc: ProgramNode, *, dialect: CDialect, vector_libm:
 
 
 def _vector_math(helper: str, vec: str, width: str, op: ProgramOp, vector_libm: VectorLibm, dtype: DType) -> list[str]:
-  name = _UNARY_C.get(op, _BINARY_C.get(op, ""))
-  function = name + ("f" if dtype.bits == 32 else "")
-  binary = op in _BINARY_C
+  name = _UNARY_C.get(op, _VECTOR_BINARY.get(op, ""))
+  function = _UNARY_C.get(op, _BINARY_C.get(op, "")) + ("f" if dtype.bits == 32 else "")
+  binary = op in _VECTOR_BINARY
   params = f"{vec} x, {vec} y" if binary else f"{vec} x"
   args = "x[i], y[i]" if binary else "x[i]"
   lines = [f"static inline __attribute__((always_inline)) {vec} {helper}_{name}({params}) {{"]
@@ -745,7 +766,8 @@ def _vector_math(helper: str, vec: str, width: str, op: ProgramOp, vector_libm: 
         f"  return {symbol}(x{', y' if binary else ''});",
       ]
     lines += ["#endif", "#else"]
-  lines += [f"  {vec} result;", f"  for (int i = 0; i < {width}; ++i) result[i] = {function}({args});", "  return result;"]
+  scalar = f"{function}({args})"
+  lines += [f"  {vec} result;", f"  for (int i = 0; i < {width}; ++i) result[i] = {scalar};", "  return result;"]
   if glibc:
     lines.append("#endif")
   lines.append("}")
@@ -843,8 +865,8 @@ def _emit_vector_body(
         value = f"(-{args[0]})"
       elif node.op in _BIN_SYM:
         value = f"({args[0]} {_BIN_SYM[node.op]} {args[1]})"
-      elif node.op in _UNARY_C or node.op in _BINARY_C:
-        value = f"{vec}_{_UNARY_C.get(node.op, _BINARY_C.get(node.op))}({', '.join(args)})"
+      elif node.op in _UNARY_C or node.op in _VECTOR_BINARY:
+        value = f"{vec}_{_UNARY_C.get(node.op, _VECTOR_BINARY.get(node.op))}({', '.join(args)})"
       else:
         raise LoweringError(f"unsupported vector scalar op {node.op}")
       text[node] = value

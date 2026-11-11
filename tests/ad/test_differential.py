@@ -11,7 +11,6 @@ import pytest
 from scipy.special import erf
 
 import scaly as sc
-from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 from scaly.ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, ExprOp, topo
 from scaly.ir.types import CanonicalPattern
@@ -43,6 +42,8 @@ UNARY = {
   ExprOp.LOG: (lambda x: x.log(), np.log),
   ExprOp.SQRT: (lambda x: x.sqrt(), np.sqrt),
   ExprOp.ABS: (lambda x: x.abs(), np.abs),
+  ExprOp.FLOOR: (lambda x: x.floor(), np.floor),
+  ExprOp.CEIL: (lambda x: x.ceil(), np.ceil),
 }
 BINARY = {
   ExprOp.ADD: (lambda x, y: x + y, np.add),
@@ -51,6 +52,8 @@ BINARY = {
   ExprOp.DIV: (lambda x, y: x / y, np.divide),
   ExprOp.POW: (lambda x, y: x**y, np.power),
   ExprOp.ATAN2: (sc.atan2, np.arctan2),
+  ExprOp.MINIMUM: (sc.minimum, np.minimum),
+  ExprOp.MAXIMUM: (sc.maximum, np.maximum),
 }
 # Bool and integer values carry no tangent, and a float cast needs a second float dtype;
 # tests/ad/test_select_derivatives.py covers them.
@@ -66,12 +69,6 @@ WITHOUT_TANGENT = {
   ExprOp.CAST,
   ExprOp.FLOORDIV,
   ExprOp.MOD,
-}
-REFUSED = {
-  ExprOp.FLOOR: lambda x: x.floor(),
-  ExprOp.CEIL: lambda x: x.ceil(),
-  ExprOp.MINIMUM: lambda x: sc.minimum(x, 0.5),
-  ExprOp.MAXIMUM: lambda x: sc.maximum(x, 0.5),
 }
 
 
@@ -177,6 +174,36 @@ def _cases() -> list[Case]:
                 lambda x, axes=axes, keepdims=keepdims: x.mean(axis=axes, keepdims=keepdims),
               )
             )
+  for shape in [(), (4,), (2, 3, 4), (1, 3, 1), (0, 3)]:
+    value = np.arange(np.prod(shape), dtype=float).reshape(shape) / 7 + 0.2
+    for count in range(len(shape) + 1):
+      for axes in combinations(range(len(shape)), count):
+        if any(shape[axis] == 0 for axis in axes):
+          continue
+        for keepdims in (False, True):
+          for kind, build, reference in [("max", sc.reduce_max, np.max), ("min", sc.reduce_min, np.min)]:
+            cases.append(
+              Case(
+                f"axis-{kind}-{shape}-{axes}-{keepdims}",
+                ExprOp.RESHAPE if keepdims else ExprOp.REDUCE,
+                (value,),
+                lambda x, axes=axes, keepdims=keepdims, build=build: build(x, axes, keepdims=keepdims),
+                lambda x, axes=axes, keepdims=keepdims, reference=reference: reference(x, axis=axes, keepdims=keepdims),
+              )
+            )
+  for name, build, reference in [("norm-inf", sc.norm_inf, lambda x: np.max(np.abs(x))), ("norm-1", sc.norm_1, lambda x: np.sum(np.abs(x)))]:
+    cases.append(Case(name, ExprOp.REDUCE, (np.array([-0.2, 0.5, -0.9]),), build, reference))
+  for axis in (0, 1):
+    for kind, build, reference in [("max", sc.reduce_max, np.max), ("min", sc.reduce_min, np.min)]:
+      cases.append(
+        Case(
+          f"sparse-{kind}-{axis}",
+          ExprOp.REDUCE,
+          (np.array([0.2, -0.5, 0.7]),),
+          lambda v, axis=axis, build=build: build(sc.pack(v, pattern), axis),
+          lambda v, axis=axis, reference=reference: reference(packed_numpy(np.arcsin(v)), axis=axis),
+        )
+      )
   for axis in (0, 1):
     for mean in (False, True):
       cases.append(
@@ -430,36 +457,18 @@ def test_every_expr_op_is_accounted_for():
   assert set(BINARY) | {ExprOp.MINIMUM, ExprOp.MAXIMUM} | WITHOUT_TANGENT & COMMON_ELEMENTWISE_BINARY == COMMON_ELEMENTWISE_BINARY
   # STOP_GRADIENT has a held-fixed reference, covered by test_stop_gradient rather than finite differences. LOOP refuses
   # derivatives, tested in tests/function/test_loop.py.
-  assert {case.op for case in CASES} | set(REFUSED) | WITHOUT_TANGENT | {ExprOp.EXTERN, ExprOp.SOLVER_CALL, ExprOp.STOP_GRADIENT, ExprOp.LOOP} == set(
-    ExprOp
-  )
+  assert {case.op for case in CASES} | WITHOUT_TANGENT | {ExprOp.EXTERN, ExprOp.SOLVER_CALL, ExprOp.STOP_GRADIENT, ExprOp.LOOP} == set(ExprOp)
 
 
-@pytest.mark.parametrize(
-  ("op", "point"), [(op, point) for op in REFUSED for point in (0.5,)] + [(op, None) for op in (ExprOp.SOLVER_CALL, ExprOp.EXTERN)]
-)
+@pytest.mark.parametrize("op", [ExprOp.SOLVER_CALL, ExprOp.EXTERN])
 @pytest.mark.parametrize("mode", ["single", "many", "reverse"])
-def test_active_derivative_refusals(op, mode, point):
+def test_active_opaque_derivative_refusals(op, mode):
   x = sc.sym("refused_x", ())
   if op == ExprOp.EXTERN:
     y = sc.extern(sc.CLibrary("differential_external"), "differential_external", inputs=(sc.arg("x", ()),), outputs=sc.arg("y", ()))(x)
-  elif op == ExprOp.SOLVER_CALL:
+  else:
     descriptor = SolverDescriptor("differential_solver", "test", 1, 0, 0, (("p", ()),), (("y", ()),), (), 1)
     y = sc.Expr(op, (x,), sc.TensorType((), diff=False), attrs={"solver": descriptor, "output": 0, "output_name": "y"})
-  else:
-
-    @sc.function(sc.arg("refused_x", ()), outputs=sc.arg("y"))
-    def primal(x):
-      return REFUSED[op](x)
-
-    reference = {
-      ExprOp.FLOOR: np.floor,
-      ExprOp.CEIL: np.ceil,
-      ExprOp.MINIMUM: lambda x: np.minimum(x, 0.5),
-      ExprOp.MAXIMUM: lambda x: np.maximum(x, 0.5),
-    }
-    np.testing.assert_equal(primal(np.array(point)), reference[op](point))
-    (x,), (y,) = as_concrete(primal).inputs, as_concrete(primal).outputs
   with pytest.raises(NotImplementedError, match="SOLVER_CALL" if op == ExprOp.SOLVER_CALL else op.value):
     if mode == "single":
       sc.jvp(y, x, sc.const(1.0))
@@ -469,14 +478,14 @@ def test_active_derivative_refusals(op, mode, point):
       sc.vjp((y,), (x,), (sc.const(1.0),))
 
 
-def test_abs_zero_uses_x_over_abs_x_convention():
+def test_abs_zero_has_zero_slope():
   @sc.function(sc.arg("abs_x", 3), outputs=sc.group(sc.arg("fwd", 3), sc.arg("rev", 3)))
   def products(x):
     y = x.abs()
     return sc.jvp(y, x, sc.const([1.0, 1.0, 1.0])), sc.vjp((y,), (x,), (sc.const([1.0, 1.0, 1.0]),))[0]
 
   for result in products(np.array([-0.7, 0.0, 0.6])):
-    np.testing.assert_allclose(result, [-1.0, np.nan, 1.0], equal_nan=True)
+    np.testing.assert_allclose(result, [-1.0, 0.0, 1.0], equal_nan=True)
 
 
 @pytest.mark.parametrize("op", [ExprOp.SQRT, ExprOp.LOG, ExprOp.POW, ExprOp.ATAN2])

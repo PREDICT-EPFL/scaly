@@ -90,13 +90,14 @@ never have it, and any other operation has it when one of its operands does:
 ```python
 x.type.diff                   # True
 sc.const(2.0).type.diff       # False
-x.floor().type.diff           # False
+x.floor().type.diff           # True
 (x * x.floor()).type.diff     # True
 ```
 
-The flag is metadata. Whether a derivative exists is decided by the
-differentiation rules, and differentiating through `floor`, `ceil`, `minimum` or
-`maximum` raises `NotImplementedError`.
+The flag is metadata. The differentiation rules give `floor` and `ceil` zero
+derivative and split ties equally for `minimum` and `maximum`. The
+[derivative conventions](../guide/derivatives.md#non-smooth-conventions) also
+cover `abs` and extremum reductions.
 
 A [sparse matrix](../guide/sparse_matrices.md) also carries its stored pattern in its type. A sparse
 derivative is instead a one-dimensional `Expr` of nonzero values, and its pattern lives on the
@@ -113,13 +114,13 @@ Arity is the number of operands.
 | Trigonometric   | `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2` | 1 or 2 | Elementwise                         |
 | Hyperbolic      | `sinh`, `cosh`, `tanh`                        | 1        | Elementwise                               |
 | Other math      | `erf`, `exp`, `log`, `sqrt`, `abs`            | 1        | Elementwise                               |
-| Non-smooth      | `floor`, `ceil`, `minimum`, `maximum`         | 1 or 2   | No derivative rule                        |
+| Non-smooth      | `floor`, `ceil`, `minimum`, `maximum`         | 1 or 2   | Zero slopes or equal shares at ties       |
 | Comparison      | `lt`, `le`, `eq`, `ne`, `isfinite`            | 1 or 2   | A `bool` result, no derivative            |
 | Logic           | `and`, `or`, `not`                            | 1 or 2   | `bool` operands                           |
 | Selection       | `select`                                      | 3        | `sc.where`, derivative of the chosen branch |
 | Conversion      | `cast`                                        | 1        | A derivative between floating types only  |
 | Integer         | `floordiv`, `mod`                             | 2        | Rounding down, as in NumPy                |
-| Reduction       | `reduce`                                      | 1        | Sum over chosen axes                     |
+| Reduction       | `reduce`                                      | 1        | Sum, maximum or minimum over chosen axes |
 | Shape           | `reshape`, `transpose`                        | 1        | Size-preserving reshape, axis permutation |
 | Indexing        | `slice`, `gather`, `scatter`                  | 1        | Gather and scatter use flat index tables  |
 | Assembly        | `stack`, `concat`                             | Variable | Along one axis                            |
@@ -127,8 +128,8 @@ Arity is the number of operands.
 | Function calls  | `call`, `vmap`                                | Variable | An ordinary or a mapped call              |
 | Solvers         | `solver_call`                                 | Variable | A nested solve, not differentiable        |
 
-`dot`, `sumsqr`, `norm_2`, `mean`, `diag` and `vec` are builders that expand into these
-operations. There are no matrix decompositions, interpolation tables or
+`dot`, `sumsqr`, `norm_1`, `norm_2`, `norm_inf`, `argmin`, `argmax`, `mean`,
+`diag` and `vec` are builders that expand into these operations. There are no matrix decompositions, interpolation tables or
 data-dependent control flow yet, and no `expm1` or `log1p`.
 
 ### Calls and mapped calls

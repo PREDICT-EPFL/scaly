@@ -711,18 +711,19 @@ def test_folded_extrema_nan_match_runtime_and_numpy(isolated_cache: Path) -> Non
     return sc.minimum(sc.const(a), sc.const(b)), sc.maximum(sc.const(a), sc.const(b))
 
   for got in (runtime((a, b)), folded(np.zeros(6))):
-    np.testing.assert_array_equal(got[0], np.fmin(a, b))
-    np.testing.assert_array_equal(got[1], np.fmax(a, b))
+    np.testing.assert_array_equal(got[0], np.minimum(a, b))
+    np.testing.assert_array_equal(got[1], np.maximum(a, b))
 
 
-def test_exported_symbol_clash_is_a_plain_user_error(isolated_cache: Path) -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", 2), name="log")
+@pytest.mark.parametrize("name", ["log", "scaly_minimum", "scaly_maximum", "scaly_minimumf", "scaly_maximumf"])
+def test_exported_symbol_clash_is_a_plain_user_error(isolated_cache: Path, name: str) -> None:
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", 2), name=name)
   def fun(x):
     return x + 1
 
   with pytest.raises(ValueError) as error:
     fun(np.ones(2))
-  assert str(error.value) == "exported C identifier 'log' clashes with another declaration; give the function a distinct name"
+  assert str(error.value) == f"exported C identifier {name!r} clashes with another declaration; give the function a distinct name"
 
 
 def test_unsupported_lowering_still_raises_jit_unavailable(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:

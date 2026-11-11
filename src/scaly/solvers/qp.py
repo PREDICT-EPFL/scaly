@@ -72,9 +72,9 @@ def _reaches_op(exprs: Sequence[Expr], op: ExprOp) -> bool:
 
 
 def _decides_on(exprs: Sequence[Expr], variables: Sequence[Expr]) -> bool:
-  """Whether a bool or integer value, such as a select condition, depends on ``variables``, inside calls too.
+  """Whether a discrete or nonsmooth choice depends on ``variables``, inside calls too.
 
-  Such a value is piecewise constant, so derivatives miss it: ``where(x > 0, x, -x)`` has a zero
+  Derivatives can miss a change of branch: ``where(x > 0, x, -x)`` has a zero
   Hessian and is still not quadratic.
   """
   memo: dict[tuple[int, int], bool] = {}
@@ -90,7 +90,12 @@ def _decides_on(exprs: Sequence[Expr], variables: Sequence[Expr]) -> bool:
           seen.add(key)
           if visit(callee.results, formals):
             return True
-      elif (node.op == ExprOp.LOOP or not node.type.dtype.is_floating) and any(_depends_on(node, v, memo) for v in active):
+      elif (
+        not node.type.dtype.is_floating
+        or node.op in {ExprOp.LOOP, ExprOp.MAXIMUM, ExprOp.MINIMUM, ExprOp.ABS, ExprOp.FLOOR, ExprOp.CEIL}
+        or node.op == ExprOp.REDUCE
+        and node.attrs["kind"] != "add"
+      ) and any(_depends_on(node, v, memo) for v in active):
         return True
     return False
 
@@ -226,7 +231,7 @@ def build_qp[SV, NV, SP, NP](
   if _reaches_op(proof_targets, ExprOp.STOP_GRADIENT):
     raise NotQuadratic(f"{problem.name}: cannot prove QP structure through stop_gradient")
   if _decides_on(proof_targets, problem._var_symbols):
-    raise NotQuadratic(f"{problem.name}: a condition or another bool or integer value depends on the variables")
+    raise NotQuadratic(f"{problem.name}: a condition or nonsmooth operation depends on the variables")
   _prove_quadratic(problem)
   P, c, A, b, G_mat, g_lb, g_ub, x_lb, x_ub = _qp_data(problem)
   n, n_eq, n_ineq = P.shape[0], A.shape[0], G_mat.shape[0]

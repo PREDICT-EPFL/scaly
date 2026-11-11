@@ -6,13 +6,12 @@ import numpy as np
 
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
-from ...ir.program import ProgramNode, ProgramOp
 from ...ir.support import reduce_entries, support_indices
 from ...ir.types import stored_indices
 from ..arith import constant
 from ..program.scalarize import AUTO_SCALAR_OPS_PER_PROC
 from .ctx import LowerCtx, lowers, _flat
-from .schedule import emit_reduction
+from .schedule import combine_reduction, emit_reduction
 
 
 @lowers(ExprOp.REDUCE)
@@ -56,8 +55,7 @@ def _lower_supported_reduce(ctx: LowerCtx, node: Expr, entries: np.ndarray) -> N
   reductions, (k,) = ctx.reduce((len(entries),), f"support_{name}")
   target = p.view(out, [ctx.index_at(groups, k)])
   value = ctx.read_stored(src, entries, k)
-  operation = {"add": ProgramOp.ADD, "max": ProgramOp.MAXIMUM, "min": ProgramOp.MINIMUM}[kind]
-  ctx.emit(reductions, [p.store(target, ProgramNode(operation, (p.load(target), value), dtype=node.type.dtype))])
+  ctx.emit(reductions, [p.store(target, combine_reduction(p.load(target), value, kind))])
 
 
 def _lower_stored_reduce(ctx: LowerCtx, node: Expr) -> None:

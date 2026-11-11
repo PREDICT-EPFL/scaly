@@ -242,16 +242,16 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.LOG: OpInfo(ExprOp.LOG, 1),
   ExprOp.SQRT: OpInfo(ExprOp.SQRT, 1, pattern_rule="preserve"),
   ExprOp.ABS: OpInfo(ExprOp.ABS, 1, pattern_rule="preserve"),
-  ExprOp.FLOOR: OpInfo(ExprOp.FLOOR, 1, False, pattern_rule="preserve"),
-  ExprOp.CEIL: OpInfo(ExprOp.CEIL, 1, False, pattern_rule="preserve"),
+  ExprOp.FLOOR: OpInfo(ExprOp.FLOOR, 1, True, pattern_rule="preserve"),
+  ExprOp.CEIL: OpInfo(ExprOp.CEIL, 1, True, pattern_rule="preserve"),
   ExprOp.ADD: OpInfo(ExprOp.ADD, 2, pattern_rule="union"),
   ExprOp.SUB: OpInfo(ExprOp.SUB, 2, pattern_rule="union"),
   ExprOp.MUL: OpInfo(ExprOp.MUL, 2, pattern_rule="intersection"),
   ExprOp.DIV: OpInfo(ExprOp.DIV, 2, support_rule="numerator"),
   ExprOp.POW: OpInfo(ExprOp.POW, 2),
   ExprOp.ATAN2: OpInfo(ExprOp.ATAN2, 2),
-  ExprOp.MINIMUM: OpInfo(ExprOp.MINIMUM, 2, False, support_rule="union"),
-  ExprOp.MAXIMUM: OpInfo(ExprOp.MAXIMUM, 2, False, support_rule="union"),
+  ExprOp.MINIMUM: OpInfo(ExprOp.MINIMUM, 2, True, pattern_rule="union"),
+  ExprOp.MAXIMUM: OpInfo(ExprOp.MAXIMUM, 2, True, pattern_rule="union"),
   # Each predicate or logic op that is false wherever both operands are zero follows their union;
   # the others (x <= x, x == x, not 0, isfinite(0)) are true at zero and have no support rule.
   ExprOp.LT: OpInfo(ExprOp.LT, 2, False, support_rule="union"),
@@ -1256,12 +1256,12 @@ def cast(x: Any, dtype: DType | str) -> Expr:
 
 
 def minimum(x: Any, y: Any) -> Expr:
-  """Elementwise minimum. Non-smooth, so the result is marked non-differentiable."""
+  """Elementwise minimum, propagating NaN. Derivatives split equally at ties."""
   return binary(ExprOp.MINIMUM, *_operands(x, y))
 
 
 def maximum(x: Any, y: Any) -> Expr:
-  """Elementwise maximum. Non-smooth, so the result is marked non-differentiable."""
+  """Elementwise maximum, propagating NaN. Derivatives split equally at ties."""
   return binary(ExprOp.MAXIMUM, *_operands(x, y))
 
 
@@ -1336,6 +1336,82 @@ def _reduce(x: Expr, kind: str, axis: int | tuple[int, ...] | None = None) -> Ex
     attrs=attrs,
     lowering=x.lowering,
   )
+
+
+def reduce_max(x: Any, axis: int | tuple[int, ...] | None = None, *, keepdims: bool = False) -> Expr:
+  """Maximum over axes, propagating NaN and splitting derivatives equally at ties.
+
+  Axes and ``keepdims`` follow ``Expr.sum``. Structural zeros participate in sparse
+  reductions. An empty reduction domain raises ``ValueError`` during construction.
+  """
+  return _extreme(x, "max", axis, keepdims)
+
+
+def reduce_min(x: Any, axis: int | tuple[int, ...] | None = None, *, keepdims: bool = False) -> Expr:
+  """Minimum over axes, with the same shape, NaN and derivative rules as ``reduce_max``."""
+  return _extreme(x, "min", axis, keepdims)
+
+
+def _extreme(x: Any, kind: str, axis: int | tuple[int, ...] | None, keepdims: bool) -> Expr:
+  x = as_expr(x)
+  if not x.type.dtype.is_floating:
+    raise TypeError(f"extremum reductions take floating values, got {x.type.dtype}; convert with sc.cast")
+  result = _reduce(x, kind, axis)
+  axes = result.attrs["axes"]
+  if any(x.shape[i] == 0 for i in axes):
+    raise ValueError("extremum reduction over an empty domain")
+  return result.reshape(tuple(1 if i in axes else n for i, n in enumerate(x.shape))) if keepdims else result
+
+
+def argmax(x: Any, axis: int | None = None, *, keepdims: bool = False) -> Expr:
+  """Index of the first maximum or NaN, as nondifferentiable int64 values.
+
+  Floating operands, a single integer axis or ``None``, and ``keepdims`` follow
+  NumPy. With ``axis=None`` indices address the flattened logical array. Structural
+  zeros participate. An empty reduction domain raises ``ValueError``.
+  Function output leaves currently require float64. Cast indices to float64 to
+  return them numerically, or use the integer expression inside the function.
+  """
+  return _arg_extreme(x, "max", axis, keepdims)
+
+
+def argmin(x: Any, axis: int | None = None, *, keepdims: bool = False) -> Expr:
+  """Index of the first minimum or NaN, with the same rules as ``argmax``."""
+  return _arg_extreme(x, "min", axis, keepdims)
+
+
+def _arg_extreme(x: Any, kind: str, axis: int | None, keepdims: bool) -> Expr:
+  x = to_dense(as_expr(x))
+  original = x.shape
+  flattened = axis is None
+  if axis is None:
+    x, axis = x.reshape((x.size,)), 0
+  else:
+    if not isinstance(axis, int | np.integer) or isinstance(axis, bool | np.bool_):
+      raise TypeError("arg reduction axis must be an integer or None")
+    if not x.shape and axis in (-1, 0):
+      x, axis = x.reshape((1,)), 0
+  extreme = _extreme(x, kind, axis, True)
+  axis = int(axis) % len(x.shape)
+  n = x.shape[axis]
+  shape = tuple(n if i == axis else 1 for i in range(len(x.shape)))
+  indices = Expr.const(np.arange(n, dtype=np.int64).reshape(shape), dtype=dtypes.int64)
+  matches = equal(x, extreme) | (not_equal(x, x) & not_equal(extreme, extreme))
+  result = _reduce(where(matches, indices, Expr.const(n, dtype=dtypes.int64)), "min", axis)
+  if keepdims:
+    shape = tuple(1 for _ in original) if flattened or original == () else tuple(1 if i == axis else n for i, n in enumerate(original))
+    result = result.reshape(shape)
+  return result
+
+
+def norm_inf(x: Any) -> Expr:
+  """Maximum absolute entry, propagating NaN. Empty inputs raise ``ValueError``."""
+  return reduce_max(as_expr(x).abs())
+
+
+def norm_1(x: Any) -> Expr:
+  """Sum of absolute entries, with slope zero at zero and value zero for empty inputs."""
+  return as_expr(x).abs().sum()
 
 
 def diag(x: Any, k: int = 0) -> Expr:

@@ -151,7 +151,13 @@ def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None
     elif kind == "add":
       out = np.sum(value, axis=axes, dtype=e.type.dtype.numpy())
     else:
-      out = (np.max if kind == "max" else np.min)(value, axis=axes, initial=-np.inf if kind == "max" else np.inf)
+      out = (np.max if kind == "max" else np.min)(
+        value,
+        axis=axes,
+        initial=(-np.inf if kind == "max" else np.inf)
+        if e.type.dtype.is_floating
+        else (np.iinfo(e.type.dtype.numpy()).min if kind == "max" else np.iinfo(e.type.dtype.numpy()).max),
+      )
   elif e.op == ExprOp.MATMUL:
     out = args[0] @ args[1]
   elif e.op in ELEMENTWISE:

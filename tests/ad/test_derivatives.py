@@ -500,7 +500,6 @@ def test_ad_skips_nonsmooth_parameter_terms_independent_of_wrt() -> None:
     y = (x * x + p.floor()).sum()
     return sc.jvp(y, x, seed), sc.gradient(y, x)
 
-  x, _, seed = as_concrete(f).inputs
   xv = np.array([0.3, 1.2])
   pv = np.array([1.1, 2.9])
   sv = np.array([1.5, -0.25])
@@ -508,13 +507,6 @@ def test_ad_skips_nonsmooth_parameter_terms_independent_of_wrt() -> None:
   dyv, gradv = f((xv, pv, sv))
   np.testing.assert_allclose(dyv, np.dot(2 * xv, sv))
   np.testing.assert_allclose(gradv, 2 * xv)
-
-  try:
-    _ = sc.jvp(x.floor().sum(), x, seed)
-  except NotImplementedError as e:
-    assert "nonsmooth" in str(e)
-  else:  # pragma: no cover
-    raise AssertionError("nonsmooth JVP through wrt should still fail")
 
 
 @pytest.mark.parametrize("shapes", SHAPES)

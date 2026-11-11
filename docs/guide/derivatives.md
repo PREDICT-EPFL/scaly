@@ -415,6 +415,19 @@ print(sc.sparse_jacobian(root)(p).shape)   # (9,)
     leaves out an entry the rule computes gives wrong sparse derivatives
     without an error.
 
+## Non-smooth conventions
+
+`minimum`, `maximum`, `reduce_min` and `reduce_max` split derivatives equally
+among tied extrema. `abs` has slope `sign(x)`, with slope zero at zero.
+`floor` and `ceil` have zero derivative everywhere. These conventions apply
+in forward and reverse mode. A branch that is not chosen contributes zero
+even when its local derivative is NaN or infinite.
+
+`argmin` and `argmax` return integer indices and have no derivative.
+Quadratic-program backends refuse variable-dependent nonsmooth operations,
+even when the chosen derivative has a zero Hessian. Express control limits as
+variable bounds to keep a quadratic problem.
+
 ## Current limitations
 
 Derivatives work through ordinary function calls and `vmap`. Ordinary calls may
@@ -425,25 +438,14 @@ or mapped function. A solve independent of the differentiated input does not
 block its derivative. See [solver sensitivities](solvers.md#nesting-a-solver-in-a-graph)
 for the limits of dependency analysis.
 
-Differentiation through `minimum`, `maximum`, `floor`, and `ceil`
-raises `NotImplementedError`, even at points where the mathematical derivative
-exists:
+Forward and reverse mode can differ when a selected zero reaches a singular
+operation. For example, `sqrt(maximum(x, 0))` at `x = -1` gives a NaN tangent
+and a zero gradient. Placing the selection around `sqrt`, as in
+`sc.where(x > 0, x.sqrt(), 0)`, guards its singular derivative in both modes.
 
-```python
-x_clip = sc.sym("x_clip", ())
-clipped = x_clip.maximum(0.0)
-try:
-    sc.gradient(clipped, x_clip)
-except NotImplementedError as error:
-    print(type(error).__name__)
-# NotImplementedError
-```
-
-Clipping a control with minimum and maximum operations therefore prevents
-differentiation of that expression. `sc.where` differentiates, taking the
-derivative of the branch it chooses, so `sc.where(u > 1.0, 1.0, u)` clips with a
-derivative of zero above the limit and one below. For an optimization problem,
-express control limits as variable bounds instead.
+Derivatives of `reduce_min` and `reduce_max` on sparse inputs currently
+materialize masks and tie counts over the full logical shape. Their temporary
+storage can therefore grow with the dense size, even for diagonal inputs.
 
 Comparisons, `sc.isfinite` and casts to integer or `bool` types have no
 derivative, and a gradient of an integer or `bool` value raises `TypeError`.
