@@ -40,7 +40,7 @@
 #define shooting_spjac_eq_z_SZ_RES 1
 #define shooting_spjac_eq_z_SZ_IW 0
 #define shooting_spjac_eq_z_SZ_W 0
-#define shooting_spjac_eq_z_FRAME_BYTES 4864
+#define shooting_spjac_eq_z_FRAME_BYTES 4768
 
 // The pointer ABI for shooting_spjac_eq_z.
 #ifdef __cplusplus

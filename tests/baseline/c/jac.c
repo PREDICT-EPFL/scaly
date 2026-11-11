@@ -1,6 +1,6 @@
 /* Scaly build recipe
  * CPU baseline: generic
- * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False, frame_budget=65536
  * Math library: scalar libm
  * gcc -O3 -fno-math-errno -c dynamics_jac_znext_z.c
  * clang -O3 -fno-math-errno -c dynamics_jac_znext_z.c
@@ -82,6 +82,7 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, i
   double s1[16];
   static const double k2[8] = {0, 0, 0, 0, 1, 0, 0, 1};
   double s2[1];
+  double s3[1];
   static const double k7[8] = {1, 0, 0, 1, 0.050000000000000003, 0, 0, 0.050000000000000003};
   for (long long i_t0 = 0; i_t0 < 2; ++i_t0) {
     s0[i_t0] = (2.0 * arg[0][(2 + i_t0)]);
@@ -108,8 +109,8 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, i
     double v2 = arg[0][(2 + i_t4)];
     acc_t4 = (acc_t4 + (v2 * v2));
   }
-  s1[0] = acc_t4;
-  s2[0] = (0.10000000000000001 * s1[0]);
+  s2[0] = acc_t4;
+  s3[0] = (0.10000000000000001 * s2[0]);
   for (long long j_t6_0_0 = 0; j_t6_0_0 < 4; ++j_t6_0_0) {
     for (long long j_t6_0 = 0; j_t6_0 < 2; ++j_t6_0) {
       s1[((j_t6_0_0 * 4) + j_t6_0)] = k7[((j_t6_0_0 * 2) + j_t6_0)];
@@ -119,7 +120,7 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, i
     for (long long j_t6_1 = 0; j_t6_1 < 2; ++j_t6_1) {
       int64_t v3 = (2 + j_t6_1);
       double v4 = k2[((j_t6_1_0 * 2) + j_t6_1)];
-      s1[((j_t6_1_0 * 4) + v3)] = (v4 - (0.050000000000000003 * ((s0[j_t6_1_0] * arg[0][v3]) + (s2[0] * v4))));
+      s1[((j_t6_1_0 * 4) + v3)] = (v4 - (0.050000000000000003 * ((s0[j_t6_1_0] * arg[0][v3]) + (s3[0] * v4))));
     }
   }
   for (long long i_jac_znext_z_0 = 0; i_jac_znext_z_0 < 4; ++i_jac_znext_z_0) {

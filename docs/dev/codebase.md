@@ -41,6 +41,7 @@ src/scaly/
       plans.py          stored-coordinate maps and their kernel regions
       calls.py          Function calls, mapped calls and external calls
       gather.py         gathers and scatters
+      fusion.py         which values are evaluated in their readers' loops, and sums of scatters
       effects.py        prints
     program/             program optimizations                    (ProgramNode -> ProgramNode)
       __init__.py        explicit PASS_PIPELINE and optimize_program
@@ -49,8 +50,6 @@ src/scaly/
       scalarize.py       bounded scalar expansion, folding, and scheduling
       fold_tiles.py      exact periodic constant-table compression
       fuse_ranges.py     mapped scalar bodies and their derivative assembly in one range
-      combine_scatter_sums.py  shared accumulation for sums of scatters
-      fuse_elementwise.py     elementwise producer fusion
       fold_arith.py           constant reads and shared arithmetic identities in loop bodies
       hoist_reciprocals.py     optional invariant divisor reciprocals with scalar-definition checks
       widen_ranges.py         explicit lanes, access layouts, and ordered reductions
