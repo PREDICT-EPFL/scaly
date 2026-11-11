@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from ...ir import program as p
-from ..arith import constant
 from ...ir.expr import Expr, ExprOp
 from ...ir.program import RangeKind
 from ..arith import constant

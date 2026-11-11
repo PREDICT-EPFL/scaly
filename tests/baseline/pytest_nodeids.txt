@@ -2303,6 +2303,10 @@ tests/codegen/test_external.py::test_linked_library_swap_misses_the_index_in_ano
 tests/codegen/test_external.py::test_linked_library_swap_misses_the_index_in_another_process[verify]
 tests/codegen/test_external.py::test_manifest_consumer_compiles_each_translation_unit_and_links
 tests/codegen/test_external.py::test_missing_external_symbol_names_loader_error
+tests/codegen/test_float32.py::test_adjacent_int64_constants_compare_exactly_through_float64_entry[nonuniform_table-block]
+tests/codegen/test_float32.py::test_adjacent_int64_constants_compare_exactly_through_float64_entry[nonuniform_table-scalar]
+tests/codegen/test_float32.py::test_adjacent_int64_constants_compare_exactly_through_float64_entry[scalar-block]
+tests/codegen/test_float32.py::test_adjacent_int64_constants_compare_exactly_through_float64_entry[scalar-scalar]
 tests/codegen/test_float32.py::test_axis_reductions_keep_the_value_dtype[dense-block-float32-add]
 tests/codegen/test_float32.py::test_axis_reductions_keep_the_value_dtype[dense-block-float32-max]
 tests/codegen/test_float32.py::test_axis_reductions_keep_the_value_dtype[dense-block-float32-mean]

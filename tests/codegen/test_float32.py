@@ -208,6 +208,22 @@ def test_integer_constant_tables_and_sums_stay_exact(mode, dtype, bits):
   assert total == 4
 
 
+@pytest.mark.parametrize("mode", ["block", "scalar"])
+@pytest.mark.parametrize(
+  "value",
+  [np.int64(2**53 + 1), np.array([2**53 - 1, 2**53, 2**53 + 1, 2**53 + 3], dtype=np.int64)],
+  ids=["scalar", "nonuniform_table"],
+)
+def test_adjacent_int64_constants_compare_exactly_through_float64_entry(value, mode):
+  @sc.function(sc.arg("x", np.shape(value)), outputs=sc.arg("out"))
+  def fn(x):
+    return (np.int64(2**53) < x.cast(sc.dtypes.int64) + value).cast(sc.dtypes.float64).with_lowering(mode)
+
+  data = np.zeros(np.shape(value))
+  expected = (np.int64(2**53) < data.astype(np.int64) + value).astype(np.float64)
+  np.testing.assert_array_equal(fn(data), expected)
+
+
 @pytest.mark.parametrize("op", [ProgramOp.ABS, ProgramOp.MINIMUM, ProgramOp.MAXIMUM])
 def test_integer_libm_operations_never_convert_to_float(tmp_path, op):
   values = np.array([-(2**53 + 1), -(2**53 + 3), 2**53 + 1, 2**53 + 3], dtype=np.int64)
