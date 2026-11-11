@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 from ...ir import program as p
 from ...ir.program import ProgramNode, ProgramOp, walk_program
+from ...ir.types import dtypes
 from ..arith import constant
 from ..program._common import substitute_var, trip_count
 from .ctx import LowerCtx, _coefficients
@@ -29,11 +30,10 @@ def emit_reduction(
   their output coordinates outside the reduction and disable lane expansion.
   """
   if identity is None:
-    identity = constant({"add": 0, "max": -float("inf"), "min": float("inf")}[kind], value.dtype)
-  operation = {"add": ProgramOp.ADD, "max": ProgramOp.MAXIMUM, "min": ProgramOp.MINIMUM}[kind]
+    identity = constant(9223372036854775807 if value.dtype == dtypes.int64 and kind == "min" else {"add": 0, "max": -float("inf"), "min": float("inf")}[kind], value.dtype)
 
   def combine(a: ProgramNode, b: ProgramNode) -> ProgramNode:
-    return ProgramNode(operation, (a, b), dtype=value.dtype)
+    return combine_reduction(a, b, kind)
 
   names = frozenset(r.attrs["name"] for r in reductions)
   accesses = [_coefficients(n.args[0].args[0], names) for n in walk_program(value) if n.op == ProgramOp.LOAD]
@@ -71,3 +71,13 @@ def emit_reduction(
       emit([*outputs[:-1], p.range_(axis.attrs["name"], axis.args[0].attrs["value"] + 4 * blocks, axis.args[1], kind=axis.attrs["kind"])])
   else:
     emit(outputs)
+
+
+def combine_reduction(a: ProgramNode, b: ProgramNode, kind: str) -> ProgramNode:
+  """Combine extrema with SELECT so either operand's NaN propagates."""
+  if kind == "add":
+    return p.add(a, b)
+  chosen = ProgramNode(ProgramOp.LT, (b, a) if kind == "max" else (a, b), dtype=dtypes.bool_)
+  nan = ProgramNode(ProgramOp.NE, (a, a), dtype=dtypes.bool_)
+  condition = ProgramNode(ProgramOp.OR, (nan, chosen), dtype=dtypes.bool_)
+  return ProgramNode(ProgramOp.SELECT, (condition, a, b), dtype=a.dtype)

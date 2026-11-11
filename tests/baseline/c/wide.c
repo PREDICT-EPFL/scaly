@@ -107,14 +107,14 @@ static inline __attribute__((always_inline)) lanes_8_8_8_8_vec lanes_8_8_8_8_vec
   for (int i = 0; i < SCALY_WIDTH_8_8_8_8; ++i) result[i] = log(x[i]);
   return result;
 }
-static inline __attribute__((always_inline)) lanes_8_8_8_8_vec lanes_8_8_8_8_vec_fmax(lanes_8_8_8_8_vec x, lanes_8_8_8_8_vec y) {
+static inline __attribute__((always_inline)) lanes_8_8_8_8_vec lanes_8_8_8_8_vec_maximum(lanes_8_8_8_8_vec x, lanes_8_8_8_8_vec y) {
   lanes_8_8_8_8_vec result;
-  for (int i = 0; i < SCALY_WIDTH_8_8_8_8; ++i) result[i] = fmax(x[i], y[i]);
+  for (int i = 0; i < SCALY_WIDTH_8_8_8_8; ++i) result[i] = (x[i] != x[i] ? x[i] : (x[i] > y[i] ? x[i] : y[i]));
   return result;
 }
-static inline __attribute__((always_inline)) lanes_8_8_8_8_vec lanes_8_8_8_8_vec_fmin(lanes_8_8_8_8_vec x, lanes_8_8_8_8_vec y) {
+static inline __attribute__((always_inline)) lanes_8_8_8_8_vec lanes_8_8_8_8_vec_minimum(lanes_8_8_8_8_vec x, lanes_8_8_8_8_vec y) {
   lanes_8_8_8_8_vec result;
-  for (int i = 0; i < SCALY_WIDTH_8_8_8_8; ++i) result[i] = fmin(x[i], y[i]);
+  for (int i = 0; i < SCALY_WIDTH_8_8_8_8; ++i) result[i] = (x[i] != x[i] ? x[i] : (x[i] < y[i] ? x[i] : y[i]));
   return result;
 }
 static inline __attribute__((always_inline)) lanes_8_8_8_8_vec lanes_8_8_8_8_vec_pow(lanes_8_8_8_8_vec x, lanes_8_8_8_8_vec y) {
@@ -167,7 +167,7 @@ static inline __attribute__((always_inline)) void lanes_1(long long i, long long
   for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b[k] = 0.0;
   lanes_8_8_8_8_vec b_2;
   for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b_2[k] = 0.5;
-  lanes_8_8_8_8_vec_st(&s1[(i) + 0], (lanes_8_8_8_8_vec_fmax(v0, b) - (lanes_8_8_8_8_vec_fmin(v0, b) * b_2)), n);
+  lanes_8_8_8_8_vec_st(&s1[(i) + 0], (lanes_8_8_8_8_vec_maximum(v0, b) - (lanes_8_8_8_8_vec_minimum(v0, b) * b_2)), n);
 }
 static inline __attribute__((always_inline)) void lanes_2(long long i, long long n, double* s0, const double* s1, const double* y) {
   lanes_8_8_8_8_vec l;

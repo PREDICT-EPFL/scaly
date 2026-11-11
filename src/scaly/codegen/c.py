@@ -43,6 +43,7 @@ _PREFIX = {r.program: r.c for op, r in _OPERATORS.items() if OP_INFO[op].arity =
 _BIN_SYM = {ProgramOp.MOD: "%"} | {r.program: r.c for op, r in _OPERATORS.items() if OP_INFO[op].arity == 2}
 _UNARY_C = {r.program: r.c for op, r in ELEMENTWISE.items() if OP_INFO[op].arity == 1 and r.c.isidentifier()}
 _BINARY_C = {r.program: r.c for op, r in ELEMENTWISE.items() if OP_INFO[op].arity == 2 and r.c.isidentifier()}
+_VECTOR_BINARY = _BINARY_C | {ProgramOp.MINIMUM: "minimum", ProgramOp.MAXIMUM: "maximum"}
 _INTEGER_C = {r.program: r.c_integer for r in ELEMENTWISE.values() if r.c_integer is not None}
 # printf conversion and argument by dtype. 17 significant digits read a double back exactly.
 _PRINTF = {
@@ -554,7 +555,7 @@ def _lane_defines(prog: ProgramNode | None, *, dialect: CDialect, vector_libm: V
       if any(n.op == ProgramOp.BIT_SELECT for h in helpers for n in walk_program(h.args[1])):
         # The lane mask uses one integer of the value's width, all ones where the bit is set.
         lines.append(f"typedef int{dtype.bits}_t {vec}_i{dtype.bits} __attribute__((vector_size({size} * {width})));")
-      operations = {n.op for h in helpers for n in walk_program(h.args[1]) if n.op in _UNARY_C or n.op in _BINARY_C and n.dtype.is_floating}
+      operations = {n.op for h in helpers for n in walk_program(h.args[1]) if n.op in _UNARY_C or n.op in _VECTOR_BINARY and n.dtype.is_floating}
       math = [line for op in sorted(operations) for line in _vector_math(vec, vec, width, op, vector_libm, dtype)]
       if math and vector_libm == "glibc":
         # The wrappers declare the libmvec symbols; a C++ build must see them with C linkage.
@@ -655,9 +656,9 @@ def _render_vector_helpers(proc: ProgramNode, *, dialect: CDialect, vector_libm:
 
 
 def _vector_math(helper: str, vec: str, width: str, op: ProgramOp, vector_libm: VectorLibm, dtype: DType) -> list[str]:
-  name = _UNARY_C.get(op, _BINARY_C.get(op, ""))
+  name = _UNARY_C.get(op, _VECTOR_BINARY.get(op, ""))
   function = name + ("f" if dtype.bits == 32 else "")
-  binary = op in _BINARY_C
+  binary = op in _VECTOR_BINARY
   params = f"{vec} x, {vec} y" if binary else f"{vec} x"
   args = "x[i], y[i]" if binary else "x[i]"
   lines = [f"static inline __attribute__((always_inline)) {vec} {helper}_{name}({params}) {{"]
@@ -686,7 +687,8 @@ def _vector_math(helper: str, vec: str, width: str, op: ProgramOp, vector_libm: 
         f"  return {symbol}(x{', y' if binary else ''});",
       ]
     lines += ["#endif", "#else"]
-  lines += [f"  {vec} result;", f"  for (int i = 0; i < {width}; ++i) result[i] = {function}({args});", "  return result;"]
+  scalar = _TEMPLATE_C[op].format("x[i]", "y[i]") if op in _TEMPLATE_C else f"{function}({args})"
+  lines += [f"  {vec} result;", f"  for (int i = 0; i < {width}; ++i) result[i] = {scalar};", "  return result;"]
   if glibc:
     lines.append("#endif")
   lines.append("}")
@@ -783,8 +785,8 @@ def _emit_vector_body(
         value = f"(-{args[0]})"
       elif node.op in _BIN_SYM:
         value = f"({args[0]} {_BIN_SYM[node.op]} {args[1]})"
-      elif node.op in _UNARY_C or node.op in _BINARY_C:
-        value = f"{vec}_{_UNARY_C.get(node.op, _BINARY_C.get(node.op))}({', '.join(args)})"
+      elif node.op in _UNARY_C or node.op in _VECTOR_BINARY:
+        value = f"{vec}_{_UNARY_C.get(node.op, _VECTOR_BINARY.get(node.op))}({', '.join(args)})"
       else:
         raise LoweringError(f"unsupported vector scalar op {node.op}")
       text[node] = value

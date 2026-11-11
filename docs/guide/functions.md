@@ -315,6 +315,17 @@ print(center_rows(np.arange(6.0).reshape(2, 3)))
 #  [-1.  0.  1.]]
 ```
 
+`sc.reduce_max(x, axis=..., keepdims=...)` and `sc.reduce_min` use the same
+axis conventions. They propagate NaN, include structural zeros in sparse
+inputs, and reject empty reduction domains during construction.
+`sc.argmax` and `sc.argmin` accept one axis or `None` and return the first
+extremum's index as `int64`. A NaN takes precedence over finite entries.
+With `axis=None`, indices address the flattened logical array. Function output
+leaves currently require `float64`, so cast the indices with
+`sc.cast(indices, "float64")` to return them numerically.
+`sc.norm_inf(x)` is the maximum absolute entry, and `sc.norm_1(x)` sums
+absolute entries. Both norms propagate NaN.
+
 `sc.diag(vector)` builds a diagonal matrix, and `sc.diag(matrix)` extracts
 its diagonal. The optional integer `k` selects a diagonal above the main one
 when positive and below when negative.

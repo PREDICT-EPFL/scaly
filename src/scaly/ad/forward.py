@@ -10,7 +10,7 @@ from ..ir.expr import Expr, ExprOp, _uniform, callees_of, concat, from_dense, ga
 from ..ir.types import TensorType, stored_indices
 from ..passes.expr import simplify_cse_fixpoint
 from .calls import _call_jvp_many, _is_zero_const, _vmap_jvp_many, read_args
-from .rules import ELEMENTWISE, tangent as _elementwise_tangent
+from .rules import ELEMENTWISE, Mask, reduction_partial, times_partial, tangent as _elementwise_tangent
 from .sparsity import _check_wrt, _prunable_support
 
 
@@ -151,10 +151,13 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
   if op == ExprOp.VALUES:
     return values(d[0])
   if op == ExprOp.REDUCE:
+    seed = d[0]
     if expr.attrs["kind"] != "add":
-      raise NotImplementedError(f"JVP for REDUCE {expr.attrs['kind']} awaits #65")
-    tangent = d[0].sum(tuple(axis + 1 for axis in expr.attrs["axes"]))
-    return to_dense(tangent) if expr.type.pattern is None else tangent
+      local = reduction_partial(expr)
+      assert local.weight is not None
+      seed = times_partial(Mask(local.condition.reshape((1, *local.condition.shape)), local.weight.reshape((1, *local.weight.shape))), to_dense(seed))
+    tangent = seed.sum(tuple(axis + 1 for axis in expr.attrs["axes"]))
+    return to_dense(tangent) if expr.type.pattern is None else from_dense(to_dense(tangent), expr.type.pattern)
   if op == ExprOp.RESHAPE:
     if args[0].type.pattern is not None:
       return d[0].reshape((nseed, *expr.shape))

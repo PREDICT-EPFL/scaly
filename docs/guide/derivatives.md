@@ -425,25 +425,15 @@ or mapped function. A solve independent of the differentiated input does not
 block its derivative. See [solver sensitivities](solvers.md#nesting-a-solver-in-a-graph)
 for the limits of dependency analysis.
 
-Differentiation through `minimum`, `maximum`, `floor`, and `ceil`
-raises `NotImplementedError`, even at points where the mathematical derivative
-exists:
+`minimum`, `maximum`, `reduce_min` and `reduce_max` split derivatives equally
+among tied extrema. `abs` has slope `sign(x)`, with slope zero at zero.
+`floor` and `ceil` have zero derivative everywhere. These conventions apply
+in forward and reverse mode. A branch that is not chosen contributes zero
+even when its local derivative is NaN or infinite.
 
-```python
-x_clip = sc.sym("x_clip", ())
-clipped = x_clip.maximum(0.0)
-try:
-    sc.gradient(clipped, x_clip)
-except NotImplementedError as error:
-    print(type(error).__name__)
-# NotImplementedError
-```
-
-Clipping a control with minimum and maximum operations therefore prevents
-differentiation of that expression. `sc.where` differentiates, taking the
-derivative of the branch it chooses, so `sc.where(u > 1.0, 1.0, u)` clips with a
-derivative of zero above the limit and one below. For an optimization problem,
-express control limits as variable bounds instead.
+`argmin` and `argmax` return integer indices and have no derivative.
+For optimization problems, express control limits as variable bounds when
+possible.
 
 Comparisons, `sc.isfinite` and casts to integer or `bool` types have no
 derivative, and a gradient of an integer or `bool` value raises `TypeError`.

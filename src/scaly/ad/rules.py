@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _full_like, cast, gather, not_equal, pack, scatter, values, where, zeros_like
+from ..ir.expr import Expr, ExprOp, _full_like, _uniform, cast, equal, gather, not_equal, pack, scatter, to_dense, values, where, zeros_like
 from ..ir.program import ProgramOp
 from ..ir.support import project_entries
 from ..ir.types import TensorType, stored_indices
@@ -23,6 +23,7 @@ class Mask:
   """
 
   condition: Expr
+  weight: Expr | None = None
 
 
 type Local = Expr | int | tuple[Expr | int, Expr] | Mask
@@ -101,6 +102,26 @@ def _select_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
   return where(_seed_axis(e.args[0], e), zero if dx is None else dx, zero if dy is None else dy)
 
 
+def _extremum_partial(e: Expr, position: int) -> Mask:
+  x, y = e.args[position], e.args[1 - position]
+  chosen = x >= y if e.op == ExprOp.MAXIMUM else x <= y
+  return Mask(chosen, where(equal(x, y), _const(0.5, e), _const(1, e)))
+
+
+def reduction_partial(e: Expr) -> Mask:
+  """Equal shares among all logical extrema, including implicit sparse zeros."""
+  x = to_dense(e.args[0])
+  shape = tuple(1 if i in e.attrs["axes"] else n for i, n in enumerate(x.shape))
+  chosen = equal(x, to_dense(e).reshape(shape))
+  count = cast(chosen, e.type.dtype).sum(e.attrs["axes"], keepdims=True)
+  return Mask(chosen, _const(1, e) / count)
+
+
+def times_partial(local: Mask, seed: Expr) -> Expr:
+  """Apply a masked partial while preserving an outer mask on the seed."""
+  return _masked(seed, lambda inner: _times_partial(local, inner))
+
+
 # NumPy has no erf; frompyfunc keeps constant folding vectorized without adding SciPy.
 def _erf(x: np.ndarray) -> np.ndarray:
   return np.asarray(np.frompyfunc(math.erf, 1, 1)(x), dtype=np.float64)
@@ -127,11 +148,11 @@ ELEMENTWISE: dict[ExprOp, Elementwise] = {
     ProgramOp.ABS,
     np.abs,
     "fabs",
-    (lambda e: e.args[0] / e,),
+    (lambda e: Mask(not_equal(e.args[0], 0), where(e.args[0] > 0, _const(1, e), where(e.args[0] < 0, _const(-1, e), e.args[0]))),),
     c_integer="(({type})({0} < 0 ? 0 - (uint64_t)({0}) : (uint64_t)({0})))",
   ),
-  ExprOp.FLOOR: Elementwise(ProgramOp.FLOOR, np.floor, "floor"),
-  ExprOp.CEIL: Elementwise(ProgramOp.CEIL, np.ceil, "ceil"),
+  ExprOp.FLOOR: Elementwise(ProgramOp.FLOOR, np.floor, "floor", (lambda e: 0,)),
+  ExprOp.CEIL: Elementwise(ProgramOp.CEIL, np.ceil, "ceil", (lambda e: 0,)),
   ExprOp.ADD: Elementwise(ProgramOp.ADD, np.add, "+", (lambda e: 1, lambda e: 1)),
   ExprOp.SUB: Elementwise(ProgramOp.SUB, np.subtract, "-", (lambda e: 1, lambda e: -1)),
   ExprOp.MUL: Elementwise(ProgramOp.MUL, np.multiply, "*", (lambda e: e.args[1], lambda e: e.args[0]), _mul_jvp),
@@ -150,8 +171,20 @@ ELEMENTWISE: dict[ExprOp, Elementwise] = {
     (lambda e: (e.args[1], _atan2_denominator(e)), lambda e: (-e.args[0], _atan2_denominator(e))),
     expensive=True,
   ),
-  ExprOp.MINIMUM: Elementwise(ProgramOp.MINIMUM, np.fmin, "fmin", c_integer="({0} < {1} ? {0} : {1})"),
-  ExprOp.MAXIMUM: Elementwise(ProgramOp.MAXIMUM, np.fmax, "fmax", c_integer="({0} > {1} ? {0} : {1})"),
+  ExprOp.MINIMUM: Elementwise(
+    ProgramOp.MINIMUM,
+    np.minimum,
+    "({0} != {0} ? {0} : ({0} < {1} ? {0} : {1}))",
+    (lambda e: _extremum_partial(e, 0), lambda e: _extremum_partial(e, 1)),
+    c_integer="({0} < {1} ? {0} : {1})",
+  ),
+  ExprOp.MAXIMUM: Elementwise(
+    ProgramOp.MAXIMUM,
+    np.maximum,
+    "({0} != {0} ? {0} : ({0} > {1} ? {0} : {1}))",
+    (lambda e: _extremum_partial(e, 0), lambda e: _extremum_partial(e, 1)),
+    c_integer="({0} > {1} ? {0} : {1})",
+  ),
   ExprOp.LT: Elementwise(ProgramOp.LT, np.less, "<"),
   ExprOp.LE: Elementwise(ProgramOp.LE, np.less_equal, "<="),
   ExprOp.EQ: Elementwise(ProgramOp.EQ, np.equal, "=="),
@@ -339,12 +372,18 @@ def _sample_stored_unmasked(expr: Expr, output: TensorType) -> Expr:
 def _times_partial(local: Local, t: Expr, align: Callable[[Expr], Expr] | None = None) -> Expr:
   """``t`` times a partial. Forward mode passes ``align`` to put the partial on the seed axis."""
   if isinstance(local, Mask):
-    return where(local.condition, t, _const(0, t))
+    condition = local.condition if align is None else align(local.condition)
+    weight = local.weight if align is None or local.weight is None else align(local.weight)
+    product = t if weight is None else t * weight
+    shape = np.broadcast_shapes(condition.shape, product.shape)
+    if product.shape != shape:
+      product = product * _uniform(1, shape, dtype=t.type.dtype)
+    return where(condition, product, _const(0, t))
   if isinstance(local, tuple):
     numerator, denominator = local
     return _times_partial(numerator, t, align) / (denominator if align is None else align(denominator))
   if isinstance(local, int):
-    return -t if local < 0 else t
+    return -t if local < 0 else t if local else _uniform(0, t.shape, dtype=t.type.dtype)
   return t * local if align is None else align(local) * t
 
 
