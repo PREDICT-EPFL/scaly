@@ -6,11 +6,23 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _uniform, gather, matmul, pack, scatter, topo, to_dense, values, zeros_like
+from ..ir.expr import Expr, ExprOp, _uniform, gather, matmul, pack, scatter, topo, to_dense, values, where, zeros_like
 from ..ir.support import slice_indices, support_indices
-from ..ir.types import stored_indices
+from ..ir.types import CanonicalPattern, stored_indices
 from .calls import _call_vjp, _cond_vjp, _vmap_vjp
-from .rules import ELEMENTWISE, _masked, accumulate, carry_mask, cotangent, _unbroadcast, reduction_partial, times_partial, zero_partial
+from .rules import (
+  ELEMENTWISE,
+  _mask_of,
+  _masked,
+  _nonzero_mask,
+  accumulate,
+  carry_mask,
+  cotangent,
+  _unbroadcast,
+  reduction_partial,
+  times_partial,
+  zero_partial,
+)
 from .sparsity import _check_wrt, _depends_on, _prunable_support
 
 
@@ -185,7 +197,10 @@ def _stored_movement_vjp(expr: Expr, cot: Expr) -> Expr:
 def _stored_matmul_vjp(x: Expr, y: Expr, cot: Expr, active: tuple[int, ...] | None) -> tuple[Expr | None, ...]:
   if x.type.pattern is not None and y.type.pattern is not None:
     active = (0, 1) if active is None else active
-    return matmul(cot, y.T, sampled=x.type.pattern) if 0 in active else None, matmul(x.T, cot, sampled=y.type.pattern) if 1 in active else None
+    return (
+      _masked_sampled_matmul(cot, y.T, x.type.pattern, left=True) if 0 in active else None,
+      _masked_sampled_matmul(cot, x.T, y.type.pattern, left=False) if 1 in active else None,
+    )
   left = x.type.pattern is not None
   src, dense = (x, y) if left else (y, x)
   pattern = src.type.pattern
@@ -218,6 +233,18 @@ def _stored_matmul_vjp(x: Expr, y: Expr, cot: Expr, active: tuple[int, ...] | No
       contribution = _masked(sampled, lambda c: values(src).reshape((pattern.nnz, 1)) * c)
       (dense_cot,) = carry_mask(contribution, lambda c: (scatter(c.vec(), dense_indices.reshape(-1), dense.shape),))
   return (sparse_cot, dense_cot) if left else (dense_cot, sparse_cot)
+
+
+def _masked_sampled_matmul(cot: Expr, coefficient: Expr, pattern: CanonicalPattern, *, left: bool) -> Expr:
+  def product(c: Expr, factor: Expr) -> Expr:
+    return matmul(c, factor, sampled=pattern) if left else matmul(factor, c, sampled=pattern)
+
+  result = product(cot, coefficient)
+  if _mask_of(cot) is None:
+    return result
+  # Activity counts structural paths, independently of coefficient values or cancellation.
+  activity = product(_masked(cot, _ones_like), _ones_like(coefficient))
+  return where(_nonzero_mask(activity), result, zeros_like(result))
 
 
 def _ones_like(expr: Expr) -> Expr:
