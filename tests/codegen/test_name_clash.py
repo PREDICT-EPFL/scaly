@@ -13,7 +13,7 @@ from scaly.ir import program as p
 from scaly.ir.program_spec import verify_program
 from scaly.ir.spec import VerifyError
 from scaly.ir.types import dtypes
-from tests.compilers import c_compiler, cxx_compiler
+from tests.compilers import c_compiler, check_c_syntax, cxx_compiler
 
 
 @pytest.mark.parametrize(
@@ -47,7 +47,7 @@ def test_program_declaration_collisions_match_c99(tmp_path, first, second, names
   prog = p.program([proc])
   path = tmp_path / "declarations.c"
   path.write_text("\n".join([*_includes(dialect="c", prog=prog), *_render_raw_callee(proc, dialect="c")]))
-  result = subprocess.run([*c_compiler(), "-std=c99", "-fsyntax-only", str(path)], capture_output=True, text=True)
+  result = check_c_syntax(path)
   assert (result.returncode != 0) == collide, result.stderr
   if collide:
     with pytest.raises(VerifyError, match="duplicate C identifier 'i_0'"):
@@ -65,7 +65,7 @@ def test_scalar_declarations_follow_c99_block_and_loop_scopes(tmp_path, nested):
   prog = p.program([proc])
   path = tmp_path / "scopes.c"
   path.write_text("\n".join([*_includes(dialect="c", prog=prog), *_render_raw_callee(proc, dialect="c")]))
-  result = subprocess.run([*c_compiler(), "-std=c99", "-fsyntax-only", str(path)], capture_output=True, text=True)
+  result = check_c_syntax(path)
   assert (result.returncode == 0) == nested, result.stderr
   if nested:
     verify_program(prog)
@@ -81,7 +81,8 @@ def test_repeated_local_buffers_and_scalar_updates_are_not_redeclarations(tmp_pa
   verify_program(prog)
   path = tmp_path / "repeated.c"
   path.write_text("\n".join([*_includes(dialect="c", prog=prog), *_render_raw_callee(proc, dialect="c")]))
-  subprocess.run([*c_compiler(), "-std=c99", "-fsyntax-only", str(path)], check=True, capture_output=True)
+  result = check_c_syntax(path)
+  assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize("kind", ["exit", "buffer", "assign"])
@@ -98,7 +99,7 @@ def test_local_declarations_cannot_redefine_a_buffer_parameter(tmp_path, kind, p
   prog = p.program([proc])
   path = tmp_path / "parameter.c"
   path.write_text("\n".join([*_includes(dialect="c", prog=prog), *_render_raw_callee(proc, dialect="c")]))
-  result = subprocess.run([*c_compiler(), "-std=c99", "-fsyntax-only", str(path)], capture_output=True, text=True)
+  result = check_c_syntax(path)
   assert result.returncode != 0
   with pytest.raises(VerifyError, match=f"duplicate C identifier '{parameter}'"):
     verify_program(prog)
