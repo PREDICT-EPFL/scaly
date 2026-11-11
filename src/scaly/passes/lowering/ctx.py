@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable, Sequence
 import numpy as np
 
 from ...ir import program as p
-from ...ir.expr import CALLEE_OPS, Expr, ExprOp, callees_of, invocation_key
+from ...ir.expr import Expr, ExprOp, callees_of, invocation_key
 from ...ir.match import Pattern, rewrite
 from ...function.concrete import ConcreteFunction
 from ...function.extern import _Extern
@@ -283,7 +283,11 @@ class LowerCtx:
       )
       self.params.append(buf)
       self.buffers[name] = buf
-      if expr.op in (ExprOp.INPUT, ExprOp.CONST) or expr.id in seen or (layout is not None and (expr.type.pattern is None or expr.op in CALLEE_OPS)):
+      if (
+        expr.op in (ExprOp.INPUT, ExprOp.CONST)
+        or expr.id in seen
+        or (layout is not None and (expr.type.pattern is None or expr.op in (ExprOp.CALL, ExprOp.VMAP, ExprOp.LOOP)))
+      ):
         continue  # INPUT/CONST or shared output: emit_outputs inserts the copy
       seen.add(expr.id)
       self._output_alias[expr.id] = name
