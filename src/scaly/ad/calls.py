@@ -443,7 +443,7 @@ def _vmap_adj_function(
     lam_name = f"lam:{callee.output_names[output_index]}"
     lam = _tangent_symbol(lam_name, callee.outputs[output_index])
     mask_name = f"mask:{callee.output_names[output_index]}"
-    # Helper leaves are float64 until typed lowering lands; the condition travels as nondifferentiable 0/1 values.
+    # The condition travels as nondifferentiable 0/1 values in the cotangent's dtype.
     mask = Expr(ExprOp.INPUT, type=TensorType(lam.type.storage_shape, lam.type.dtype), name=mask_name) if masked else None
     seed = lam if mask is None else _masked_seed(lam, cast_expr(mask, dtypes.bool_))
     grads = body_cotangents(callee, output_index, active_formals, seed, pullback)
