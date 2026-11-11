@@ -123,7 +123,7 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
         last_use[b] = max(last_use[b], stop - 1)
 
   # Pack per dtype, in first-write order (ties: declaration order via the dict insertion order).
-  order = sorted((name for name in packable if name in first_write), key=lambda b: (first_write[b], b))
+  order = sorted((name for name in packable if name in first_write), key=lambda b: first_write[b])
   free_at: dict[str, int] = {}  # slot -> first statement index at which it is reusable
   used_names = {n.attrs["name"] for n in walk_program(proc) if n.op == ProgramOp.BUFFER}
   counter = 0
