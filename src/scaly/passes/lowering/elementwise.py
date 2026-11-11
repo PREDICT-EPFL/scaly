@@ -22,10 +22,10 @@ def _lower_elementwise(ctx: LowerCtx, node: Expr) -> None:
   if node.type.pattern is not None:
     lower_elementwise(ctx, node, ELEMENTWISE[ExprOp(node.op)].program)
     return
-  if lower_supported_elementwise(ctx, node, ELEMENTWISE[ExprOp(node.op)].program):
-    return
   if (scatters := ctx.sums.get(node.id)) is not None:
     lower_scatter_sum(ctx, node, scatters)
+    return
+  if lower_supported_elementwise(ctx, node, ELEMENTWISE[ExprOp(node.op)].program):
     return
   out = ctx.alloc_tmp(node)
   if node.id in ctx.permutes:

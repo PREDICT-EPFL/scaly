@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from functools import reduce
 from operator import or_
 
@@ -11,6 +12,7 @@ import numpy as np
 from ...ad.rules import ELEMENTWISE
 from ...function.concrete import ConcreteFunction
 from ...ir.expr import Expr, ExprOp
+from ...ir.support import Support
 from ...ir.types import stored_indices
 
 ALIASES = frozenset({ExprOp.RESHAPE, ExprOp.STOP_GRADIENT, ExprOp.PACK, ExprOp.VALUES})
@@ -93,7 +95,14 @@ def _reads(node: Expr) -> list[tuple[Expr, int]]:
   return [(a, _BUFFER) for a in node.args]
 
 
-def plan_fusion(fun: ConcreteFunction, invariant: frozenset[frozenset[int]], *, scalar: bool) -> tuple[frozenset[int], dict[int, tuple[Expr, ...]]]:
+def plan_fusion(
+  fun: ConcreteFunction,
+  invariant: frozenset[frozenset[int]],
+  *,
+  scalar: bool,
+  seed_pairs: bool,
+  support_of: Callable[[Expr], Support],
+) -> tuple[frozenset[int], dict[int, tuple[Expr, ...]]]:
   """The nodes lowering evaluates at their consumers' coordinates rather than storing, and the sums
   of scatters, by the id of the sum each one writes.
 
@@ -189,7 +198,9 @@ def plan_fusion(fun: ConcreteFunction, invariant: frozenset[frozenset[int]], *, 
       continue
     if node.id in outputs or op not in ELEMENTWISE or any(e.type.pattern is not None for e in (node, *node.args)):
       continue
-    if scalar and node.support is not None and len(node.support) < node.size:
+    if scalar and (support := support_of(node)) is not None and len(support) < node.size:
+      continue
+    if seed_pairs and len(node.shape) >= 2 and any((support := support_of(e)) is not None and len(support) < e.size for e in (node, *node.args)):
       continue
     edges = terminal[node.id]
     costly = ELEMENTWISE[op].expensive or any(a.id in expensive for a in node.args)

@@ -345,7 +345,9 @@ def test_static_loop_budget_includes_the_step_index_store(monkeypatch) -> None:
   def step(c, j):
     return c + j.cast(sc.dtypes.float64)
 
-  monkeypatch.setattr(calls, "STATIC_LOOP_BUDGET", 4)
+  cost = calls._loop_cost(_lowered_main(step), {})
+  assert cost is not None
+  monkeypatch.setattr(calls, "STATIC_LOOP_BUDGET", 2 * cost)
   x = sc.sym("x")
   y, _ = sc.scan(step, x, length=2, index=True)
   fn = ConcreteFunction._from_exprs("wrapper_budget", [x], [y], ["x"], ["y"])

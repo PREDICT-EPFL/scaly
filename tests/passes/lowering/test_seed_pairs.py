@@ -64,6 +64,24 @@ def test_perturbed_seed_list_changes_the_mapped_tangent(monkeypatch, tmp_path):
     np.testing.assert_allclose(fun(x, d), expected)
 
 
+def test_supported_scatter_sum_keeps_its_absorbed_operands():
+  mask = np.array([[1.0, 0.0], [0.0, 1.0]])
+
+  @sc.function(sc.arg("x", (2, 2)), name="seed_scatter_sum_inner")
+  def inner(x):
+    left = sc.scatter(x.reshape((4,)), [0, 2, 4, 6], 8).reshape((2, 4))
+    right = sc.scatter((2 * x).reshape((4,)), [1, 3, 5, 7], 8).reshape((2, 4))
+    return (left + right).block()
+
+  @sc.function(sc.arg("x", (2, 2)), name="seed_scatter_sum_host")
+  def host(x):
+    return inner(x * sc.const(mask)).block()
+
+  x = np.array([[0.3, -1.2], [2.5, 0.7]])
+  values = (x * mask).reshape(-1)
+  np.testing.assert_allclose(host(x), np.stack((values, 2 * values), axis=1).reshape((2, 4)))
+
+
 @pytest.mark.parametrize("left_vector", [False, True])
 @pytest.mark.parametrize("right_vector", [False, True])
 def test_supported_contractions_match_numpy(left_vector, right_vector):

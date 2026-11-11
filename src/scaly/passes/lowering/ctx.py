@@ -354,7 +354,13 @@ class LowerCtx:
       node.id: sources for chain in self.inout_carries.values() for node in chain if (sources := same_index_sources(self.fun, node))
     }
     deferred = set().union(*self.fused_scatter.values())
-    self.deferred, self.sums = plan_fusion(self.fun, self.invariant, scalar=self.scalarize and self.fun._effective_lowering == "scalar")
+    self.deferred, self.sums = plan_fusion(
+      self.fun,
+      self.invariant,
+      scalar=self.scalarize and self.fun._effective_lowering == "scalar",
+      seed_pairs=self.seed_pairs,
+      support_of=self.support_of,
+    )
     absorbed = {leaf.id for leaves in self.sums.values() for leaf in leaves}
     self.permutes = set()
     for node in topo(self._computed):

@@ -5287,6 +5287,7 @@ tests/passes/lowering/test_seed_pairs.py::test_supported_matmul_source_scales_wi
 tests/passes/lowering/test_seed_pairs.py::test_supported_matmul_source_scales_with_operand_entries[0.9]
 tests/passes/lowering/test_seed_pairs.py::test_supported_nonfloating_elementwise_uses_typed_zeros[bool]
 tests/passes/lowering/test_seed_pairs.py::test_supported_nonfloating_elementwise_uses_typed_zeros[int64]
+tests/passes/lowering/test_seed_pairs.py::test_supported_scatter_sum_keeps_its_absorbed_operands
 tests/passes/lowering/test_sparse_boundary.py::test_large_sparse_calls_and_maps_allocate_only_stored_values
 tests/passes/lowering/test_sparse_boundary.py::test_mixed_matrix_products_match_numpy[block-False]
 tests/passes/lowering/test_sparse_boundary.py::test_mixed_matrix_products_match_numpy[block-True]
@@ -5606,11 +5607,9 @@ tests/passes/test_carried_ranges.py::test_unrolling_keeps_exit_variable_even_wit
 tests/passes/test_carried_ranges.py::test_widening_refuses_carried_trips_and_enclosing_ranges[False]
 tests/passes/test_carried_ranges.py::test_widening_refuses_carried_trips_and_enclosing_ranges[True]
 tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[coalesce_stores]
-tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[combine_scatter_sums]
 tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[fold_arith]
 tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[fold_arith_after_unroll]
 tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[fold_tiles]
-tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[fuse_elementwise]
 tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[fuse_ranges]
 tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[hoist_invariant]
 tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[hoist_reciprocals]

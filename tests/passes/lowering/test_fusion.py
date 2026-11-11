@@ -274,7 +274,7 @@ def test_loop_operands_are_computed_once_outside_the_carried_range() -> None:
   @sc.function(sc.arg("c0", 3), sc.arg("w", 3), sc.arg("v", (4, 3)), name="loop_operands")
   def fn(c0, w, v):
     # One used result, so the loop is each operand's only reader.
-    return sc.scan(step, c0, (sc.broadcast(w.sin()), v.exp()), length=4)[0]
+    return sc.scan(step, c0, (sc.broadcast(w.sin()), v.exp()), length=4)[0].block()
 
   proc = _lowered(fn)
   loop = _carried_loop(proc)
@@ -301,7 +301,7 @@ def test_loop_body_fuses_within_one_trip_and_keeps_shared_work_apart() -> None:
   @sc.function(sc.arg("c0", 3), sc.arg("w", 3), sc.arg("v", (4, 3)), name="loop_body")
   def fn(c0, w, v):
     c, (ys,) = sc.scan(step, c0, (sc.broadcast(w), v), length=4)
-    return c, ys
+    return c.block(), ys
 
   seen: dict[str, ProgramNode] = {}
   lower_function(fn, observe=seen.__setitem__)
