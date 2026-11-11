@@ -841,13 +841,16 @@ not apply.
 holes. It owns one `ConcreteFunction` per binding, which is everything that reaches C; a fully
 declared Function has one instance, traced at the decorator and named after the function. The
 compiler consumes only instances. Derived functions (the derivative wrappers, `vmap`, solver
-descriptors) are made with `lift`, whose transform runs per source instance. The numerical leaf
-type is `np.ndarray | scipy.sparse.sparray`, so a leaf's sparseness need not be declared
-statically, and a numerical call on a sparse output returns the union.
+descriptors) are made with `lift`, whose transform runs per source instance. A leaf whose pattern
+is not known statically has the numerical type `np.ndarray | scipy.sparse.sparray`, so its
+sparseness need not be declared, and a numerical call on a sparse output returns the union.
 
 A concrete dense shape declaration keeps its NumPy type. Shape holes and a general `TensorType`
 use the numerical union because their output pattern is not known statically. Callers that know a
 `TensorType` has no pattern can narrow with `cast(Tree[Expr, np.ndarray], ...)`.
+*Replaced in the compiler run, 2026-11-10: "The numerical leaf type is `np.ndarray |
+scipy.sparse.sparray`" for every leaf. A concrete dense declaration keeps `np.ndarray` so dense
+users keep precise types; shape holes and a general `TensorType` take the union ([#288], [#334]).*
 
 Shape-only input holes remain dense at runtime despite the shared annotation accepting SciPy
 arrays statically. Pattern holes are separate ([#44]). Derivative results and seeds use the same
@@ -1572,3 +1575,5 @@ writing the guide).
 [#225]: https://github.com/PREDICT-EPFL/scaly/issues/225
 [#276]: https://github.com/PREDICT-EPFL/scaly/issues/276
 [#301]: https://github.com/PREDICT-EPFL/scaly/issues/301
+[#288]: https://github.com/PREDICT-EPFL/scaly/issues/288
+[#334]: https://github.com/PREDICT-EPFL/scaly/issues/334

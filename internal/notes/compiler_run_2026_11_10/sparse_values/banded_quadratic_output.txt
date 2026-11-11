@@ -13,9 +13,9 @@ MATMUL     shape=()  support=1 of 1: [0]
 
 ===== 3. f: traced expression =====
 expr.module {
-  expr.func @f(%Q: tensor<5x5xfloat64 diff>, %x: tensor<5xfloat64 diff>) -> (%f: tensor<float64 diff>) {
+  expr.func @f(%Q: tensor<5x5xfloat64 diff nnz=13 pattern=e18432b20450>, %x: tensor<5xfloat64 diff>) -> (%f: tensor<float64 diff>) {
     %0 = expr.input {lowering="auto", name="x"} : tensor<5xfloat64 diff>
-    %1 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff>
+    %1 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff nnz=13 pattern=e18432b20450>
     %2 = expr.matmul(%1, %0) : tensor<5xfloat64 diff>
     %3 = expr.matmul(%0, %2) : tensor<float64 diff>
     expr.return %3
@@ -24,7 +24,7 @@ expr.module {
 
 ===== 3b. f: simplified expression =====
 %0 = expr.input {lowering="auto", name="x"} : tensor<5xfloat64 diff>
-%1 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff>
+%1 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff nnz=13 pattern=e18432b20450>
 %2 = expr.matmul(%1, %0) : tensor<5xfloat64 diff>
 %3 = expr.matmul(%0, %2) : tensor<float64 diff>
 expr.return %3
@@ -250,9 +250,9 @@ ADD        shape=(5,)  support=5 of 5: [0, 1, 2, 3, 4]
 
 ===== 3. grad_f: traced expression =====
 expr.module {
-  expr.func @grad_f(%Q: tensor<5x5xfloat64 diff>, %x: tensor<5xfloat64 diff>) -> (%grad_f_x: tensor<5xfloat64 diff>) {
+  expr.func @grad_f(%Q: tensor<5x5xfloat64 diff nnz=13 pattern=e18432b20450>, %x: tensor<5xfloat64 diff>) -> (%grad_f_x: tensor<5xfloat64 diff>) {
     %0 = expr.const {lowering="auto", value=1.} : tensor<float64>
-    %1 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff>
+    %1 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff nnz=13 pattern=e18432b20450>
     %2 = expr.input {lowering="auto", name="x"} : tensor<5xfloat64 diff>
     %3 = expr.matmul(%1, %2) : tensor<5xfloat64 diff>
     %4 = expr.mul(%0, %3) : tensor<5xfloat64 diff>
@@ -269,7 +269,7 @@ expr.module {
 }
 
 ===== 3b. grad_f: simplified expression =====
-%0 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff>
+%0 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff nnz=13 pattern=e18432b20450>
 %1 = expr.input {lowering="auto", name="x"} : tensor<5xfloat64 diff>
 %2 = expr.matmul(%0, %1) : tensor<5xfloat64 diff>
 %3 = expr.values(%0) : tensor<13xfloat64 diff>
@@ -577,8 +577,8 @@ TRANSPOSE  shape=(5, 5)  support=13 of 25: [0, 1, 5, 6, 7, 11, 12, 13, 17, 18, 1
 
 ===== 3. hess_f: traced expression =====
 expr.module {
-  expr.func @hess_f(%Q: tensor<5x5xfloat64 diff>, %x: tensor<5xfloat64 diff>) -> (%hess_f_x_x: tensor<5x5xfloat64 diff>) {
-    %0 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff>
+  expr.func @hess_f(%Q: tensor<5x5xfloat64 diff nnz=13 pattern=e18432b20450>, %x: tensor<5xfloat64 diff>) -> (%hess_f_x_x: tensor<5x5xfloat64 diff>) {
+    %0 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff nnz=13 pattern=e18432b20450>
     %1 = expr.values(%0) : tensor<13xfloat64 diff>
     %2 = expr.scatter(%1) {indices=[ 0,  1,  5, ..., 19, 23, 24]} : tensor<25xfloat64 diff>
     %3 = expr.reshape(%2) {shape=[5, 5]} : tensor<5x5xfloat64 diff>
@@ -599,7 +599,7 @@ expr.module {
 }
 
 ===== 3b. hess_f: simplified expression =====
-%0 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff>
+%0 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff nnz=13 pattern=e18432b20450>
 %1 = expr.values(%0) : tensor<13xfloat64 diff>
 %2 = expr.scatter(%1) {indices=[ 0,  1,  5, ..., 19, 23, 24]} : tensor<25xfloat64 diff>
 %3 = expr.reshape(%2) {shape=[5, 5]} : tensor<5x5xfloat64 diff>
@@ -981,8 +981,8 @@ GATHER     shape=(13,)  support=13 of 13: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
 
 ===== 3. sparse_hess_f: traced expression =====
 expr.module {
-  expr.func @sparse_hess_f(%Q: tensor<5x5xfloat64 diff>, %x: tensor<5xfloat64 diff>) -> (%sphess_f_x_x: tensor<13xfloat64 diff>) {
-    %0 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff>
+  expr.func @sparse_hess_f(%Q: tensor<5x5xfloat64 diff nnz=13 pattern=e18432b20450>, %x: tensor<5xfloat64 diff>) -> (%sphess_f_x_x: tensor<13xfloat64 diff>) {
+    %0 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff nnz=13 pattern=e18432b20450>
     %1 = expr.values(%0) : tensor<13xfloat64 diff>
     %2 = expr.scatter(%1) {indices=[ 0,  1,  5, ..., 19, 23, 24]} : tensor<25xfloat64 diff>
     %3 = expr.reshape(%2) {shape=[5, 5]} : tensor<5x5xfloat64 diff>
@@ -1005,7 +1005,7 @@ expr.module {
 }
 
 ===== 3b. sparse_hess_f: simplified expression =====
-%0 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff>
+%0 = expr.input {lowering="auto", name="Q"} : tensor<5x5xfloat64 diff nnz=13 pattern=e18432b20450>
 %1 = expr.values(%0) : tensor<13xfloat64 diff>
 %2 = expr.scatter(%1) {indices=[ 0,  1,  5, ..., 19, 23, 24]} : tensor<25xfloat64 diff>
 %3 = expr.reshape(%2) {shape=[5, 5]} : tensor<5x5xfloat64 diff>

@@ -1,52 +1,53 @@
 # Section 1: Sparse values into generated C
 
-Packet of section 1 of the [compiler run](../plan.md), parent #37. Built by stack #278: #274
-(#39), #277 (#40 and #276), #286 (#41), #287 (#42), #289 (#43). CSC and CSR are compressed sparse
-column and row storage, COO a coordinate list, nnz the number of stored entries, ABI the binary
-interface of the generated C, IR the intermediate representation, AD automatic differentiation.
+Packet of section 1 of the [compiler run](../plan.md), parent #37. Built by stack #278 (#274 to
+#289, issues #39 to #43), the follow-ups #290, #103, #288, #300 to #303, #334, #356, #362, the
+later child #44, and the simplification pass #392. CSC and CSR are compressed sparse column and
+row storage, COO a coordinate list, nnz the number of stored entries, ABI the binary interface of
+the generated C, IR the intermediate representation, AD automatic differentiation.
 
 ## Where this section sits
 
-- A user can pass a sparse matrix (SciPy, or values in a declared CSC, CSR or coordinate layout) through a `Function`, get SciPy arrays back, and export C, C++ or CasADi code whose buffers hold only stored entries and whose headers publish the layout tables.
-- Every expression node carries its stored pattern in its type and knows which entries may be nonzero; simplification, derivative sparsity and scalar lowering use this.
-- Section 2 (Sparse kernels, #292) replaces the temporary dense paths below with planned sparse kernels, the sampled adjoint and sparse-sparse products.
-- Section 3 (Sparse derivatives, #293) makes call support argument-aware and turns derivative outputs into sparse leaves with a declared layout.
-- None of this is in the guide or on the API page until #46 and #47 land.
+- A user passes a sparse matrix (SciPy, or values in a declared CSC, CSR or coordinate layout, directly or through `sc.window`) through a `Function`, binds a leaf's pattern at call time with a pattern hole, gets SciPy arrays back, and exports C, C++ or CasADi code whose buffers hold only stored entries; dense matrices reach CasADi in column-major order.
+- Every expression node carries its stored pattern in its type, printed in listings, and knows which entries may be nonzero; simplification, derivative sparsity and scalar lowering use this.
+- Section 2 (Sparse kernels, #292) replaces the temporary dense paths below with planned sparse kernels, the sampled adjoint and sparse-sparse products; #307 then publishes the feature.
+- Section 3 (Sparse derivatives, #293) turns derivative outputs into sparse leaves with a declared layout (#48); argument-aware call support (#221) is already merged there.
+- None of this is in the guide or on the API page until #307, after #46 and #47.
 
 ## Needs the maintainer's decision
 
 1. Roadmap departure, applied: decision 4 now says buffers and the ABI never change when an analysis sharpens, but kernel code may (zero skipping, cotangent compaction); `[0, 1] / [0, 0]` gives `[0, inf]` expanded and `[nan, inf]` as a loop. Recommend keeping.
 2. Roadmap departure, applied: downstream of a custom derivative, derivative sparsity is not bounded by a node's own support, because the custom derivative may be nonzero where the value is zero. Recommend keeping.
 3. Roadmap departure, applied: stored values are in canonical row-major order inside the IR, with permutation copies at boundaries. Recommend keeping until #46's plans choose the order.
-4. Public ABI: each sparse leaf publishes only its layout's tables (`<fn>_<leaf>_csc_col_ptr`, `_csc_row_ind`, …); C omits empty tables; an empty sparse leaf accepts a null pointer. Recommend keeping.
-5. Public interface: CasADi export accepts only unbatched CSC sparse leaves. Recommend keeping; conversions can be added later.
-6. Public interface, unpublished: `sc.arg(name, TensorType(shape, pattern=P), layout=...)`, numerical values in the declared layout, batched results as N-dimensional COO, derived functions inheriting layouts. Recommend keeping.
-7. Public convention: `sc.window` buffers of sparse mapped inputs use canonical order, direct arguments the declared order. Recommend the declared order everywhere (#300).
-8. Proposal, not applied: `design_text.diff` names the stored pattern and the support analysis in `docs/how_it_works/architecture.md`. Recommend applying it with #46 and #47.
+4. Roadmap departure, applied: the numerical type is `np.ndarray | sparray` only for leaves whose pattern is not known statically; concrete dense declarations keep `np.ndarray` (#288, #334, #356). Recommend keeping.
+5. Public ABI: each sparse leaf publishes only its layout's tables (`<fn>_<leaf>_csc_col_ptr`, `_csc_row_ind`, …); C omits empty tables; empty leaves, sparse or dense, accept a null pointer (#290). Recommend keeping.
+6. Public ABI and API: dense leaves take `layout=None | "row-major" | "column-major"`; C++ headers gain an order flag and `ColumnMajorBuffer`; CasADi exports use column-major (#103). Recommend keeping.
+7. Public interface: CasADi export accepts only unbatched CSC sparse leaves. Recommend keeping; conversions can be added later.
+8. Public interface, unpublished: `sc.arg(name, TensorType(shape, pattern=P), layout=...)`, pattern holes `sc.arg(name, shape, pattern=...)` with instances keyed by bound type and layout (#44), values in the declared layout everywhere including `sc.window` (#300), batched results as N-dimensional COO. Recommend keeping.
+9. Proposal, not applied: `design_text.diff` names the stored pattern and the support analysis in `docs/how_it_works/architecture.md`. Recommend applying it with #307.
 
 ## Expected gaps
 
-- Derivatives of a product with a sparse operand go through a dense copy, n² buffers in the demo: #46.
-- Mixed products use build-time contribution tables rather than iteration plans: #46.
+- Derivatives of a product with a sparse operand go through a dense copy, n² buffers in the demo; mixed products use build-time tables: #46.
 - Sparse-sparse products are refused: #47.
 - Derivative outputs keep arbitrary value order and the legacy permutation tables: #48.
-- No pattern holes: #44.
-- Call support comes from the callee alone: #221.
 - No support rules for select, axis reductions or loops, whose ops do not exist yet: #30, #66, #31.
-- Static types of sparse numerical arguments and results: #288.
-- Zero-size dense leaves fail through CasADi: #290. Dense matrices in the CasADi layer: #103.
+- Static types of sparse gradient, forward and adjoint results: #356 (pull request #378 in the merge queue).
+- Per-stage sparse Jacobians fall back to global coloring through declared-layout windows: #332.
+- Opaque solver entries ignore dense leaf layouts: #324.
+- `A @ I` does not fold: #304. Canonical patterns cannot be copied or pickled: #305.
+- Not published: #307.
 
-## Unowned, filed by this section
+## Unowned
 
-- #300 window buffers use canonical order. #301 constant digests have no byte comparison.
-- #302 listings and type errors hide the stored pattern. #303 sparse arithmetic skips simplification.
-- #304 `A @ I` does not fold. #305 canonical patterns cannot be copied or pickled.
+None open. Filed by this section and merged: #300, #301, #302, #303, #334, #362.
 
 # Reference
 
-Line numbers are on the #43 head (`a3f39a32`; its last commit changed tests only, so `src/` is as
-at `248b2159`), paths under `src/scaly/`. Files: `design_text.diff`,
-`banded_quadratic.py` and `banded_quadratic_output.txt`.
+Line numbers in the decisions and the reading list are on the #43 head (`a3f39a32`; `src/` as at
+`248b2159`); items 19 to 27 name functions instead, since the follow-ups landed on a moving main.
+Paths are under `src/scaly/`. Files: `design_text.diff`, `banded_quadratic.py` and
+`banded_quadratic_output.txt` (rerun on main at `645c9f25`, after every scheduled child merged).
 
 ## Decisions
 
@@ -101,8 +102,7 @@ undo first. "Rejected" is the alternative the layer considered and why it lost.
    `function/sugar.py:139-207`, `247-260`). Raw window vectors for sparse mapped inputs hold values
    in row-major canonical order, while a direct numerical argument holds them in the leaf's
    declared order. Rejected: per-callee declared order inside windows (a second convention for
-   internal mapped windows). I think this inconsistency should be settled before 0.2.0 publishes
-   windows over sparse leaves.
+   internal mapped windows). Superseded by item 21: #300 made windows use the declared layout.
 7. **CasADi accepts only unbatched CSC leaves** (#43; `codegen/casadi.py:71-79`). CasADi's
    external ABI reads CSC values; CSR, coordinate-order and batched sparse leaves are refused with
    an error naming the leaf and layout. Rejected: workspace conversions (an ABI commitment). I
@@ -120,7 +120,7 @@ undo first. "Rejected" is the alternative the layer considered and why it lost.
    The roadmap said the internal order "belongs to lowering"; this fixes it in the IR for now.
    Rejected: per-buffer layout propagation, left to #46's iteration plans. The `CanonicalPattern`
    docstring (`ir/types.py:247`) still says physical order belongs to lowering; the section's
-   simplification pass corrects it.
+   simplification pass corrected it (#392).
 10. **Separate `CanonicalPattern` type, weakly interned under one lock, SHA-256 digest of the
     coordinate tuples** (#39; `ir/types.py:238-267`). `TensorType.pattern` accepts only the
     canonical form; callers canonicalize explicitly and keep the permutation. Weak interning means
@@ -134,17 +134,17 @@ undo first. "Rejected" is the alternative the layer considered and why it lost.
     emits a one-element table and a fill loop. Rejected: dense folding (full-size work).
 12. **Constants are keyed by a 32-byte BLAKE2b digest of their compacted bytes, with no byte
     comparison on a digest match** (#41; `ir/expr.py:685-695`). Two distinct constants with equal
-    digests would intern as one node. Rejected: full-byte keys (serialize logical arrays). No
-    recorded reason for omitting the comparison.
+    digests would intern as one node. Rejected: full-byte keys (serialize logical arrays). #301
+    added a byte comparison on a digest match (item 25).
 
 ### Internal
 
 13. **Simplification skips all sparse arithmetic** (#39; `passes/expr.py:163-164`, `276`).
     Pattern-losing rewrites were a Sol blocker; the final fix bypasses every sparse arithmetic
     rewrite, so sparse `x - x`, `x * 0`, `x * 1` and `-(-x)` stay as written. Rejected:
-    per-rule pattern checks (failed on lowering hints).
+    per-rule pattern checks (failed on lowering hints). Superseded by item 24 (#303).
 14. **`CALL` support is the callee's own support, tiled over maps** (#40; `ir/support.py`).
-    Argument specialization is #221. The roadmap text merged the two; it now separates them.
+    Argument specialization is #221, since merged in section 3.
 15. **Support representation** (#40, #41; `ir/support.py:22-25`, `64-73`). `frozenset` of flat
     coordinates below 1,024 entries, sorted read-only int64 arrays above, large full supports as
     `None`; the cache encodes uncomputed versus unknown. Support reaches lowering as a
@@ -162,17 +162,53 @@ undo first. "Rejected" is the alternative the layer considered and why it lost.
     a dense matrix** (`ad/forward.py:164-168`, `ad/reverse.py:98-101`), so it allocates and works
     over the logical size. The demo below shows the effect.
 
+### Follow-ups
+
+19. **Dense leaf layouts** (#103, `function/tree.py::arg`, `ir/layout.py`, `codegen/cpp.py`,
+    `codegen/casadi.py`). `layout=None | "row-major" | "column-major"` on dense leaves, selected
+    through shared lowering rather than a CasADi-only transpose; the C++ header publishes an order
+    flag and a standalone `ColumnMajorBuffer`. Rejected: general strides, and inheriting from the
+    row-major buffer type (unsafe). Public ABI once released.
+20. **Pattern holes** (#44, `function/tree.py::arg`, `function/model.py`). `sc.arg(name, shape,
+    pattern=...)`, CSC by default; binding from a symbolic sparse expression or a SciPy argument
+    (canonicalized copy, O(nnz) per call) makes one instance per bound type and layout. Public API.
+21. **Windows use the declared layout** (#300, `function/sugar.py`). Raw `sc.window` values are in
+    each leaf's declared order, like direct arguments. In the merge queue this met #44: values of a
+    leaf bound through a pattern hole arrived in canonical order, so they are now converted into
+    the bound leaf's declared layout. Public convention.
+22. **Numerical types** (#288, #334, #356; `function/tree.py`, `function/api.py`). Concrete dense
+    declarations keep `np.ndarray`; shape holes and a general `TensorType` take the union; the
+    derivative wrappers follow inherited layouts (#378, queued). The roadmap departure is item 4 of
+    the cover page.
+23. **Listings show stored patterns** (#302, `ir/text.py`, `ir/expr.py::format_expr`).
+    `tensor<5x5xfloat64 diff nnz=13 pattern=e18432b20450>`, the same compact form in `PACK`'s
+    attribute and in type errors that differ only by pattern. Internal text format.
+24. **Sparse arithmetic simplifies and keeps its pattern** (#303, `passes/expr.py`,
+    `passes/arith.py`). `x - x`, `x * 0`, `x * 1`, `-(-x)` and zero products fold, rebuilding a
+    stored zero with `PACK`. Internal.
+25. **Constant keys compare bytes on a digest match** (#301, `ir/expr.py::_array_key`). The
+    comparison uses the compacted form, so no key serializes a logical array. Internal.
+26. **Empty dense leaves through CasADi** (#290, `codegen/c.py::entry_prologue`). A zero-size dense
+    leaf accepts a null pointer, as empty sparse leaves already did; non-empty leaves still reject
+    one. ABI behaviour.
+27. **The scale gate measures its own peak memory** (#362, `tests/integration/test_sparse_scale.py`).
+    On Linux the child reads `VmHWM`; `ru_maxrss` had carried the pytest worker's earlier peak
+    across `exec` and failed the gate in 0.3 s. Limits unchanged; the workload peaks at about
+    796 MiB against 2 GiB. Test only.
+
 ## Design text
 
 The pull request that lands this packet also edits `internal/notes/core_compiler_roadmap.md`:
 decision 4 and the #39 to #43 paragraphs now record decisions 2 to 9, 11, 12, 14 and 18 above, and
 the three departures (items 2, 3 and 9) each keep a "Replaced in the compiler run" line with the
-old wording and the reason. The rest are internal.
+old wording and the reason. The rest are internal. Later, #288 and #334 changed the *Signatures and
+templates* model (the cover's item 4; this pull request restores its "Replaced" line, which #334's
+edit had dropped) and #44 recorded the pattern-hole spelling.
 
 `design_text.diff` is a proposal, not applied: two edits to `docs/how_it_works/architecture.md`
 (the static-type paragraph names the stored pattern; the pass table gains the support analysis).
-That page is published, so under the 0.2.0 limits it should land with #46 and #47. It names no
-API, only the idea of a stored pattern.
+That page is published, so it should land with #307, which publishes the feature. It names no API,
+only the idea of a stored pattern.
 
 ## Demo: f(x) = x'Qx with a banded Q
 
@@ -262,9 +298,19 @@ This is decision 18's temporary dense projection, which #46 replaces with sparse
 the sampled adjoint. #41's scale gate passes because it builds its matrix by scattering into a
 dense-typed graph, never as a sparse leaf, so it does not cover this path.
 
-Two smaller observations from the listings. The expression text prints Q as
-`tensor<5x5xfloat64 diff>`, with no sign of its pattern (deferred in #39). And the dense Hessian
-keeps `matmul` by an identity constant and four transposes after simplification.
+On main the listings now print Q as `tensor<5x5xfloat64 diff nnz=13 pattern=e18432b20450>` (#302).
+The dense Hessian still keeps `matmul` by an identity constant and four transposes after
+simplification (#304).
+
+### Milestone checks this section completes
+
+The Milestone 1 row asks for passing sparse matrices through Functions in a chosen layout and into
+generated C, and for the full-size-work gate. On main at `645c9f25`,
+`uv run pytest -n 2 tests/integration/test_sparse_scale.py tests/function/test_sparse_boundary.py
+tests/codegen/test_sparse_boundary.py tests/codegen/test_casadi.py` passed 233 tests in 46 s: the
+gate (10⁵×10⁵, 10⁶ entries), layouts through calls, maps, windows and pattern holes, and compiled C,
+C++ and CasADi interfaces checked against SciPy, NumPy and CasADi. The row's KKT (Karush–Kuhn–Tucker) system assembly and
+sparse algebra checks belong to section 2.
 
 ## Reading list
 
@@ -327,30 +373,33 @@ Lines added and removed, excluding blank and comment-only lines; docstrings coun
 | Sum of layers | 1,814 | 435 | 2,172 | net +1,379 in `src/` |
 | Main to #43 head | 1,728 | 349 | 2,127 | net +1,379; later layers rewrote earlier lines |
 
-After the section's simplification pass: not yet run (Phase 3 of the plan); this table gains a
-second column then.
+The whole section, counted the same way per merge commit:
 
-What could go, each checked for callers:
+| | `src/` added | `src/` removed | Net |
+| --- | ---: | ---: | ---: |
+| Section's 15 merged pull requests, before the pass | 2,242 | 603 | +1,639 |
+| Simplification pass (#392) | 20 | 31 | −11 |
+| After the pass | | | +1,628 |
 
-- **Now:** `CanonicalPattern.to_mask` (`ir/types.py:273-275`), no caller. The `b_slot is not None`
-  test in `passes/lowering/contraction.py:161-165`, always true once sparse-sparse is refused at
-  140-141.
-- **Now, as a small refactor:** one support carrier instead of `frozenset` plus int64 arrays
-  (`ir/support.py:64-73`, `141-142`). Pattern-preserving sparse simplification instead of the
-  blanket bypass (`passes/expr.py:163-164`, `276`; `passes/arith.py:127-137`): removing the bypass
-  alone makes `x - x` and `x * 0` lose their pattern, but `PACK` now exists to rebuild a zero.
-- **After #46:** the dense projections in `ad/forward.py:164-168` and `ad/reverse.py:98-101`, the
-  dense round-trip at `ad/reverse.py:55-56` once every rule returns the exact pattern, and the
-  mixed-product tables in `passes/lowering/contraction.py:142-172`.
-- **After #47:** the sparse-sparse refusal at `passes/lowering/contraction.py:140-141`.
-- **After #48:** the legacy derivative tables and value permutations (`codegen/aot.py:219-244`,
-  `269-272`; `codegen/cpp.py:57-74`; `codegen/casadi.py:101-151`) and the derivative half of
-  `SparsityPattern` (it stays for coordinate-order layouts).
-- Already gone: #39's `ConcreteFunction` guard (removed by #42) and #42's header refusal (removed
-  by #43).
+#378 (#356) was not merged when #392 was opened and adds only typing overloads.
+
+The pass (#392) removed `CanonicalPattern.to_mask`, a redundant `_attrs_key` branch and the
+one-use `_entries`, corrected the `CanonicalPattern` docstring, and merged duplicate bodies into
+`_full_like` (`ir/expr.py`) and `_flat_leaves` (`function/tree.py`). It left the larger candidates
+to section 2's pull requests, which rewrite them: the mixed-product tables, the padded zero
+slot and the input copy in lowering (#315, merged since), the dense projections in forward and reverse
+differentiation (#367), and the sparse-sparse refusal (#369). Still worth folding after those land:
+the stored-slot lookup written three times (`ad/rules.py`, `passes/lowering/ctx.py`), and
+`_ones_like` in `ad/reverse.py`, a third copy of `_full_like`. The two support carriers stay: one
+array carrier changes what `Expr.support` returns, and `frozenset` alone loses the bound #41's gate
+needs.
 
 ## What I am least sure of
 
+- **Parallel follow-ups on one boundary.** #300 and #44 each passed review and CI on their own and
+  failed together in the merge queue (item 21). The queue caught it; review of either alone could
+  not. The same boundary (`function/tree.py`, `ir/layout.py`, `function/sugar.py`) took six
+  pull requests in one night, and #103 was rebased three times.
 - **Whether the stack meets #41's goal for derivatives.** It meets the gate as written, but the
   gate never differentiates through a sparse leaf. The demo shows the gradient and the sparse
   Hessian of x'Qx allocate n² entries. #46 owns the fix, and a comment there asks its gate to
@@ -358,13 +407,10 @@ What could go, each checked for callers:
 - **Decision 4's wording versus items 2 and 3.** The roadmap now narrows decision 4 rather than the
   code changing. If you meant generated code to be fully independent of the support analysis, the
   zero skipping and cotangent compaction would have to move behind an explicit option.
-- **The `sc.window` order (item 6, #300).** One convention for raw values would be simpler, and this
-  one will become public with mapped sparse leaves.
-- **Constant keys without a collision check (item 12, #301).** A collision is very unlikely at 32
-  bytes, but it would silently merge two constants. A byte comparison on a digest match costs
-  little for small constants.
-- **The blanket simplification bypass (item 13, #303).** It is correct but leaves `x - x` unsimplified
-  for sparse `x`.
+- **The typing tradeoff (cover item 4).** Concrete dense declarations keep `np.ndarray`, which is
+  what dense users want, but a `TensorType` leaf types as the union even when it has no pattern.
+- **`CanonicalPattern` without `to_mask`.** The pass removed it as unused; #307 publishes the class,
+  and `SparsityPattern` still has one.
 
 Where the reviewers disagreed:
 
