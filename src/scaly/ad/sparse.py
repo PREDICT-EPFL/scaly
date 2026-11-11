@@ -303,7 +303,7 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> _Compact:
   nnz = global_sparsity.nnz
   global_coordinates = rows_arr * wrt.size + cols_arr
 
-  pieces: list[tuple[Expr, np.ndarray, np.ndarray]] = []  # (mapped JVP values, the entries read, the nnz slots they fill)
+  pieces: list[tuple[Expr, np.ndarray]] = []  # (gathered piece values, nnz slots they cover)
   coloring_width = 0
   for f_idx, column_map in direct_formals.items():
     formal = callee.inputs[f_idx]
@@ -351,25 +351,21 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> _Compact:
     color_at = local_colors_arr[local_cols]
     pos_at = np.asarray([active_to_pos[int(c)] for c in color_at], dtype=np.int64)
     flat_indices = iterations * (active_count * slice_size) + pos_at * slice_size + local_rows
-    pieces.append((mapped_flat, flat_indices, contrib_idx))
+    pieces.append((gather(mapped_flat, flat_indices), contrib_idx))
 
   if not pieces:
     return _Compact(global_sparsity, Expr.const(np.zeros((nnz,), dtype=vmap_expr.type.dtype.numpy()), dtype=vmap_expr.type.dtype), coloring_width)
-  slots = np.concatenate([idx for _, _, idx in pieces])
-  if slots.size == nnz and np.bincount(slots, minlength=nnz).max() == 1:
-    # The pieces partition the nnz (every slot covered exactly once), so one gather over the mapped
-    # JVP values writes each entry in pattern order, with no full-nnz temporaries.
-    sources = [mapped for mapped, _, _ in pieces]
-    offsets = np.cumsum([0, *(mapped.size for mapped in sources[:-1])])
-    indices = np.empty(nnz, dtype=np.int64)
-    for (_, read, filled), offset in zip(pieces, offsets, strict=True):
-      indices[filled] = read + offset
-    source = sources[0] if len(sources) == 1 else concat([mapped.reshape((mapped.size,)) for mapped in sources], axis=0)
-    return _Compact(global_sparsity, gather(source, indices), coloring_width)
+  perm = np.concatenate([idx for _, idx in pieces])
+  if perm.size == nnz and np.bincount(perm, minlength=nnz).max() == 1:
+    # Piece supports exactly partition the nnz (verified: every slot covered exactly once), so
+    # instead of scattering each piece into a full-nnz buffer and summing, emit the gathered
+    # values back to back and permute the pattern to match — no full-nnz temporaries at all.
+    values = pieces[0][0] if len(pieces) == 1 else concat([g for g, _ in pieces], axis=0)
+    permuted = SparsityPattern(global_sparsity.shape, tuple(int(r) for r in rows_arr[perm]), tuple(int(c) for c in cols_arr[perm]))
+    return _Compact(permuted, values, coloring_width)
   values = None
-  for mapped, read, filled in pieces:
-    gathered = gather(mapped, read)
-    piece_values = gathered if np.array_equal(filled, np.arange(nnz)) else scatter(gathered, filled, (nnz,))
+  for gathered, contrib_idx in pieces:
+    piece_values = gathered if np.array_equal(contrib_idx, np.arange(nnz)) else scatter(gathered, contrib_idx, (nnz,))
     values = piece_values if values is None else values + piece_values
   assert values is not None
   return _Compact(global_sparsity, values, coloring_width)

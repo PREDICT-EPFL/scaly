@@ -73,7 +73,7 @@ from ..function.model import Function, as_concrete
 
 # Bump when the ABI, codegen output, or JIT cache layout changes incompatibly.
 # External-library contents and build flags enter both cache keys.
-_JIT_CACHE_VERSION = "10"
+_JIT_CACHE_VERSION = "11"
 
 _C_VOID_PP = ctypes.POINTER(ctypes.c_void_p)
 _C_INT_P = ctypes.POINTER(ctypes.c_int)

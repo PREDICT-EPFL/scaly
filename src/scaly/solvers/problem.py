@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Any, cast, overload
 
 import numpy as np
 
-from ..ad.sparse import Triangle, _Compact, _sparse_hessian, sparse_hessian
-from ..function.api import gradient, sparse_jacobian
+from ..ad.sparse import Triangle, _Compact, _sparse_hessian, _sparse_jacobian, sparse_hessian
+from ..function.api import gradient
 from ..function.concrete import ConcreteFunction
 from ..function.model import as_concrete
 from ..function.tree import Tree, append_parameter, arg, flat_tree, parameter_list
@@ -126,6 +126,13 @@ def _concat_vec(exprs: tuple[Expr, ...]) -> Expr | None:
   return vectors[0] if len(vectors) == 1 else concat(vectors)
 
 
+def _oracle(name: str, input_tree: Tree[Any, Any], inputs: tuple[Expr, ...], output: str, derivative: _Compact) -> ConcreteFunction:
+  """A sparse derivative oracle storing its values in the order they are computed, which plugins read as a coordinate list."""
+  leaf = derivative.leaf()
+  output_tree = arg(output, leaf.type, layout=derivative.sparsity)
+  return ConcreteFunction.build(name, input_tree, inputs, output_tree, (leaf,), output_coloring_widths=(derivative.coloring_width,))
+
+
 def _value_order(fn: ConcreteFunction) -> SparsityPattern:
   """The coordinates of ``fn``'s sparse output in the order its values are stored."""
   layout = fn.output_tree.layouts[0]
@@ -221,7 +228,8 @@ class _NlpForm:
   def jac(self) -> ConcreteFunction | None:
     if self.g is None:
       return None
-    return sparse_jacobian(self.base, "g", self.x_name, name=f"{self.problem.name}_jac", layout="csr").instantiate()
+    jac = _sparse_jacobian(self.g, self.x)
+    return _oracle(f"{self.problem.name}_jac", self.base.input_tree, (self.x, *self.problem._param_symbols), f"spjac_g_{self.x_name}", jac)
 
   @cached_property
   def jac_sparsity(self) -> SparsityPattern:
@@ -245,15 +253,12 @@ class _NlpForm:
     """The Lagrangian Hessian oracle that stores ``triangle`` of the matrix."""
     if triangle not in self._hessians:
       tree, multipliers = self._multipliers
-      hess = self.hess_full.triangle(triangle)
-      leaf = hess.leaf()
-      self._hessians[triangle] = ConcreteFunction.build(
+      self._hessians[triangle] = _oracle(
         f"{self.problem.name}_hess_{triangle}",
         append_parameter(self.base.input_tree, tree),
         (self.x, *self.problem._param_symbols, *multipliers),
-        arg(f"sphess_gamma_{self.x_name}_{self.x_name}", leaf.type, layout="csr"),
-        (leaf,),
-        output_coloring_widths=(hess.coloring_width,),
+        f"sphess_gamma_{self.x_name}_{self.x_name}",
+        self.hess_full.triangle(triangle),
       )
     return self._hessians[triangle]
 

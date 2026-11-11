@@ -130,9 +130,7 @@ def test_dense_stage_derivatives_match_whole_problem():
   params = (np.array([0.2, -0.1]), np.array(0.8), rng.normal(size=(4, 2)))
   lam, scale = rng.normal(size=desc.n_eq + desc.n_ineq), np.array(0.7)
   actual_jac = stage.jac(x, *params)
-  pattern = reference.jac_sparsity
-  expected_jac = np.zeros(pattern.shape)
-  expected_jac[pattern.rows, pattern.cols] = reference.jac(x, params)
+  expected_jac = reference.jac(x, params).toarray()
   dyn, initial, path, terminal = actual_jac
   np.testing.assert_allclose(initial, expected_jac[list(layout.eq[0]), :3], atol=1e-12)
   for k in range(3):
@@ -141,9 +139,7 @@ def test_dense_stage_derivatives_match_whole_problem():
   np.testing.assert_allclose(terminal, expected_jac[list(layout.ineq[-1]), -3:], atol=1e-12)
   np.testing.assert_allclose(desc.grad(x, *params), reference.grad(x, params), atol=1e-12)
   blocks, last = stage.hess(x, *params, scale, lam)
-  pattern = reference.hess_sparsity
-  expected_hess = np.zeros(pattern.shape)
-  expected_hess[pattern.rows, pattern.cols] = reference.hess(x, params, (scale, lam))
+  expected_hess = reference.hess(x, params, (scale, lam)).toarray()
   expected_hess += np.tril(expected_hess, -1).T
   expected_grad = scale * reference.grad(x, params) + expected_jac.T @ lam
   assembled = np.zeros_like(expected_hess)
