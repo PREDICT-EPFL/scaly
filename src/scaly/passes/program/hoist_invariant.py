@@ -92,7 +92,7 @@ def _hoist_proc(
     ]
     new_body.extend(bufs)
     new_body.append(_call(prologue, [*(c.args[k] for k in used), *bufs]))
-    new_body.append(ProgramNode(stmt.op, (rng, _call(hoisted, [*c.args[:n_in], *bufs, *c.args[n_in:]])), stmt.attrs, stmt.dtype))
+    new_body.append(ProgramNode(stmt.op, (rng, _call(hoisted, [*c.args[:n_in], *bufs, *c.args[n_in:]])), stmt.attrs, dtype=stmt.dtype))
   return proc if len(new_body) == len(body) else _rebuild_proc(proc, params, new_body)
 
 

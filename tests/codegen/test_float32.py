@@ -260,19 +260,61 @@ def test_float32_lanes_and_tails_match_numpy(tmp_path, dialect, lanes, layout):
 
 
 @pytest.mark.parametrize("dialect", ["gnu", "c"])
-def test_float32_lane_reduction_keeps_sequential_rounding(tmp_path, dialect):
+@pytest.mark.parametrize("form", ["store", "assign"])
+def test_float32_lane_reduction_keeps_sequential_rounding(tmp_path, dialect, form):
   x = p.buffer("x", dtypes.float32, (19,))
   y = p.buffer("y", dtypes.float32, (1,))
   i, z = p.var("i"), p.const_int(0)
   target = p.view(y, [z])
-  loop = p.for_(p.range_("i", 0, 19, kind=p.RangeKind.REDUCE), [p.store(target, p.add(p.load(target), p.load(p.view(x, [i]))))])
-  prog = p.program([p.proc("kernel", [x, y], [p.store(target, constant(0, dtypes.float32)), loop])])
+  acc = p.var("acc", dtypes.float32)
+  value = p.add(p.load(target) if form == "store" else acc, p.load(p.view(x, [i])))
+  update = p.store(target, value) if form == "store" else p.assign("acc", value)
+  loop = p.for_(p.range_("i", 0, 19, kind=p.RangeKind.REDUCE), [update])
+  body = (
+    [p.store(target, constant(0, dtypes.float32)), loop]
+    if form == "store"
+    else [p.assign("acc", constant(0, dtypes.float32), declare=True), loop, p.store(target, acc)]
+  )
+  prog = p.program([p.proc("kernel", [x, y], body)])
   widened = widen_ranges(prog, lanes=4)
   assert any(n.attrs.get("ordered_reduction") for n in walk_program(widened))
   values = np.resize(np.array([16777216, 1, -16777216], dtype=np.float32), 19)
   got = np.empty(1, dtype=np.float32)
   _run_raw(widened, tmp_path, [values], [got], dialect=dialect)
   assert got[0] == np.add.accumulate(values)[-1]
+
+
+@pytest.mark.parametrize("dtype", ["float32", "int64"])
+@pytest.mark.parametrize("mode", ["block", "scalar"])
+def test_sparse_plans_use_zeros_of_the_value_dtype(dtype, mode):
+  diagonal = sc.SparsityPattern((2, 2), (0, 1), (0, 1))
+  off_diagonal = sc.SparsityPattern((2, 2), (0, 1), (1, 0))
+
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("union"), sc.arg("scattered")), name=f"typed_sparse_{dtype}_{mode}")
+  def fn(x):
+    a = sc.pack(sc.cast(x, dtype), diagonal)
+    b = sc.pack(sc.const(np.array([3, 4], dtype=dtype)), off_diagonal)
+    scattered = sc.scatter(a, [0, 1, 1, 3], (2, 2))
+    return tuple(sc.cast(value.to_dense(), "float64").with_lowering(mode) for value in (a + b, scattered))
+
+  lower_function(fn)
+  union, scattered = fn(np.array([2.0, 5.0]))
+  np.testing.assert_array_equal(union, [[2, 3], [4, 5]])
+  np.testing.assert_array_equal(scattered, [[2, 0], [0, 5]])
+
+
+@pytest.mark.parametrize("mode", ["block", "scalar"])
+def test_sparse_float32_products_keep_ordered_typed_accumulators(mode):
+  pattern = sc.SparsityPattern((2, 3), (0, 0, 0, 1), (0, 1, 2, 1))
+
+  @sc.function(sc.arg("x", 4), outputs=sc.arg("out"), name=f"sparse_float32_product_{mode}")
+  def fn(x):
+    matrix = sc.pack(sc.cast(x, "float32"), pattern)
+    product = matrix @ sc.const(np.ones(3, dtype=np.float32))
+    return sc.cast(product.to_dense(), "float64").with_lowering(mode)
+
+  values = np.array([16777216, 1, -16777216, 2.5], dtype=np.float32)
+  np.testing.assert_array_equal(fn(values.astype(float)), [np.add.accumulate(values[:3])[-1], values[3]])
 
 
 def test_float32_stores_are_not_coalesced_or_spilled():
@@ -439,7 +481,7 @@ def test_float32_special_value_grid_matches_numpy(mode):
     a, b = sc.cast(x, "float32"), sc.cast(y, "float32")
     return sc.stack([sc.cast(_elementwise(op, a, b), "float64") for op in ops]).with_lowering(mode)
 
-  for op, got in zip(ops, fn(F32_X.astype(float), F32_Y.astype(float)), strict=True):
+  for op, got in zip(ops, np.asarray(fn(F32_X.astype(float), F32_Y.astype(float))), strict=True):
     with np.errstate(all="ignore"):
       _assert_float32_special(got, _reference(op, F32_X, F32_Y))
 
@@ -457,5 +499,5 @@ def test_float32_special_libm_results_stay_float32(mode):
 
   with np.errstate(all="ignore"):
     expected = [_reference(op, F32_X, F32_Y) for op in ops] + [F32_X**F32_Y, np.floor(F32_X) * np.float32(0.1) + np.sqrt(np.abs(F32_X))]
-  for got, ref in zip(fn(F32_X.astype(float), F32_Y.astype(float)), expected, strict=True):
+  for got, ref in zip(np.asarray(fn(F32_X.astype(float), F32_Y.astype(float))), expected, strict=True):
     _assert_float32_special(got, ref)

@@ -23,7 +23,7 @@ from ...ir.support import Support, _make_support, support_indices
 from ...ir.types import DeviceSpec, DType, dtypes, stored_indices
 from ...utils.names import NameScope
 from ..affine import affine_index_map
-from ..arith import constant, fold_program
+from ..arith import fold_program
 from ..expr import cse_many, simplify
 
 _EXACT_STORES = (dtypes.float64, dtypes.float32, dtypes.int64, dtypes.bool_)
@@ -187,8 +187,7 @@ def _lower_to_proc(
     observe_expr("normalized", fun)
   ctx = LowerCtx(fun, callees, solver_fns, names, symbols, residuals, observe_expr)
   nodes = fun.nodes
-  # Narrower stores round or truncate; scalar substitution must not erase those conversions. int64
-  # and bool hold every value their operations give, so substituting them changes nothing.
+  # Float32 constants and operations retain their rounding during scalar substitution.
   ctx.scalarize = all(n.type.dtype in _EXACT_STORES for n in (*fun.inputs, *nodes)) and (
     lowering == "scalar" or lowering == "auto" and auto_scalarize
   )

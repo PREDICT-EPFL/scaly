@@ -307,7 +307,7 @@ def _ordered_reduction(body: list[ProgramNode], rng: ProgramNode, aliases: dict[
     acc = p.var(stmt.attrs["target"], stmt.dtype)
     if value.args[0] is not acc or any(n is acc for n in walk_program(value.args[1])):
       return None
-    return ProgramNode(stmt.op, stmt.args, {**stmt.attrs, "ordered_reduction": True}, stmt.dtype)
+    return ProgramNode(stmt.op, stmt.args, {**stmt.attrs, "ordered_reduction": True}, dtype=stmt.dtype)
   if stmt.op != ProgramOp.STORE:
     return None
   target, value = stmt.args

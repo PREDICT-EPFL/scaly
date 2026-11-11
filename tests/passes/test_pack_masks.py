@@ -73,9 +73,9 @@ def test_mask_packing_keeps_carried_ranges():
   raw = prog.args[0]
   loop = raw.args[-1]
   rng = loop.args[0]
-  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "carried": True}, rng.dtype)
-  loop = ProgramNode(loop.op, (rng, *loop.args[1:]), {**loop.attrs, "exit_var": True}, loop.dtype)
-  prog = p.program([ProgramNode(raw.op, (*raw.args[:-1], loop), raw.attrs, raw.dtype)])
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "carried": True}, dtype=rng.dtype)
+  loop = ProgramNode(loop.op, (rng, *loop.args[1:]), {**loop.attrs, "exit_var": True}, dtype=loop.dtype)
+  prog = p.program([ProgramNode(raw.op, (*raw.args[:-1], loop), raw.attrs, dtype=raw.dtype)])
   assert pack_masks(prog) is prog
 
 

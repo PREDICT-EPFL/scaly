@@ -633,7 +633,7 @@ def _render_vector_helpers(proc: ProgramNode, *, dialect: CDialect, vector_libm:
         Pattern(
           ProgramOp.ASSIGN,
           lambda n: bool(n.attrs.get("ordered_reduction")),
-          lambda n: ProgramNode(ProgramOp.STORE, (accumulators[n.attrs["target"]], n.args[0]), {"ordered_reduction": True}, n.dtype),
+          lambda n: ProgramNode(ProgramOp.STORE, (accumulators[n.attrs["target"]], n.args[0]), {"ordered_reduction": True}, dtype=n.dtype),
         ),
       ]
       body = [rewrite(n, patterns, rebuild=rebuild_program, fixpoint=False) for n in body]

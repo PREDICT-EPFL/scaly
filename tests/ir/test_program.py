@@ -331,20 +331,20 @@ def test_break_if_requires_a_boolean_scalar(value):
   with pytest.raises(TypeError, match="bool scalar"):
     p.break_if(value)
   with pytest.raises(VerifyError, match="bool scalar"):
-    verify_program(ProgramNode(ProgramOp.BREAK_IF, (value,)))
+    verify_program(ProgramNode(ProgramOp.BREAK_IF, (value,), dtype=dtypes.float64))
 
 
 @pytest.mark.parametrize("args", [(), (p.var("flag", dtypes.bool_),) * 2])
 def test_break_if_requires_exactly_one_condition(args):
   with pytest.raises(VerifyError, match="one bool scalar"):
-    verify_program(ProgramNode(ProgramOp.BREAK_IF, args))
+    verify_program(ProgramNode(ProgramOp.BREAK_IF, args, dtype=dtypes.float64))
 
 
 @pytest.mark.parametrize("attr,value", [("carried", 1), ("carried", "yes"), ("exit_var", 1), ("exit_var", "yes")])
 def test_carried_and_exit_markers_are_boolean(attr, value):
   rng = p.range_("i", 0, 3, carried=True)
   node = rng if attr == "carried" else p.for_(rng, [])
-  malformed = ProgramNode(node.op, node.args, {**node.attrs, attr: value}, node.dtype)
+  malformed = ProgramNode(node.op, node.args, {**node.attrs, attr: value}, dtype=node.dtype)
   with pytest.raises(VerifyError, match=f"{attr}.*bool"):
     verify_program(malformed)
 
@@ -360,6 +360,6 @@ def test_exit_variable_is_a_trip_count(start, step):
 def test_carried_ranges_cannot_be_vectorized(lanes):
   rng = p.range_("i", 0, 3, kind=RangeKind.VECTOR, carried=True)
   if lanes:
-    rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "lanes": 2, "lane_cap": 2}, rng.dtype)
+    rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "lanes": 2, "lane_cap": 2}, dtype=rng.dtype)
   with pytest.raises(VerifyError, match="carried.*VECTOR"):
     verify_program(rng)

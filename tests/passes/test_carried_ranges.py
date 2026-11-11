@@ -18,17 +18,17 @@ from scaly.passes.program.widen_ranges import widen_ranges
 
 def _range(name, count):
   rng = p.range_(name, 0, count)
-  return ProgramNode(rng.op, rng.args, {**rng.attrs, "carried": True}, rng.dtype)
+  return ProgramNode(rng.op, rng.args, {**rng.attrs, "carried": True}, dtype=rng.dtype)
 
 
 def _exit_loop(rng, body):
   loop = p.for_(rng, body)
-  return ProgramNode(loop.op, loop.args, {**loop.attrs, "exit_var": True}, loop.dtype)
+  return ProgramNode(loop.op, loop.args, {**loop.attrs, "exit_var": True}, dtype=loop.dtype)
 
 
 def _proc(name, params, body, **attrs):
   raw = p.proc(name, params, body)
-  return ProgramNode(raw.op, raw.args, {**raw.attrs, **attrs}, raw.dtype)
+  return ProgramNode(raw.op, raw.args, {**raw.attrs, **attrs}, dtype=raw.dtype)
 
 
 @pytest.mark.parametrize("hint", ["auto", "scalar"])
@@ -38,7 +38,7 @@ def test_scalarization_refuses_carried_work_and_its_callers(hint, mode):
   at = lambda buf: p.view(buf, [p.const_int(0)])
   loop = p.for_(_range("i", 3), [p.store(at(y), p.mul(p.load(at(y)), p.load(at(x))))])
   callee = _proc("step", [x, y], [p.store(at(y), p.const_float(1)), loop], input_count=1, scalarize_mode=mode, lowering=hint)
-  call = ProgramNode(ProgramOp.CALL, (x, y), {"callee": "step", "n_in": 1, "n_out": 1})
+  call = ProgramNode(ProgramOp.CALL, (x, y), {"callee": "step", "n_in": 1, "n_out": 1}, dtype=dtypes.float64)
   root = _proc("root", [x, y], [call], input_count=1, scalarize_mode="procedure", lowering=hint)
   prog = p.program([callee, root])
   assert scalarize_program(prog) is prog
@@ -71,7 +71,7 @@ def test_range_fusion_refuses_carried_seeds_and_consumers(carried):
   a, b = (p.buffer(name, dtypes.float64, (1,)) for name in ("a", "b"))
   stage = _proc("stage", [a, b], [p.store(p.view(b, [p.const_int(0)]), p.load(p.view(a, [p.const_int(0)])))], input_count=1, scalarized=True)
   i = p.var("i")
-  call = ProgramNode(ProgramOp.CALL, (p.view(x, [i]), p.view(tmp, [i])), {"callee": "stage", "n_in": 1, "n_out": 1})
+  call = ProgramNode(ProgramOp.CALL, (p.view(x, [i]), p.view(tmp, [i])), {"callee": "stage", "n_in": 1, "n_out": 1}, dtype=dtypes.float64)
   producer = p.for_(_range("i", 5) if carried == "producer" else p.range_("i", 0, 5), [call])
   consumer = p.for_(_range("i", 5) if carried == "consumer" else p.range_("i", 0, 5), [p.store(p.view(y, [i]), p.load(p.view(tmp, [i])))])
   prog = p.program([stage, _proc("root", [x, y], [tmp, producer, consumer], input_count=1)])
@@ -101,7 +101,9 @@ def _hoist_program(*, nested=False, effect=False, scalar=False):
     body.insert(1, p.print_(["weight=", "\n"], [p.load(at(weights))]))
   stage = _proc("stage", [x, weights, out], body, input_count=2)
   xs, ys = (p.buffer(name, dtypes.float64, (4,)) for name in ("xs", "ys"))
-  call = ProgramNode(ProgramOp.CALL, (p.view(xs, [p.var("i")]), weights, p.view(ys, [p.var("i")])), {"callee": "stage", "n_in": 2, "n_out": 1})
+  call = ProgramNode(
+    ProgramOp.CALL, (p.view(xs, [p.var("i")]), weights, p.view(ys, [p.var("i")])), {"callee": "stage", "n_in": 2, "n_out": 1}, dtype=dtypes.float64
+  )
   loop = _exit_loop(_range("i", 4), [call])
   root = _proc("root", [xs, weights, ys], [loop], input_count=2)
   return p.program([stage, root]), loop

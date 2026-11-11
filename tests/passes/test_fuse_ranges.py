@@ -491,7 +491,7 @@ def _position_dependent_program(case, length=12):
   if case == "stage_indices":
     read_extra = p.mul(read_extra, p.sub(p.load(p.view(tmp, [i])), p.load(p.view(x, [p.div(i, p.const_int(6))]))))
   copied = p.for_(copied.args[0], [p.store(p.view(y, [i]), p.add(p.load(p.view(tmp, [i])), read_extra))])
-  root = ProgramNode(root.op, (x, y, tmp, *declarations, *upstream, copied), root.attrs, root.dtype)
+  root = ProgramNode(root.op, (x, y, tmp, *declarations, *upstream, copied), root.attrs, dtype=root.dtype)
   return p.program([callee, root])
 
 
