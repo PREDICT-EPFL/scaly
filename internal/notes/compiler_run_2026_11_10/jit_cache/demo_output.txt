@@ -1,0 +1,15 @@
+== #163: the mapped stage of the issue, rendered under five hash seeds ==
+PYTHONHASHSEED=0: sha256 of the C ded46add3b39a1eb
+PYTHONHASHSEED=1: sha256 of the C ded46add3b39a1eb
+PYTHONHASHSEED=4: sha256 of the C ded46add3b39a1eb
+PYTHONHASHSEED=5: sha256 of the C ded46add3b39a1eb
+PYTHONHASHSEED=7: sha256 of the C ded46add3b39a1eb
+one C for every seed: True (on main before #317, seeds 4 and 5 gave another)
+
+== #64: the cross-process cache test of Milestone 1 ==
+first process, PYTHONHASHSEED=1: lower_function calls 1, result 8.15097141822, library <cache>/173a72363ea5…/libwarm_start_outer.so
+second process, PYTHONHASHSEED=2: lower_function calls 0, result 8.15097141822, library <cache>/173a72363ea5…/libwarm_start_outer.so
+third process, PYTHONHASHSEED=3, SCALY_JIT_KEY=verify: lower_function calls 1, result 8.15097141822, library <cache>/173a72363ea5…/libwarm_start_outer.so
+index entries: 1
+same result from the same library in all three: True
+second process lowered nothing: True

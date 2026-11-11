@@ -472,8 +472,11 @@ before it can find its library (devrush: 1.4 s of a 1.8 s warm start). Add an in
 The index maps to the rendered-C hash, which still names the artifact directory. Writes are atomic,
 through `os.replace`, whose semantics also hold on Windows ([#84]), and paths in the index are stored
 relative to the cache root;
-a missing artifact behind a valid index entry is rebuilt; `invalidate_cache` uses the index instead
-of rendering. Test: a subprocess with a different `PYTHONHASHSEED` loads from the cache and never
+a missing artifact behind a valid index entry is rebuilt; `invalidate_cache` neither renders nor
+reads the index: it moves this process's next build of the Function to a fresh path and deletes
+nothing. *Replaced in the compiler run, 2026-11-10: "`invalidate_cache` uses the index instead of
+rendering", because deleting a shared cache entry broke other processes compiling or loading it
+([#193]), so invalidation no longer needs the entry's key at all.* Test: a subprocess with a different `PYTHONHASHSEED` loads from the cache and never
 calls `lower_function`.
 
 Devrush built this key (`codegen/structure.py`, its "JIT finds a library from the graph"), and two
@@ -1585,3 +1588,4 @@ writing the guide).
 [#288]: https://github.com/PREDICT-EPFL/scaly/issues/288
 [#334]: https://github.com/PREDICT-EPFL/scaly/issues/334
 [#359]: https://github.com/PREDICT-EPFL/scaly/issues/359
+[#193]: https://github.com/PREDICT-EPFL/scaly/issues/193
