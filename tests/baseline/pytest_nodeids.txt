@@ -2673,6 +2673,7 @@ tests/ad/test_sparsity.py::test_sparse_hessian_factory_returns_compact_values_wi
 tests/ad/test_sparsity.py::test_sparse_hessian_rejects_invalid_triangle[1]
 tests/ad/test_sparsity.py::test_sparse_hessian_rejects_invalid_triangle[None]
 tests/ad/test_sparsity.py::test_sparse_hessian_rejects_invalid_triangle[diagonal]
+tests/ad/test_sparsity.py::test_sparse_hessian_sparsity_to_mask_matches_main
 tests/ad/test_sparsity.py::test_sparse_hessian_triangle_matches_masked_full[lower]
 tests/ad/test_sparsity.py::test_sparse_hessian_triangle_matches_masked_full[upper]
 tests/ad/test_sparsity.py::test_sparse_inputs_keep_only_stored_derivative_relations

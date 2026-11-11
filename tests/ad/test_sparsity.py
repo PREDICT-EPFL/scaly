@@ -393,6 +393,18 @@ def test_sparse_hessian_factory_returns_compact_values_with_sparsity_metadata() 
   np.testing.assert_allclose(sparse.coo_array(shf(xv)).toarray(), np.array([[2.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]]))
 
 
+def test_sparse_hessian_sparsity_to_mask_matches_main() -> None:
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("cost"))
+  def cost(x: sc.Expr) -> sc.Expr:
+    return x[0] * x[0] + x[1] * x[2]
+
+  hess = sc.sparse_hessian(cost)
+  pattern = hess.sparsity()
+  assert pattern is not None
+  main_pattern = sc.SparsityPattern((3, 3), (0, 1, 2), (0, 2, 1))
+  np.testing.assert_array_equal(pattern.to_mask(), main_pattern.to_mask())
+
+
 @pytest.mark.parametrize("triangle", ("lower", "upper"))
 def test_sparse_hessian_triangle_matches_masked_full(triangle: Triangle) -> None:
   x = sc.sym("triangle_x", 4)

@@ -199,7 +199,6 @@ def total(w: sc.Expr) -> sc.Expr:
 hess = sc.sparse_hessian(total, "cost", "w")
 pattern = hess.sparsity()
 assert pattern is not None
-pattern = sc.SparsityPattern(pattern.shape, pattern.rows, pattern.cols)
 print(pattern.to_mask().astype(int))
 # [[1 0 0 0 1]
 #  [0 1 0 0 1]
