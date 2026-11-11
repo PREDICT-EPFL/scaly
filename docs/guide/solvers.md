@@ -427,8 +427,8 @@ For a symmetric `P`, the objective Hessian is `P`. More generally, Scaly extract
 ## Fixed sparse matrices
 
 A fixed matrix given as a SciPy sparse array can enter a model as a
-[sparse constant](sparse_matrices.md#sparse-constants), which stores and
-multiplies only its stored entries. For fixed linear dynamics, expressing the
+[sparse constant](sparse_matrices.md#sparse-constants). Only its stored entries
+are kept and multiplied. For fixed linear dynamics, expressing the
 known sparse equations directly avoids assembling the matrix at all. This
 three-step model predictive control problem has fixed dynamics and a changing
 scalar reference:

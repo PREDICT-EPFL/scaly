@@ -184,9 +184,10 @@ class OpInfo:
   """What the compiler knows about one ``ExprOp``: its arity (``None`` for variadic) and whether it
   has derivative rules. ``OP_INFO`` holds one per op.
 
-  ``pattern_rule`` gives the stored pattern of a result with a sparse operand, ``None`` when the op
-  refuses one. ``support_rule`` names how ``Expr.support`` follows the op, ``None`` when any entry
-  may be nonzero.
+  ``pattern_rule`` gives the stored pattern of an elementwise op or ``MATMUL`` with a sparse
+  operand. An elementwise op without one refuses a sparse operand. Movement ops move the stored
+  coordinates instead. ``support_rule`` names how ``Expr.support`` follows the op, ``None`` when
+  any entry may be nonzero.
   """
 
   op: ExprOp
@@ -597,8 +598,8 @@ class Expr:
   def support(self) -> Support:
     """Flat row-major indices of the entries that may be nonzero, or ``None`` when any may be.
 
-    Every other entry is zero for all input values. The result is a set or a sorted array of
-    indices, computed on first access and cached.
+    Every other entry is zero for all finite input values. A product with a constant zero counts
+    as zero. The result is a set or a sorted array of indices, computed on first access and cached.
     """
     return compute_support(self, OP_INFO)
 

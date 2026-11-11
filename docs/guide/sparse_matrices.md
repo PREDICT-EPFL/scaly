@@ -19,8 +19,9 @@ A = \begin{bmatrix} 4 & -1 & 0 \\ -1 & 4 & -1 \\ 0 & -1 & 4 \end{bmatrix}.
 \]
 
 Its pattern is the seven coordinates on and beside the diagonal. A
-`SparsityPattern` lists coordinates in any order. `canonicalize` sorts them into
-row-major order and returns the shared pattern object that a `TensorType` holds,
+`SparsityPattern` lists coordinates in any order, here read from the compressed
+sparse column (CSC) arrays of a SciPy matrix. `canonicalize` sorts them into
+row-major order and returns the `CanonicalPattern` that a `TensorType` holds,
 together with the permutation from the original order:
 
 ```python
@@ -43,7 +44,7 @@ print(A_type.storage_shape)  # (7,)
 stored values. A stored entry may hold zero and still counts as stored. An entry
 outside the pattern is a structural zero: it has no storage and no operation
 reads it. Like a shape, the pattern is fixed when the type is built and never
-depends on numerical values. Equal coordinates give the same canonical pattern
+depends on numerical values. Equal coordinates give the same `CanonicalPattern`
 object, so `is` compares two patterns.
 
 Leading axes are batch axes. `sc.TensorType((5, 3, 3), pattern=pattern)` is five
@@ -77,7 +78,8 @@ So is a SciPy array with a different pattern, which raises
 `ValueError: sparse input has a different stored pattern`. A symbolic call needs
 an argument with exactly the declared pattern too.
 
-A sparse result comes back as a SciPy sparse array:
+A sparse result comes back as a SciPy sparse array. Here the output declares
+compressed sparse row (CSR) order:
 
 ```python
 @sc.function(sc.arg("A", A_type), outputs=sc.arg("B", A_type, layout="csr"))
@@ -89,8 +91,11 @@ print(type(B_value).__name__)  # csr_array
 print(B_value.data)            # [ 8. -2. -2.  8. -2. -2.  8.]
 ```
 
-An output declared without a type comes back in compressed sparse column
-format, CSC. A batched result comes back as an N-dimensional `coo_array`. Each
+An output declared without a type comes back in CSC order. A layout needs a
+declared pattern, so `sc.arg("B", layout="csr")` raises
+`ValueError: a layout requires a declared sparse pattern`, and a result whose
+pattern you do not declare, such as a product, always comes back as CSC. A
+batched result comes back as an N-dimensional `coo_array`. Each
 call returns a new array of values, but the index arrays are shared between calls
 and read-only.
 
@@ -103,7 +108,7 @@ the generated C and to the tables its header publishes. There are three:
 | `layout=` | Value order |
 | --- | --- |
 | `"csc"`, the default | Column by column, as in a SciPy `csc_array` |
-| `"csr"` | Row by row, compressed sparse row (CSR) order |
+| `"csr"` | Row by row, as in a SciPy `csr_array` |
 | a `SparsityPattern` | The order of its coordinates, for a solver that reads triplets in its own order |
 
 The layout belongs to the input or output, not to the pattern, so two inputs with
@@ -129,8 +134,8 @@ always in row-major order. Scaly reorders them at the function boundary.
 ## Leaving the pattern open
 
 `pattern=...` leaves an input's pattern to the call, as a
-[shape hole](functions.md#leaving-shapes-out) leaves its shape. Each distinct
-pattern traces and compiles its own instance:
+[shape hole](functions.md#leaving-shapes-out) leaves its shape. The function is
+traced and compiled once for each distinct pattern:
 
 ```python
 @sc.function(sc.arg("A", (3, 3), pattern=...), sc.arg("x", 3), outputs=sc.arg("y"))
@@ -185,9 +190,14 @@ print(D_sparse.type.pattern.rows)  # (0, 0, 0, 1, 1, 2)
 print(D_sparse.type.pattern.cols)  # (0, 1, 2, 1, 2, 2)
 ```
 
-Expression listings, such as those of `sc.render_expr_assembly`, show these
-conversions as the operations `pack` and `values`. A sparse constant is a `pack`
-of a dense constant holding its stored values.
+The support treats a product with a constant zero as zero. With `z[0] = inf`,
+entry `(1, 0)` of `D` computes `inf * 0.0`, which is NaN, while `D_sparse` drops
+that entry and gives zero there.
+
+Expression listings, such as those of `sc.render_expr_assembly`, show `sc.pack`
+and `sc.values` as the operations `pack` and `values`. A sparse constant is a
+`pack` of a dense constant holding its stored values. `to_dense` appears as a
+`scatter`, and `from_dense` as a `gather` feeding a `pack`.
 
 ## Operations on sparse values
 
@@ -199,12 +209,11 @@ their values:
 | `-A`, `abs`, `sqrt`, `floor`, `ceil`, `sin`, `tan`, `asin`, `atan`, `sinh`, `tanh`, `erf`, `sc.stop_gradient` | The pattern of `A` |
 | `A + B`, `A - B` | The union of the patterns. A dense operand stores every entry |
 | `A * B` | The intersection. With a dense operand, the pattern of the sparse one |
-| Slicing, transposition, reshaping, `sc.stack`, `sc.concat`, `sc.gather`, `sc.scatter` | The stored entries, moved. A result with fewer than two axes is dense |
+| Slicing, transposition, reshaping, `sc.stack`, `sc.concat`, `sc.gather`, `sc.scatter` | The stored entries, moved. Matrices stacked along a batch axis share the union of their patterns. A result with fewer than two axes is dense |
 | `A @ B` | See [products](#products) |
 | `A.sum()` | A dense scalar |
 
-A dense operand counts as stored everywhere, so `A_const + 0.0` stores all nine
-entries while `A_const * 0.0` keeps seven. The unary operations in the table map
+So `A_const + 0.0` stores all nine entries while `A_const * 0.0` keeps seven. The unary operations in the table map
 zero to zero. Any other elementwise operation raises as the expression is built,
 including `exp`, `log`, `cos`, powers, division, `sc.atan2`, `sc.minimum` and
 `sc.maximum`:
@@ -256,6 +265,9 @@ depends on the other operand:
 | Sparse `A` times dense matrix | Sparse, storing every column of each row where `A` stores an entry |
 | Dense matrix times sparse `B` | Sparse, storing every row of each column where `B` stores an entry |
 | Sparse times sparse | Sparse, with the Boolean product of the two patterns |
+
+Products take operands with at most two axes, sparse or dense, so a batch of
+matrices is multiplied inside `sc.vmap`.
 
 The Boolean product stores entry \((i, j)\) of \(AB\) whenever some \(k\) has
 both \(A_{ik}\) and \(B_{kj}\) stored, even if the products cancel numerically.
@@ -320,9 +332,10 @@ nine here, and the columns of entries outside the pattern are zero.
 ## Generated C
 
 The [pointer interface](codegen.md#the-pointer-entry) passes only stored values,
-each buffer in its input's or output's layout. For `scale` above, the generated
-header sizes both buffers by the seven stored entries and publishes each
-pattern in its declared layout:
+each buffer in its input's or output's layout. For `scale`, from
+[Sparse inputs and outputs](#sparse-inputs-and-outputs), the generated header
+sizes both buffers by the seven stored entries and publishes each pattern in
+its declared layout. This excerpt leaves out the lines between them:
 
 ```c
 typedef struct { SCALY_ALIGNAS(16) double data[7]; } scale_A_t;
@@ -344,8 +357,9 @@ A CSC input or output publishes `csc_col_ptr` and `csc_row_ind`, a CSR one
 `csr_row_ptr` and `csr_col_ind`, and a coordinate layout `rows` and `cols` in its
 own order. Each name starts with the function and the input or output name. A
 batched matrix publishes its shared pattern once, and its `STORAGE_SIZE` counts
-the values of every batch entry. A C header omits the tables of an empty pattern,
-and an input or output with no stored values accepts a null pointer. The C++
+the values of every batch entry. A C header omits a table with no entries, such
+as the row indices of an empty CSC pattern, and an input or output with no
+stored values accepts a null pointer. The C++
 header publishes the same tables as `constexpr std::array` constants in a
 namespace per function and per input or output.
 
