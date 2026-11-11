@@ -1,7 +1,7 @@
 # Finish issue #339 after the dtype merges
 
-The section 4 coordinator controls merge order: #360, then #361, then #358.
-Do not push until the coordinator says #361 has merged. The compiler run plan
+The section 4 coordinator changed merge order: #358 and #361 may proceed together
+after #360. Do not push until the coordinator says #360 has merged. The compiler run plan
 on main and `~/.scaly-suite/RULES.md` still govern tests, GitHub and pushes.
 
 - [x] Rebase the task branch onto main after #320's squash merge, dropping its old commits.
@@ -12,7 +12,9 @@ on main and `~/.scaly-suite/RULES.md` still govern tests, GitHub and pushes.
 - [x] Have Opus check the logic-changing conflict resolutions alone. Approved with
       no act-on findings. The reviewer also passed 309 focused tests and eight
       integer-sum sanitizer probes across both widths and lowering modes.
-- [ ] Wait for the coordinator's confirmation that #361 merged.
+- [ ] Redo the trial against #360's newest head, checking the shared AD rules and
+      expression files. Keep the earlier trial resolutions for reference.
+- [ ] Wait for the coordinator's confirmation that #360 merged.
 - [ ] Fetch and rebase this task branch onto main, resolve any remaining overlap,
       remove this plan and run the full pre-merge check through the shared runner.
 - [ ] Check the PR targets main, push once, retarget if needed and queue with
