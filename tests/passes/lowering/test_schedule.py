@@ -137,7 +137,7 @@ def test_mapped_sums_keep_scalar_accumulators_in_their_procedure(isolated_cache)
 
   z, weights = np.linspace(-2, 3, 15), np.array([0.1, 0.3, -0.2])
   fn.recompile()
-  np.testing.assert_allclose(fn((z, weights)), z.reshape(5, 3).sum(axis=1) * np.exp(weights).sum(), rtol=1e-14, atol=1e-14)
+  np.testing.assert_allclose(np.asarray(fn((z, weights))), z.reshape(5, 3).sum(axis=1) * np.exp(weights).sum(), rtol=1e-14, atol=1e-14)
 
 
 def test_strided_product_keeps_automatic_scalarization_and_constant_folding(isolated_cache):

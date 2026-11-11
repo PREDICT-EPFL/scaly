@@ -256,7 +256,7 @@ def test_sparse_mapped_stage_expands_small_default_product(n):
   assert not any(n.op == ProgramOp.FOR or n.op == ProgramOp.BUFFER and "values" in n.attrs for n in walk_program(callee))
   a = sparse.coo_array((random.normal(size=pattern.nnz), (pattern.rows, pattern.cols)), shape=pattern.shape)
   xs = random.normal(size=(10, n))
-  np.testing.assert_allclose(fn(a, xs), np.sin((a @ xs.T).T) + xs, atol=1e-12)
+  np.testing.assert_allclose(np.asarray(fn(a, xs)), np.sin((a @ xs.T).T) + xs, atol=1e-12)
 
 
 @pytest.mark.parametrize("source_layout", ["csc", "csr"])
