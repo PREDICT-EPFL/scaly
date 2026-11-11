@@ -9,7 +9,11 @@ from ...ir.expr import Expr, ExprOp, invocation_key
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.types import DType, dtypes
 from ...function.concrete import ConcreteFunction
+from ..program.scalarize import expand_static_loop
 from .ctx import LowerCtx, LoweringError, lowers, _lower_to_proc
+
+
+STATIC_LOOP_BUDGET = 256
 
 
 def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction) -> None:
@@ -169,7 +173,8 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
     layouts = (*fn.input_tree.layouts[:n_carry], *(fn.output_tree.layouts[:n_carry] if fn is callee else ()))
     if any(layout is not None and not np.array_equal(layout.permutation, np.arange(len(layout.permutation))) for layout in layouts):
       raise LoweringError(f"loop carries of {fn.name!r} must use the canonical sparse layout")
-  used = {int(sibling.attrs["output"]): sibling for sibling in ctx.used_results[invocation_key(node)]}
+  siblings = ctx.used_results[invocation_key(node)]
+  used = {int(sibling.attrs["output"]): sibling for sibling in siblings}
   traj = {c for c in range(n_carry) if n_carry + n_ys + 1 + c in used}
   early = cond is not None or trip is not None
   name = ctx.names.allocate("i_loop")
@@ -183,6 +188,10 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
   last = p.sub(count, p.const_int(1))
   k = p.sub(last, i) if reverse else i
   sizes = [c.type.storage_size for c in callee.inputs[:n_carry]]
+  for arg in (*carries, *outers):
+    ctx.buf_of(arg)
+  before_loop = len(ctx.statements)
+  existing_buffers = list(ctx.buffers.values())
   slots = [ctx.new_private(c.type.dtype, ((length + 1 if j in traj else 2) * sizes[j],)) for j, c in enumerate(callee.inputs[:n_carry])]
 
   def slot(j: int, at: ProgramNode) -> ProgramNode:
@@ -267,6 +276,48 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
         start = p.add(p.const_int(offset), p.mul(taken, p.const_int(type_.storage_size)))
         stop = offset + length * type_.storage_size
         ctx.statements.append(p.for_(p.range_(e, start, stop), [p.store(p.view(buf, [p.var(e)]), _zero(type_.dtype))]))
+
+  hints = {sibling.lowering for sibling in siblings}
+  if not early and not hints & {"block", "opaque"}:
+    procs = {proc.attrs["name"]: proc for proc in ctx.callees.values()}
+    cost = _loop_cost(p.proc("loop_step", (), body), procs)
+    if cost is not None and ("scalar" in hints or length * cost <= STATIC_LOOP_BUDGET):
+      results = [(ctx.raw_buf_of(sibling), sibling.type.storage_size) for sibling in used.values()]
+      ctx.statements[before_loop:] = expand_static_loop(existing_buffers, ctx.statements[before_loop:], results, procs, ctx.names)
+
+  for sibling in siblings:
+    if sibling.id not in ctx.value_buffers:
+      ctx.value_buffers[sibling.id] = ctx.buf_of(used[int(sibling.attrs["output"])]).attrs["name"]
+
+
+def _loop_cost(proc: ProgramNode, procs: dict[str, ProgramNode]) -> int | None:
+  """Count scalar right-hand sides through every static range and callee, or reject unsafe substitution."""
+  if proc.attrs.get("lowering") in ("block", "opaque"):
+    return None
+  total = 0
+  stack = [(stmt, 1) for stmt in proc.args[proc.attrs["param_count"] :]]
+  while stack:
+    stmt, factor = stack.pop()
+    if stmt.dtype is not None and stmt.dtype not in (dtypes.float64, dtypes.int64, dtypes.bool_):
+      return None
+    if stmt.op == ProgramOp.CALL:
+      callee = procs.get(stmt.attrs["callee"])
+      if callee is None or callee.attrs.get("lowering") in ("block", "opaque"):
+        return None
+      stack.extend((child, factor) for child in callee.args[callee.attrs["param_count"] :])
+    elif stmt.op == ProgramOp.FOR:
+      rng = stmt.args[0]
+      if any(arg.op != ProgramOp.CONST_INT for arg in rng.args):
+        return None
+      start, stop, step = (arg.attrs["value"] for arg in rng.args)
+      if step <= 0:
+        return None
+      stack.extend((child, factor * len(range(start, stop, step))) for child in stmt.args[1:])
+    elif stmt.op in (ProgramOp.STORE, ProgramOp.ASSIGN):
+      total += factor
+    elif stmt.op != ProgramOp.BUFFER:
+      return None
+  return max(1, total)
 
 
 def _call(ctx: LowerCtx, fn: ConcreteFunction, ins: list[ProgramNode], outs: list[ProgramNode]) -> ProgramNode:

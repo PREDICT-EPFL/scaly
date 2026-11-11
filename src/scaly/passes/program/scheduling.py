@@ -16,8 +16,8 @@ MAX_SCALAR_DEPTH = 32
 class ScalarNameAllocator:
   """Allocate scalar locals through the procedure's name authority."""
 
-  def __init__(self, occupied: set[str]) -> None:
-    self.scope = NameScope(occupied)
+  def __init__(self, occupied: set[str] | NameScope) -> None:
+    self.scope = occupied if isinstance(occupied, NameScope) else NameScope(occupied)
     self.serial = 0
 
   def fresh(self) -> str:

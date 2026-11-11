@@ -496,8 +496,8 @@ def test_generated_c_is_constant_in_the_number_of_steps() -> None:
   assert source(200).count("for (long long i_loop") == 1
 
 
-def test_a_scan_in_a_scalar_procedure_stays_a_loop() -> None:
-  """``scalarize.work`` refuses a carried range, so a procedure under the scalar hint does not unroll its scan."""
+def test_a_scan_with_a_scalar_hint_unrolls() -> None:
+  """A scalar hint requests expansion even when the whole scan exceeds the automatic budget."""
   from scaly.codegen import render_c_source
 
   @sc.function(sc.arg("z0", 4), sc.arg("us", 5))
@@ -506,7 +506,7 @@ def test_a_scan_in_a_scalar_procedure_stays_a_loop() -> None:
     return zn.with_lowering("scalar"), costs
 
   us = np.sin(np.arange(5) * 0.7)
-  assert render_c_source(scalar_roll).count("rk4_raw(") == 2
+  assert render_c_source(scalar_roll).count("rk4_raw(") == 0
   for got, want in zip(scalar_roll(Z0, us), rk4_numpy(Z0, us), strict=True):
     np.testing.assert_allclose(got, want, rtol=1e-12, atol=1e-12)
 

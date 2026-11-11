@@ -231,9 +231,12 @@ ARITH_PROGRAM: Arith[ProgramNode] = Arith(
 def fold_program(node: ProgramNode) -> ProgramNode:
   """Constant-evaluate ``node`` when every operand is a constant, else apply the shared identities.
 
+  Strict floating nodes retain arithmetic, including identities involving zero; constant selections still fold.
   An all-constant node that evaluation refuses stays as it is: ``0 / 0`` is a known invalid
   operation, not a case of ``0 / x``.
   """
+  if node.attrs.get("strict") and node.dtype.is_floating and node.op != ProgramOp.SELECT:
+    return node
   if node.args and all(a.op in CONSTANTS for a in node.args):
     value = evaluate(node.op, [a.attrs["value"] for a in node.args], node.dtype)
     return node if value is None else constant(value, node.dtype)
