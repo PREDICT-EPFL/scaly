@@ -363,3 +363,27 @@ def test_batched_integer_indices_remain_provable():
   expected[4:7] += 4
   np.testing.assert_array_equal(fn(np.arange(8.0)), expected)
   assert _inout(fn)
+
+
+def test_integer_constant_rounding_cannot_prove_disjointness():
+  from unittest.mock import patch
+
+  @sc.function(sc.arg("carry", 3), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
+  def step(carry, j):
+    first = sc.scatter(carry, [0], sc.gather(carry, [0]) + 1, combine="set")
+    read_index = (np.int64(9007199254740992) < j + np.int64(9007199254740993)).cast(sc.dtypes.int64)
+    return sc.scatter(first, [2], sc.gather(carry, read_index), combine="set")
+
+  @sc.function(sc.arg("initial", 3), name="integer_constant_automatic")
+  def automatic(initial):
+    return sc.scan(step, initial, length=1, index=True)[0]
+
+  @sc.function(sc.arg("initial", 3), name="integer_constant_reference")
+  def reference(initial):
+    return sc.scan(step, initial, length=1, index=True)[0]
+
+  initial = np.array([1.0, 2.0, 3.0])
+  with patch("scaly.passes.lowering.calls.carry_reuse", return_value={}):
+    expected = reference(initial)
+  np.testing.assert_array_equal(automatic(initial), expected)
+  assert not _inout(automatic)

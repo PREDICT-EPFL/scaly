@@ -4990,6 +4990,7 @@ tests/passes/lowering/test_in_place.py::test_floor_reads_old_entries
 tests/passes/lowering/test_in_place.py::test_floor_regression_numpy_result
 tests/passes/lowering/test_in_place.py::test_inout_parameter_and_call_contract
 tests/passes/lowering/test_in_place.py::test_inplace_helper_name_does_not_collide_with_user_function
+tests/passes/lowering/test_in_place.py::test_integer_constant_rounding_cannot_prove_disjointness
 tests/passes/lowering/test_in_place.py::test_last_use
 tests/passes/lowering/test_in_place.py::test_lengths_and_reverse_preserve_input[False-0]
 tests/passes/lowering/test_in_place.py::test_lengths_and_reverse_preserve_input[False-1]

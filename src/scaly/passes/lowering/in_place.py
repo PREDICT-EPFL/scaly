@@ -57,6 +57,9 @@ def index_batches(nodes: tuple[Expr, ...], length: int, step: Expr | None) -> di
     if node is step:
       values[node.id] = np.arange(length, dtype=np.int64).reshape((length,) + (1,) * len(node.shape))
     elif node.value is not None:
+      # Constant lowering currently converts nonuniform integer tables through float64.
+      if node.type.dtype.is_integer and np.any(node.value.astype(object) != node.value.astype(np.float64).astype(object)):
+        continue
       values[node.id] = np.broadcast_to(np.asarray(node.value), (length, *node.shape))
     elif node.op in ELEMENTWISE and all(arg.id in values for arg in node.args):
       result = _exact_index(node, values, length)
