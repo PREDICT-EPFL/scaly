@@ -19,7 +19,7 @@ Comparison with main at `fb579fce03a68af1ba8e4238904faae387789653`:
 
 Counts are unique nodes from `walk_program(lower_function(_wide()))`, restricted
 to the program operations in the elementwise table. They count each maximum and
-minimum as one operation. Each emitted extremum now performs three scalar
+minimum as one operation. Each emitted extremum now performs two scalar
 comparisons and two conditional choices rather than one `fmin` or `fmax` call.
 The full operation histogram is unchanged: add 38, mul 26, div 3, and one each of
 abs, acos, asin, atan, atan2, ceil, cos, cosh, erf, exp, floor, log, maximum,
