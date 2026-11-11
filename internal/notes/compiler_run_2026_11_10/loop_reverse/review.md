@@ -60,3 +60,11 @@ The main reviewer requested changes, including the cache partition finding above
 All changed guide fences were executed together, including their new Hessian and
 forward/backward print outputs. The reviewer also confirmed mixed float32/float64
 carries, nested while-loop Hessians, overlapping-window source size and trip ordering.
+
+## Delta checks
+
+Both short delta checks approved the combined fixes with no unresolved findings
+or adjacent regressions. Opus checked the source and documentation diff and did
+not rerun tests. Sol independently reran the 39 reverse-loop cases, all passing.
+No additional review round was requested. All four delegate review threads were
+read and settled after their results were used.

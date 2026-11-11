@@ -86,3 +86,8 @@ The final detached `~/.scaly-suite/run` exited successfully: 4,829 tests passed,
 56 skipped, benchmark smoke passed, documentation built without warnings and the
 private-name check passed. Ruff formatting, lint and ty passed. The 4,885-test
 collection includes all review regressions. C snapshots remained unchanged.
+
+Both independent short delta checks approved the final fixes. The correctness
+checker independently reran all 39 reverse-loop cases. The main checker confirmed
+the technical fixes and every documentation note. No review finding remains open.
+The final changes after the checked source are validation and review records only.
