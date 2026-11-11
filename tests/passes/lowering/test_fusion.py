@@ -180,6 +180,14 @@ def test_reused_selection_stores_only_the_selected_exp_values() -> None:
   assert [buf.attrs["shape"] for buf in _privates(proc)] == [(2,)]
 
 
+def test_reused_selection_of_an_input_needs_no_buffer() -> None:
+  def body(x):
+    picked = sc.gather(x, [3, 7, 9])
+    return picked * 3.0 + picked.sin()
+
+  assert not _privates(_lowered(_function("reused_input_selection", ((1000,),), body)))
+
+
 def test_sampled_product_counts_its_select_condition_read() -> None:
   a = CanonicalPattern((3, 3), (0, 1, 1, 2), (0, 0, 2, 1))
   b = CanonicalPattern((3, 3), (0, 0, 1, 2), (0, 2, 1, 2))

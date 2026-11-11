@@ -58,8 +58,7 @@ def _contiguous_slice_offset(index: tuple[object, ...], in_shape: tuple[int, ...
 
 def _free(node: Expr) -> bool:
   """Whether reading ``node`` in place costs nothing over reading its source: an alias, a contiguous
-  slice or a constant. A strided slice, a transpose or a gather read several times per element is
-  stored, so each read is contiguous."""
+  slice or a constant."""
   op = ExprOp(node.op)
   return (
     op in ALIASES
@@ -117,10 +116,11 @@ def plan_fusion(
   """The nodes lowering evaluates at their consumers' coordinates rather than storing, and the sums
   of scatters, by the id of the sum each one writes.
 
-  A movement op or a constant is an index remap, deferred unless it is an output, a consumer needs
-  it whole, or it is a strided slice, a transpose or a gather that a consumer reads several times
-  per element. A dense elementwise node is deferred when one consumer reads each of its elements once,
-  through any chain of deferred movement ops; one that holds a libm call is deferred only into a
+  A movement op or a constant is an index remap, deferred unless it is an output or a consumer needs
+  it whole. A strided slice, a transpose or a gather is also stored when one read visits entries
+  repeatedly, or when several reads would duplicate a libm call in the deferred chain beneath it.
+  Several reads of a stored input stay index remaps. A dense elementwise node is deferred when one
+  consumer reads each of its elements once, through any chain of deferred movement ops; one that holds a libm call is deferred only into a
   single read, so the call is not duplicated. Everything else is stored: reductions, products,
   scatters, concatenations, calls, outputs and sparse values.
 
@@ -141,6 +141,34 @@ def plan_fusion(
   for node in nodes:
     for arg, kind in _reads(node):
       readers.setdefault(arg.id, []).append((node, kind))
+  position = {x.id: 1 << k for k, x in enumerate(fun.inputs)}
+  depends: dict[int, int] = {}
+  for node in nodes:
+    depends[node.id] = position.get(node.id, 0) | reduce(or_, (depends[a.id] for a in node.args), 0)
+  fixed = [reduce(or_, (1 << k for k in positions), 0) for positions in invariant]
+
+  def hoistable(producer: int, consumer: int) -> bool:
+    return any(depends[producer] & ~mask == 0 and depends[consumer] & ~mask for mask in fixed)
+
+  def keep_zeros(node: Expr) -> bool:
+    return (scalar and (support := support_of(node)) is not None and len(support) < node.size) or (
+      seed_pairs and len(node.shape) >= 2 and any((support := support_of(e)) is not None and len(support) < e.size for e in (node, *node.args))
+    )
+
+  inline_costly: set[int] = set()
+  for node in nodes:
+    op, uses = ExprOp(node.op), readers.get(node.id, ())
+    if (
+      node.id not in outputs
+      and (op in ELEMENTWISE or op in MOVEMENT)
+      and len(uses) == 1
+      and uses[0][1] == _ONCE
+      and all(e.type.pattern is None for e in (node, *node.args))
+      and not hoistable(node.id, uses[0][0].id)
+      and not (op in ELEMENTWISE and keep_zeros(node))
+      and (op in ELEMENTWISE and ELEMENTWISE[op].expensive or any(a.id in inline_costly for a in node.args))
+    ):
+      inline_costly.add(node.id)
   deferred: set[int] = set()
   # Each node's reads as seen through deferred movement: (consumer id, how it reads, read directly).
   terminal: dict[int, list[tuple[int, int, bool]]] = {}
@@ -159,18 +187,10 @@ def plan_fusion(
       node.id not in outputs
       and dense
       and ExprOp(node.op) in MOVEMENT
-      and (len(edges) <= 1 or _free(node))
+      and (len(edges) <= 1 or _free(node) or not any(a.id in inline_costly for a in node.args))
       and all(k == _ONCE or k == _MANY and _free(node) for _, k, _ in edges)
     ):
       deferred.add(node.id)
-  position = {x.id: 1 << k for k, x in enumerate(fun.inputs)}
-  depends: dict[int, int] = {}
-  for node in nodes:
-    depends[node.id] = position.get(node.id, 0) | reduce(or_, (depends[a.id] for a in node.args), 0)
-  fixed = [reduce(or_, (1 << k for k in positions), 0) for positions in invariant]
-
-  def hoistable(producer: int, consumer: int) -> bool:
-    return any(depends[producer] & ~mask == 0 and depends[consumer] & ~mask for mask in fixed)
 
   def scatter(arg: Expr, parent: Expr) -> Expr | None:
     while arg.id in deferred and ExprOp(arg.op) in ALIASES:
@@ -215,9 +235,7 @@ def plan_fusion(
       continue
     if node.id in outputs or op not in ELEMENTWISE or any(e.type.pattern is not None for e in (node, *node.args)):
       continue
-    if scalar and (support := support_of(node)) is not None and len(support) < node.size:
-      continue
-    if seed_pairs and len(node.shape) >= 2 and any((support := support_of(e)) is not None and len(support) < e.size for e in (node, *node.args)):
+    if keep_zeros(node):
       continue
     edges = terminal[node.id]
     costly = ELEMENTWISE[op].expensive or any(a.id in expensive for a in node.args)

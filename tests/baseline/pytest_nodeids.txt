@@ -5032,6 +5032,7 @@ tests/passes/lowering/test_fusion.py::test_movement_is_an_index_remap[reshape_tr
 tests/passes/lowering/test_fusion.py::test_movement_is_an_index_remap[strided_slice]
 tests/passes/lowering/test_fusion.py::test_movement_is_an_index_remap[transpose]
 tests/passes/lowering/test_fusion.py::test_reduction_evaluates_its_operand_in_the_reduction_loop
+tests/passes/lowering/test_fusion.py::test_reused_selection_of_an_input_needs_no_buffer
 tests/passes/lowering/test_fusion.py::test_reused_selection_stores_only_the_selected_exp_values
 tests/passes/lowering/test_fusion.py::test_sampled_product_counts_its_select_condition_read
 tests/passes/lowering/test_fusion.py::test_scatter_of_a_mapped_transpose_reads_by_affine_indices
