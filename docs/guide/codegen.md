@@ -587,7 +587,7 @@ Jacobian in `float32`. From a repository checkout, generate it with a zero frame
 budget and compile it with Zig:
 
 ```bash
-uv run scaly_codegen examples.embedded_oracle:oracle -o generated/embedded \
+PYTHONPATH=. uv run scaly_codegen examples.embedded_oracle:oracle -o generated/embedded \
     --dialect c --lanes 1 --frame-budget 0
 uv run --extra toolchain zig cc -target thumb-freestanding-eabihf \
     -mcpu=cortex_m4+vfp4d16sp -ffreestanding -Os \

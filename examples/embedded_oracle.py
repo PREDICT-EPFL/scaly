@@ -8,7 +8,7 @@ from scaly.codegen import write_module
 
 @sc.function(sc.arg("z", sc.TensorType((2,), dtype=sc.dtypes.float32)), outputs=sc.arg("residual"))
 def stage(z: sc.Expr) -> sc.Expr:
-  return sc.stack([z[0].sin() * z[1], z[0] + z[1] ** 2])
+  return sc.stack([z[0].sin() * z[1], z[0] + z[1] ** 2]).block()
 
 
 @sc.function(sc.arg("zs", sc.TensorType((8,), dtype=sc.dtypes.float32)), outputs=sc.arg("residuals"))
