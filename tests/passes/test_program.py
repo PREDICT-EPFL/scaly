@@ -852,15 +852,16 @@ def test_hoist_keeps_scalar_assignments_with_their_readers(tmp_path, case):
   result = p.store(at(y), value)
   body.append(p.for_(p.range_("j", 0, 1), [result]) if case == "loop" else result)
   stage = p.proc("stage", [x, weight, y], body)
-  stage = ProgramNode(stage.op, stage.args, {**stage.attrs, "input_count": 2}, stage.dtype)
+  stage = ProgramNode(stage.op, stage.args, {**stage.attrs, "input_count": 2}, dtype=stage.dtype)
   xs, ys = (p.buffer(name, f64, (4,)) for name in ("xs", "ys"))
   call = ProgramNode(
     ProgramOp.CALL,
     (p.view(xs, [p.var("i")]), weight, p.view(ys, [p.var("i")])),
     {"callee": "stage", "n_in": 2, "n_out": 1, "returns": ()},
+    dtype=f64,
   )
   root = p.proc("root", [xs, weight, ys], [p.for_(p.range_("i", 0, 4), [call])])
-  root = ProgramNode(root.op, root.args, {**root.attrs, "input_count": 2}, root.dtype)
+  root = ProgramNode(root.op, root.args, {**root.attrs, "input_count": 2}, dtype=root.dtype)
   original = p.program([stage, root])
   hoisted = hoist_invariant(original)
   verify_program(hoisted)
