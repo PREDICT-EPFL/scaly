@@ -248,7 +248,6 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
     ctx.callees[variant] = _lower_to_proc(
       variant,
       ctx.callees,
-      ctx.solver_fns,
       ctx.program_names,
       ctx.symbols,
       ctx.residuals,

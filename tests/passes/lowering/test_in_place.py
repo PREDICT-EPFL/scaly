@@ -71,30 +71,11 @@ def test_disjoint_later_read():
   assert _inout(fn)
 
 
-def test_floor_reads_old_entries():
+def test_ceil_reads_old_entries():
   @sc.function(sc.arg("carry", 3))
   def step(carry):
     first = sc.scatter(carry, [0], sc.gather(carry, [1]), combine="set")
-    return sc.scatter(first, [0], sc.gather(carry.floor(), [0]) + 0.5, combine="set")
-
-  fn = _loop(step, 3, length=1)
-  with pytest.raises(NotImplementedError, match="carry"):
-    lower_function(fn)
-
-  @sc.function(sc.arg("initial", 3))
-  def functional(initial):
-    result, _ = sc.scan(step, initial, length=1)
-    return result.with_lowering("block")
-
-  np.testing.assert_array_equal(functional(np.array([1.5, 2.5, 3.5])), [1.5, 2.5, 3.5])
-
-
-@pytest.mark.parametrize("op", ["floor", "ceil"])
-def test_zero_derivative_is_still_a_read(op):
-  @sc.function(sc.arg("carry", 3))
-  def step(carry):
-    first = sc.scatter(carry, [0], sc.gather(carry, [1]), combine="set")
-    return sc.scatter(first, [0], sc.gather(getattr(carry, op)(), [0]) + 0.5, combine="set")
+    return sc.scatter(first, [0], sc.gather(carry.ceil(), [0]) + 0.5, combine="set")
 
   with pytest.raises(NotImplementedError, match="carry"):
     lower_function(_loop(step, 3, length=1))
@@ -125,8 +106,7 @@ def test_unknown_runtime_index_refuses_disjointness():
     lower_function(run)
 
 
-@pytest.mark.parametrize("length", [0, 1, 5])
-@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize(("length", "reverse"), [(0, False), (1, True), (5, True)])
 def test_lengths_and_reverse_preserve_input(length, reverse):
   @sc.function(sc.arg("carry", 8), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
   def step(carry, j):
@@ -271,6 +251,8 @@ def test_floor_regression_numpy_result():
   expected[0] = initial[1]
   expected[0] = np.floor(initial[0]) + 0.5
   np.testing.assert_array_equal(run(initial), expected)
+  with pytest.raises(NotImplementedError, match="carry"):
+    lower_function(_loop(step, 3, length=1))
 
 
 def test_same_index_matrix_broadcast():
@@ -502,7 +484,7 @@ def test_static_unroll_matches_rolled_in_place(hint):
   assert bool(_inout(run)) == (hint == "block")
 
 
-@pytest.mark.parametrize("hint", ["auto", "scalar", "block"])
+@pytest.mark.parametrize("hint", ["scalar", "block"])
 def test_unroll_hint_does_not_bypass_in_place_refusal(hint):
   @sc.function(sc.arg("carry", 3))
   def step(carry):

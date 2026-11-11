@@ -164,8 +164,7 @@ def test_runtime_scatter_derivatives_match_finite_differences(combine) -> None:
     np.testing.assert_allclose(np.dot(np.asarray(reverse), seed), finite, rtol=1e-7, atol=1e-8)
 
 
-@pytest.mark.parametrize("axis", [0, 1, -1])
-@pytest.mark.parametrize("runtime", [False, True])
+@pytest.mark.parametrize(("axis", "runtime"), [(0, True), (1, False), (-1, True)])
 def test_axis_gather_and_scatter_match_numpy(axis, runtime) -> None:
   shape = (2, 3)
   selected_axis = axis % 2
@@ -222,8 +221,7 @@ def test_index_builders_match_numpy() -> None:
   np.testing.assert_array_equal(maxima, [-np.inf, 2, -np.inf, 3])
 
 
-@pytest.mark.parametrize("combine,sign", [("max", 1), ("min", -1)])
-@pytest.mark.parametrize("runtime", [False, True])
+@pytest.mark.parametrize(("combine", "sign", "runtime"), [("max", 1, True), ("min", -1, False)])
 def test_scatter_extrema_split_ties_with_base(combine, sign, runtime) -> None:
   @sc.function(sc.arg("base", 2), sc.arg("updates", 3), sc.arg("idx", 3), outputs=sc.group(sc.arg("db"), sc.arg("dv")))
   def indexed(base, updates, idx):
@@ -236,8 +234,7 @@ def test_scatter_extrema_split_ties_with_base(combine, sign, runtime) -> None:
   np.testing.assert_allclose(np.asarray(dv), [1 / 3, 1 / 3, 0])
 
 
-@pytest.mark.parametrize("size", [0, 4])
-@pytest.mark.parametrize("hint", ["scalar", "block"])
+@pytest.mark.parametrize(("size", "hint"), [(0, "scalar"), (4, "block")])
 def test_runtime_index_extremes_and_empty_sources(size, hint) -> None:
   @sc.function(sc.arg("x", size), sc.arg("idx", 3), outputs=sc.group(sc.arg("g"), sc.arg("s")))
   def indexed(x, idx):

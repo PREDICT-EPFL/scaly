@@ -236,7 +236,7 @@ def test_sparse_data_jacobian_has_bounded_loop_and_source_growth(operation):
       elif operation == "gather":
         result = sc.gather(a, np.asarray(pattern.rows) * n + pattern.cols)
       else:
-        result = sc.scatter(a, np.arange(n * n), (n, n))
+        result = _scatter_zero(a, np.arange(n * n), (n, n))
       return sc.values(result).sin().block()
 
     jac = as_concrete(sc.jacobian(fn, wrt="data"))
@@ -273,7 +273,7 @@ def test_batched_sparse_movement_jvp_matches_numpy(operation, empty):
 
   @sc.function(leaf, seeds_leaf, name=f"batched_sparse_{operation}_{empty}")
   def fn(a, seeds):
-    moved = sc.gather(a, indices) if operation.startswith("gather") else sc.scatter(a, scatter_indices, output_shape)
+    moved = sc.gather(a, indices) if operation.startswith("gather") else _scatter_zero(a, scatter_indices, output_shape)
     return sc.to_dense(jvp_many(moved, a, seeds)).block()
 
   rng = np.random.default_rng(225)

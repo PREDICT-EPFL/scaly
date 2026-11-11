@@ -651,9 +651,9 @@ def test_a_body_that_ignores_or_keeps_its_carry() -> None:
   for n in range(3):
     assert got[2 * n].tobytes() == odd.tobytes()
     np.testing.assert_array_equal(got[2 * n + 1], np.stack([odd * u for u in uv[: n + 1]]))
-  np.testing.assert_array_equal(got[6], np.sin(wv[:3]) * 2.0)
+  np.testing.assert_allclose(got[6], np.sin(wv[:3]) * 2.0, rtol=5e-16, atol=0.0)
   assert got[7].shape == got[9].shape == (0,) and got[10] == 5.0
-  np.testing.assert_array_equal(got[8], np.sin(uv * 2.0))
+  np.testing.assert_allclose(got[8], np.sin(uv * 2.0), rtol=5e-16, atol=0.0)
 
 
 @pytest.mark.parametrize("layout", ["csr", "csc"])

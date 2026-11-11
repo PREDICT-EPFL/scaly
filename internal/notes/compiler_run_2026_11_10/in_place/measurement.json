@@ -6,7 +6,7 @@
   "steps": 100,
   "baseline": {
     "source_bytes": 5123,
-    "compile_seconds": 0.22366538795176893,
+    "compile_seconds": 0.032073620008304715,
     "step_operations": {
       "store": 100004,
       "load": 100012,
@@ -34,7 +34,7 @@
   },
   "reused": {
     "source_bytes": 4147,
-    "compile_seconds": 0.2738786989939399,
+    "compile_seconds": 0.04183858004398644,
     "step_operations": {
       "load": 8,
       "store": 4,
