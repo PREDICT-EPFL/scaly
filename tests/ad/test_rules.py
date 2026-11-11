@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from scaly.ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, OP_INFO, ExprOp, topo
+from scaly.ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_TERNARY, COMMON_ELEMENTWISE_UNARY, OP_INFO, ExprOp, topo
 
 UNARY = {
   ExprOp.NEG: lambda x: -x,
@@ -43,7 +43,7 @@ FLOAT32_CASES = {
 def test_table_has_one_row_per_elementwise_op():
   from scaly.ad.rules import ELEMENTWISE
 
-  assert set(ELEMENTWISE) == COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_BINARY
+  assert set(ELEMENTWISE) == COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_BINARY | COMMON_ELEMENTWISE_TERNARY
   for op, row in ELEMENTWISE.items():
     assert (row.partials is not None) == OP_INFO[op].differentiable
     assert row.partials is None or len(row.partials) == OP_INFO[op].arity

@@ -65,3 +65,55 @@ def test_qp_proof_rejects_stopped_derivatives(location: str, form: str) -> None:
 
   with pytest.raises(sc.NotQuadratic, match="stop_gradient"):
     sc.solver(stopped, "piqp", options={"sparse": True})
+
+
+@pytest.mark.parametrize("location", ["cost", "eq", "ineq", "lb", "ineq-hi"])
+@pytest.mark.parametrize("form", ["direct", "call", "map"])
+def test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear(location: str, form: str) -> None:
+  """``where(x > 0, x, -x)`` has a zero Hessian but is not quadratic, and a bound of ``x > 0`` has a
+  zero Jacobian but depends on the variables."""
+
+  def bare(value: sc.Expr) -> sc.Expr:
+    return sc.cast(value > 0.0, "float64") if location in {"lb", "ineq-hi"} else sc.where(value > 0.0, value, -value)
+
+  absolute = sc.function(sc.arg("value"), outputs=sc.arg("absolute"))(bare)
+
+  def kink(x: sc.Expr) -> sc.Expr:
+    return absolute(x) if form == "call" else sc.vmap(absolute, 2)(x) if form == "map" else bare(x)
+
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", 2))
+  def kinked(x: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    term = kink(x)
+    return sc.ProblemSpec(
+      minimize=sc.sumsqr(x) + p.sum() + (term.sum() if location == "cost" else 0.0),
+      eq=(term - 1.0,) if location == "eq" else (),
+      ineq=(sc.bounded(term, hi=1.0),) if location == "ineq" else (sc.bounded(x, hi=term),) if location == "ineq-hi" else (),
+      lb=term if location == "lb" else None,
+    )
+
+  with pytest.raises(sc.NotQuadratic, match="depends on the variables"):
+    sc.solver(kinked, "piqp")
+
+
+@pytest.mark.solver("piqp")
+def test_qp_proof_accepts_a_condition_on_the_parameters() -> None:
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", 2))
+  def switched(x: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    return sc.ProblemSpec(minimize=sc.sumsqr(x - sc.where(p > 0.0, p, 2.0 * p)))
+
+  x = sc.solver(switched, "piqp")(np.array([1.5, -1.0]))[0]
+  np.testing.assert_allclose(x, [1.5, -2.0], atol=1e-6)
+
+
+@pytest.mark.solver("piqp")
+def test_sparse_qp_keeps_matrix_entries_a_parameter_condition_can_switch_on() -> None:
+  """The pattern probe draws one parameter value, at which the gated entry may be zero."""
+
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", 1))
+  def gated(x: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    return sc.ProblemSpec(minimize=sc.sumsqr(x), eq=(x[0] + sc.where(p[0] < 0.0, 1.0, 0.0) * x[1] - 1.0,))
+
+  for sparse in (False, True):
+    solve = sc.solver(gated, "piqp", options={"sparse": sparse}, name=f"gated_qp_{sparse}")
+    np.testing.assert_allclose(solve(np.array([-1.0]))[0], [0.5, 0.5], atol=1e-6)
+    np.testing.assert_allclose(solve(np.array([1.0]))[0], [1.0, 0.0], atol=1e-6)

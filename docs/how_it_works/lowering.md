@@ -133,8 +133,8 @@ nodes combine into the policy for its procedure:
 A `block` hint anywhere in a function wins over `.scalar()`. Under
 `auto`, the size limits in `passes/program/scalarize.py` include 4096 scalar
 operations per procedure and 16,384 across the program. Only procedures whose values
-are all `float64` expand, because an integer store truncates and expansion
-would drop that. A solver call also blocks expansion of its caller. A
+are all `float64`, `int64` or `bool` expand, because a narrower store rounds or
+truncates and expansion would drop that. A solver call also blocks expansion of its caller. A
 derivative built from a hinted function inherits the hint, so a scalar stage model gets scalar derivative procedures too.
 
 A hint only chooses between loops and scalar code. Every other pass still runs

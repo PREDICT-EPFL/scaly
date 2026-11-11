@@ -32,13 +32,47 @@ from ..passes.program._common import name_scope, buffer_refs, prints, rebuild_pr
 from ..utils.names import NameScope
 from .toolchain import CDialect, VectorLibm
 
-# Scalar ProgramOp -> C spelling, from the elementwise table. Operators render inline; libm ops render as calls.
-_BIN_SYM = {ProgramOp.MOD: "%"} | {r.program: r.c for op, r in ELEMENTWISE.items() if OP_INFO[op].arity == 2 and not r.c.isidentifier()}
+# Scalar ProgramOp -> C spelling, from the elementwise table. Operators render inline, libm ops as
+# calls, and templates by substituting the operands.
+_TEMPLATE_C = {r.program: r.c for r in ELEMENTWISE.values() if "{" in r.c}
+_OPERATORS = {op: r for op, r in ELEMENTWISE.items() if not r.c.isidentifier() and "{" not in r.c}
+_PREFIX = {r.program: r.c for op, r in _OPERATORS.items() if OP_INFO[op].arity == 1}
+_BIN_SYM = {ProgramOp.MOD: "%"} | {r.program: r.c for op, r in _OPERATORS.items() if OP_INFO[op].arity == 2}
 _UNARY_C = {r.program: r.c for op, r in ELEMENTWISE.items() if OP_INFO[op].arity == 1 and r.c.isidentifier()}
 _BINARY_C = {r.program: r.c for op, r in ELEMENTWISE.items() if OP_INFO[op].arity == 2 and r.c.isidentifier()}
 _INTEGER_C = {r.program: r.c_integer for r in ELEMENTWISE.values() if r.c_integer is not None}
-# 17 significant digits read a double back exactly.
-_PRINTF_CONVERSION = {"double": "%.17g"}
+# printf conversion and argument by dtype. 17 significant digits read a double back exactly.
+_PRINTF = {
+  "float64": ("%.17g", "{}"),
+  "int32": ("%lld", "(long long)({})"),
+  "int64": ("%lld", "(long long)({})"),
+  "bool": ("%s", '(({}) ? "True" : "False")'),
+}
+# NumPy's floor division and remainder of int64, without C's traps: a zero divisor gives 0, and
+# INT64_MIN // -1 wraps. Narrower integers convert to and from int64.
+_FLOOR_HELPERS = {
+  ProgramOp.FLOORDIV: [
+    "static inline int64_t scaly_floordiv(int64_t x, int64_t y) {",
+    "  if (y == 0) return 0;",
+    "  if (y == -1) return (int64_t)(0 - (uint64_t)x);",
+    "  return x / y - (x % y != 0 && (x < 0) != (y < 0));",
+    "}",
+  ],
+  ProgramOp.FLOORMOD: [
+    "static inline int64_t scaly_floormod(int64_t x, int64_t y) {",
+    "  if (y == 0 || y == -1) return 0;",
+    "  int64_t r = x % y;",
+    "  return r != 0 && (r < 0) != (y < 0) ? r + y : r;",
+    "}",
+  ],
+}
+# isfinite is only meaningful when the compiler keeps infinities and NaN, which -ffast-math and
+# -ffinite-math-only both drop.
+_FAST_MATH_GUARD = [
+  "#if defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__",
+  '#error "Scaly code calling isfinite cannot be compiled with -ffast-math or -ffinite-math-only"',
+  "#endif",
+]
 # Defining SCALY_PRINTF before this point reroutes prints, and ``-DSCALY_PRINTF(...)=`` removes them.
 _PRINTF_DEFINES = ["#ifndef SCALY_PRINTF", "#include <stdio.h>", "#define SCALY_PRINTF printf", "#endif"]
 
@@ -48,12 +82,15 @@ def _includes(
 ) -> list[str]:
   # Vector types for coalesced stores (``_emit_body``): ``aligned(8)`` because the ABI only
   # promises double alignment, ``may_alias`` because they access plain double storage.
+  ops = set() if prog is None else {n.op for n in walk_program(prog)}
   return [
     "#include <math.h>",
     "#include <stddef.h>",
     "#include <stdint.h>",
     *extra,
+    *(_FAST_MATH_GUARD if ProgramOp.ISFINITE in ops else []),
     *(_PRINTF_DEFINES if prog is not None and prints(prog) else []),
+    *(line for op, helper in _FLOOR_HELPERS.items() if op in ops for line in helper),
     *([_VECTOR_TYPEDEF] if dialect == "gnu" else []),
     *_lane_defines(prog, dialect=dialect, vector_libm=vector_libm),
   ]
@@ -324,8 +361,9 @@ def _emit_statement(
     lines.append(f"{pad}{c_ident(stmt.attrs['callee'])}_raw({', '.join(ptrs)});")
   elif stmt.op == ProgramOp.PRINT:
     pieces = [piece.replace("%", "%%") for piece in stmt.attrs["pieces"]]
-    fmt = pieces[0] + "".join(_PRINTF_CONVERSION[a.dtype.c_type] + piece for a, piece in zip(stmt.args, pieces[1:], strict=True))
-    lines.append(f"{pad}SCALY_PRINTF({', '.join([_c_string(fmt), *(_emit_scalar(a, ptr_expr) for a in stmt.args)])});")
+    fmt = pieces[0] + "".join(_PRINTF[a.dtype.name][0] + piece for a, piece in zip(stmt.args, pieces[1:], strict=True))
+    values = [_PRINTF[a.dtype.name][1].format(_emit_scalar(a, ptr_expr)) for a in stmt.args]
+    lines.append(f"{pad}SCALY_PRINTF({', '.join([_c_string(fmt), *values])});")
   else:
     raise LoweringError(f"Program IR C renderer: statement op {stmt.op} not yet handled")
 
@@ -405,14 +443,16 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, s
       s = (var_expr or {}).get(node.attrs["name"], c_ident(node.attrs["name"]))
     elif op == ProgramOp.LOAD:
       s = (var_expr or {}).get(f"@load{id(node)}") or _emit_view(node.args[0], ptr_expr, var_expr)
-    elif op == ProgramOp.NEG:
-      s = f"(-{args[0]})"
+    elif op in _PREFIX:
+      s = f"({_PREFIX[op]}{args[0]})"
+    elif op in _INTEGER_C and node.dtype.is_integer:
+      s = _INTEGER_C[op].format(*args, type=node.dtype.c_type)
+    elif op in _TEMPLATE_C:
+      s = _TEMPLATE_C[op].format(*args, type=node.dtype.c_type)
     elif op in _BIN_SYM:
       s = f"({args[0]} {_BIN_SYM[op]} {args[1]})"
     elif op in _UNARY_C:
       s = f"{_UNARY_C[op]}({args[0]})"
-    elif op in _INTEGER_C and node.dtype.is_integer:
-      s = _INTEGER_C[op].format(*args)
     elif op in _BINARY_C:
       s = f"{_BINARY_C[op]}({args[0]}, {args[1]})"
     elif op == ProgramOp.BIT_SELECT:

@@ -350,3 +350,24 @@ def test_zero_folding_preserves_dtype_and_lowering_hint() -> None:
   result = sc.simplify(expr)
   assert result.type.dtype == x.type.dtype and result.lowering == "scalar"
   assert result.support == frozenset()
+
+
+def test_predicates_select_and_casts_keep_zeros_only_where_numpy_does() -> None:
+  """Support is a superset of NumPy's nonzeros: at an all-zero entry ``<`` and ``!=`` are false, ``<=``,
+  ``==``, ``~`` and ``isfinite`` are true, and ``where`` is zero only where both branches are."""
+  a, b = (Expr.const(np.array(v, dtype=float)) * sc.sym(f"support_pred_{n}", 4) for n, v in (("a", [0, 1, 0, 1]), ("b", [0, 0, 1, 1])))
+  k = sc.cast(sc.cast(a, "int64"), "float64")
+  cases = {
+    "lt": (a < b, {1, 2, 3}),
+    "ne": (sc.not_equal(a, b), {1, 2, 3}),
+    "and": ((a > 0.0) & (b > 0.0), {1, 2, 3}),
+    "le": (a <= b, None),
+    "eq": (sc.equal(a, b), None),
+    "not": (~(a > 0.0), None),
+    "isfinite": (sc.isfinite(a), None),
+    "select": (sc.where(sc.sym("support_pred_c", 4) > 0.0, a, b), {1, 2, 3}),
+    "cast": (k, {1, 3}),
+    "floordiv": (sc.cast(sc.cast(a, "int64") // sc.cast(b, "int64"), "float64"), {1, 3}),
+  }
+  for name, (expr, expected) in cases.items():
+    assert expr.support == (None if expected is None else frozenset(expected)), name

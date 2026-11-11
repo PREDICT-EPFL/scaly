@@ -7,6 +7,8 @@ import operator
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol, cast
 
+import numpy as np
+
 from ..ir import program as p
 from ..ir.expr import Expr, ExprOp, _full_like
 from ..ir.program import ProgramNode, ProgramOp
@@ -148,12 +150,28 @@ _ARITHMETIC: dict[ProgramOp, Callable[..., Any]] = {
 }
 _MATH = {op: getattr(math, op.value) for op in (*p.UNARY_FN_OPS, ProgramOp.POW, ProgramOp.ATAN2) if op != ProgramOp.ABS}
 _MATH[ProgramOp.ABS] = abs
+_LOGIC: dict[ProgramOp, Callable[..., bool]] = {
+  ProgramOp.LT: operator.lt,
+  ProgramOp.LE: operator.le,
+  ProgramOp.EQ: operator.eq,
+  ProgramOp.NE: operator.ne,
+  ProgramOp.AND: lambda x, y: bool(x and y),
+  ProgramOp.OR: lambda x, y: bool(x or y),
+  ProgramOp.NOT: operator.not_,
+  ProgramOp.ISFINITE: math.isfinite,
+  ProgramOp.SELECT: lambda c, x, y: x if c else y,
+  # Python's // and % round toward negative infinity, as NumPy's do.
+  ProgramOp.FLOORDIV: operator.floordiv,
+  ProgramOp.FLOORMOD: operator.mod,
+}
 
 
 def constant(value: int | float, dtype: DType) -> ProgramNode:
-  """A program constant of ``dtype``, truncating to int for integer dtypes."""
+  """A program constant of ``dtype``, truncating to int for integer and bool dtypes."""
   return ProgramNode(
-    ProgramOp.CONST_INT if dtype.is_integer else ProgramOp.CONST_FLOAT, attrs={"value": int(value) if dtype.is_integer else float(value)}, dtype=dtype
+    ProgramOp.CONST_FLOAT if dtype.is_floating else ProgramOp.CONST_INT,
+    attrs={"value": float(value) if dtype.is_floating else int(value)},
+    dtype=dtype,
   )
 
 
@@ -179,6 +197,13 @@ def _evaluate_scalar(op: ProgramOp, values: list[int | float], dtype: DType) -> 
       return cast(int | float, _ARITHMETIC[op](*values))
     if op in _MATH:
       return _MATH[op](*values)
+    if op in _LOGIC:
+      return _LOGIC[op](*values)
+    if op == ProgramOp.CAST:
+      # A float becomes an integer by dropping its fraction; NaN and infinities raise and stay runtime operations.
+      return (
+        float(np.float32(values[0])) if dtype.bits == 32 and dtype.is_floating else float(values[0]) if dtype.is_floating else math.trunc(values[0])
+      )
     if op in {ProgramOp.MINIMUM, ProgramOp.MAXIMUM} and all(math.isfinite(v) for v in values):
       return (min if op == ProgramOp.MINIMUM else max)(values)
   except (ValueError, OverflowError, ZeroDivisionError):
@@ -205,4 +230,6 @@ def fold_program(node: ProgramNode) -> ProgramNode:
   if node.args and all(a.op in CONSTANTS for a in node.args):
     value = evaluate(node.op, [a.attrs["value"] for a in node.args], node.dtype)
     return node if value is None else constant(value, node.dtype)
+  if node.op == ProgramOp.SELECT and node.args[0].op in CONSTANTS:
+    return node.args[1] if node.args[0].attrs["value"] else node.args[2]
   return fold(ARITH_PROGRAM, node)

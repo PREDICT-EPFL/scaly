@@ -440,7 +440,12 @@ except NotImplementedError as error:
 ```
 
 Clipping a control with minimum and maximum operations therefore prevents
-differentiation of that expression. For an
-optimization problem, express control limits as variable bounds instead.
+differentiation of that expression. `sc.where` differentiates, taking the
+derivative of the branch it chooses, so `sc.where(u > 1.0, 1.0, u)` clips with a
+derivative of zero above the limit and one below. For an optimization problem,
+express control limits as variable bounds instead.
+
+Comparisons, `sc.isfinite` and casts to integer or `bool` types have no
+derivative, and a gradient of an integer or `bool` value raises `TypeError`.
 
 See [How differentiation works](../how_it_works/autodiff.md) for the algorithms.

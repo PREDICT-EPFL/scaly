@@ -9,7 +9,7 @@ import numpy as np
 from ..ir.expr import Expr, ExprOp, _uniform, from_dense, gather, pack, scatter, topo, to_dense, values, zeros_like
 from ..ir.support import slice_indices, support_indices
 from .calls import _call_vjp, _vmap_vjp
-from .rules import ELEMENTWISE, cotangent
+from .rules import ELEMENTWISE, accumulate, carry_mask, cotangent
 from .sparsity import _check_wrt, _depends_on, _prunable_support
 
 
@@ -23,6 +23,8 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
   """
   if len(outputs) != len(cotangents):
     raise ValueError(f"expected {len(outputs)} cotangents, got {len(cotangents)}")
+  if not all(out.type.dtype.is_floating for out in outputs):
+    raise TypeError("integer and boolean values have no tangent")
   for wrt in wrts:
     _check_wrt(wrt)
   adjoints: dict[int, Expr] = {}
@@ -49,14 +51,31 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
         if arg.id in expr_ids:
           adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
       continue
-    active = tuple(i for i, arg in enumerate(expr.args) if needed(arg)) if expr.op in {ExprOp.CALL, *ELEMENTWISE} else None
-    for arg, arg_cot in zip(expr.args, _local_vjp(expr, cot, active), strict=True):
+    active = (
+      tuple(i for i, arg in enumerate(expr.args) if arg.type.dtype.is_floating and needed(arg)) if expr.op in {ExprOp.CALL, *ELEMENTWISE} else None
+    )
+    transpose = lambda c: _local_vjp(expr, c, active)  # noqa: E731
+    arg_cots = carry_mask(cot, transpose) if expr.op in _SELECTIONS else transpose(cot)
+    for arg, arg_cot in zip(expr.args, arg_cots, strict=True):
       if arg_cot is not None and arg.id in expr_ids:
         if arg.type.pattern is not None and arg_cot.type.pattern is not arg.type.pattern:
           arg_cot = from_dense(to_dense(arg_cot), arg.type.pattern)
-        adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
+        adjoints[arg.id] = arg_cot if arg.id not in adjoints else accumulate(adjoints[arg.id], arg_cot)
 
   return tuple(adjoints.get(wrt.id, zeros_like(wrt)) for wrt in wrts)
+
+
+# Structural ops whose transposes weigh each entry by 0 or 1, so a select's mask passes through them.
+_SELECTIONS = {
+  ExprOp.SUM,
+  ExprOp.RESHAPE,
+  ExprOp.TRANSPOSE,
+  ExprOp.SLICE,
+  ExprOp.GATHER,
+  ExprOp.SCATTER,
+  ExprOp.STACK,
+  ExprOp.CONCAT,
+}
 
 
 def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> tuple[Expr | None, ...]:
@@ -76,7 +95,7 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
   if expr.op == ExprOp.RESHAPE:
     return (cot.reshape(args[0].shape),)
   if expr.op == ExprOp.PRINT:
-    return (cot, *(zeros_like(arg) for arg in args[1:]))
+    return (cot, *(zeros_like(arg) if arg.type.dtype.is_floating else None for arg in args[1:]))
   if expr.op == ExprOp.TRANSPOSE:
     axes = expr.attrs["axes"]
     inv = tuple(int(np.argsort(axes)[i]) for i in range(len(axes)))

@@ -132,6 +132,16 @@ expression graph for inspection and export.
 
 ::: scaly.ir.expr.maximum
 
+::: scaly.ir.expr.where
+
+::: scaly.ir.expr.cast
+
+::: scaly.ir.expr.equal
+
+::: scaly.ir.expr.not_equal
+
+::: scaly.ir.expr.isfinite
+
 ::: scaly.ir.expr.print_
     options:
       show_source: false

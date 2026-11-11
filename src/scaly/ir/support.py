@@ -270,6 +270,9 @@ def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> 
     if a.shape == node.shape and np.all(keep):
       return sa
     return _make_support(entries[keep])
+  if op == "select":
+    a, b = (_broadcast_support(arg, node.shape, support_of(arg)) for arg in node.args[1:])
+    return _combine(a, b, intersection=False)
   if op == "numerator":
     return _broadcast_support(node.args[0], node.shape, support_of(node.args[0]))
   if op == "sum":

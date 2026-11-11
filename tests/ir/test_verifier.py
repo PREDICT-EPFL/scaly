@@ -50,7 +50,7 @@ def test_unary_dtype_mismatch_caught() -> None:
   x = sc.sym("x", 3, dtype=dtypes.float32)
   # forge a node whose output dtype differs from its arg's dtype
   bad = Expr(ExprOp.NEG, (x,), TensorType((3,), dtype=dtypes.float64, diff=True))
-  with pytest.raises(VerifyError, match="unary-shape-dtype-match"):
+  with pytest.raises(VerifyError, match="elementwise-shape-dtype"):
     verify_expr(bad)
 
 
@@ -58,8 +58,21 @@ def test_binary_shape_mismatch_caught() -> None:
   x = sc.sym("x", 3)
   y = sc.sym("y", 4)
   bad = Expr(ExprOp.ADD, (x, y), TensorType((3,), dtype=dtypes.float64, diff=True))
-  with pytest.raises(VerifyError, match="binary-shape-dtype-match"):
+  with pytest.raises(VerifyError, match="elementwise-shape-dtype"):
     verify_expr(bad)
+
+
+def test_select_and_cast_dtypes_caught() -> None:
+  x = sc.sym("x", 3)
+  bad_condition = Expr(ExprOp.SELECT, (x, x, x), TensorType((3,), dtype=dtypes.float64, diff=True))
+  with pytest.raises(VerifyError, match="bool condition"):
+    verify_expr(bad_condition)
+  bad_predicate = Expr(ExprOp.LT, (x, x), TensorType((3,), dtype=dtypes.float64, diff=False))
+  with pytest.raises(VerifyError, match="output dtype float64 != bool"):
+    verify_expr(bad_predicate)
+  bad_cast = Expr(ExprOp.CAST, (x,), TensorType((3,), dtype=dtypes.bool_, diff=False))
+  with pytest.raises(VerifyError, match="x != 0"):
+    verify_expr(bad_cast)
 
 
 def test_reshape_size_mismatch_caught() -> None:

@@ -56,8 +56,8 @@ def _dtype_is_dtype(n: ProgramNode) -> str | None:
 def _const_int_has_value(n: ProgramNode) -> str | None:
   if "value" not in n.attrs or not isinstance(n.attrs["value"], int):
     return "CONST_INT missing integer 'value' attr"
-  if not n.dtype.is_integer:
-    return f"CONST_INT must have integer dtype, got {n.dtype}"
+  if not n.dtype.is_integer and not n.dtype.is_bool:
+    return f"CONST_INT must have integer or bool dtype, got {n.dtype}"
   return None
 
 
@@ -215,6 +215,23 @@ def _bit_select_operands(n: ProgramNode) -> str | None:
   return None
 
 
+_BOOL_RESULT = frozenset({ProgramOp.LT, ProgramOp.LE, ProgramOp.EQ, ProgramOp.NE, ProgramOp.AND, ProgramOp.OR, ProgramOp.NOT, ProgramOp.ISFINITE})
+
+
+def _typed_scalar(n: ProgramNode) -> str | None:
+  """Predicates and logic give bool, a select picks between values of its own dtype, and integer
+  floor division and remainder stay integer."""
+  if n.op in _BOOL_RESULT and not n.dtype.is_bool:
+    return f"{n.op.value} gives bool, got {n.dtype}"
+  if n.op in {ProgramOp.AND, ProgramOp.OR, ProgramOp.NOT} and not all(a.dtype.is_bool for a in n.args):
+    return f"{n.op.value} takes bool operands"
+  if n.op == ProgramOp.SELECT and (len(n.args) != 3 or not n.args[0].dtype.is_bool or any(a.dtype != n.dtype for a in n.args[1:])):
+    return "SELECT takes a bool condition and two values of its dtype"
+  if n.op in {ProgramOp.FLOORDIV, ProgramOp.FLOORMOD} and not (n.dtype.is_integer and all(a.dtype == n.dtype for a in n.args)):
+    return f"{n.op.value} takes and gives integers of one dtype"
+  return None
+
+
 def _proc_params(n: ProgramNode) -> str | None:
   pc = n.attrs.get("param_count")
   if pc is None:
@@ -247,5 +264,6 @@ spec_program_full = Spec(
     Rule(ProgramOp.PRINT, "print-pieces", _print_pieces),
     Rule(ProgramOp.PROC, "proc-params", _proc_params),
     Rule(ProgramOp.BIT_SELECT, "bit-select-operands", _bit_select_operands),
+    *(Rule(op, "typed-scalar", _typed_scalar) for op in (*_BOOL_RESULT, ProgramOp.SELECT, ProgramOp.FLOORDIV, ProgramOp.FLOORMOD)),
   ]
 )
