@@ -297,3 +297,39 @@ def test_elementwise_structural_zeros_skip_infinity_and_runtime_stored_zeros_do_
   a = sparse.coo_array(([1.0, 0.0], (pattern.rows, pattern.cols)), shape=pattern.shape)
   actual = sparse.coo_array(fn(a, np.full((2, 2), np.inf))).toarray()
   np.testing.assert_array_equal(actual, [[np.inf, 0], [0, np.nan]])
+
+
+@pytest.mark.parametrize("operation", ["identity", "values"])
+@pytest.mark.parametrize("layout", ["csr", "csc", "coordinates"])
+def test_sparse_boundary_copy_writes_directly_without_private_values(operation, layout):
+  pattern = CanonicalPattern((4, 5), (0, 1, 3, 3), (4, 0, 1, 4))
+  source_layout = sc.SparsityPattern(pattern.shape, (3, 0, 3, 1), (4, 4, 1, 0)) if layout == "coordinates" else layout
+  leaf = sc.arg("x", sc.TensorType(pattern.shape, pattern=pattern), layout=source_layout)
+  output = sc.arg("y", pattern.nnz) if operation == "values" else sc.arg("y", sc.TensorType(pattern.shape, pattern=pattern), layout="csc")
+  fn = sc.function(leaf, outputs=output, name=f"direct_{operation}_{layout}")(lambda x: sc.values(x) if operation == "values" else x)
+  program = _lowered(fn)
+  assert not any(n.op == ProgramOp.BUFFER and n.attrs["address_space"] == "private" for n in walk_program(program))
+  data = np.array([0.2, -0.5, 1.2, 2.3])
+  source = sparse.coo_array((data, (pattern.rows, pattern.cols)), shape=pattern.shape)
+  actual = fn(source)
+  if operation == "values":
+    np.testing.assert_array_equal(actual, data)
+  else:
+    np.testing.assert_array_equal(sparse.coo_array(actual).toarray(), source.toarray())
+
+
+def test_batched_shared_sparse_output_copies_between_declared_layouts():
+  pattern = CanonicalPattern((4, 5), (0, 1, 3, 3), (4, 0, 1, 4))
+  type_ = sc.TensorType((2, *pattern.shape), pattern=pattern)
+  outputs = sc.group(sc.arg("y", type_, layout="csc"), sc.arg("z", type_, layout="csr"))
+
+  def body(x):
+    y = -x
+    return y, y
+
+  fn = sc.function(sc.arg("x", type_, layout="csc"), outputs=outputs, name="direct_shared_batched")(body)
+  assert not any(n.op == ProgramOp.BUFFER and n.attrs["address_space"] == "private" for n in walk_program(_lowered(fn)))
+  source = sparse.coo_array((np.arange(8.0), (np.repeat(np.arange(2), 4), np.tile(pattern.rows, 2), np.tile(pattern.cols, 2))), shape=type_.shape)
+  for actual in fn(source):
+    assert isinstance(actual, sparse.sparray)
+    np.testing.assert_array_equal(sparse.coo_array(actual).toarray(), -source.toarray())

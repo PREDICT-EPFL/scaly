@@ -52,11 +52,11 @@ def _lower_stored_matmul(ctx: LowerCtx, node: Expr) -> None:
 
   def emit_row(outputs, row, column, entries, extent):
     reductions, (k,) = ctx.reduce((extent,), f"stored_{name}")
-    inner = ctx.index_at(columns[entries], k)
+    inner = ctx.index_at(columns[entries], k, shared=True)
     sparse_value = ctx.read_stored(src, entries, k)
     dense_coords = [inner] if vector else [inner, column] if left else [column, inner]
     if vector:
-      slot = ctx.index_at(active, row)
+      slot = ctx.index_at(active, row, shared=True)
     elif left:
       slot = p.add(p.mul(row, p.const_int(width)), column)
     else:
@@ -69,7 +69,7 @@ def _lower_stored_matmul(ctx: LowerCtx, node: Expr) -> None:
       emit_row(outputs, p.const_int(row), column, order[start:stop], int(stop - start))
   else:
     outputs, (row, column) = ctx.nest((len(active), width), f"row_{name}")
-    bounds = ctx.new_const_index(pointers)
+    bounds = ctx.new_const_index(pointers, shared=True)
     start = p.load(p.view(bounds, [row]))
     stop = p.load(p.view(bounds, [p.add(row, p.const_int(1))]))
     emit_row(outputs, row, column, order, (start, stop))

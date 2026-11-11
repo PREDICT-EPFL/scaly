@@ -1,0 +1,32 @@
+Maros–Mészáros convex QP test set, small subset
+
+The 48 problems in this directory with n + m <= 1000 (m counting every row of A, bound rows
+included) come from https://github.com/qpsolvers/maros_meszaros_qpbenchmark, directory data/, at
+commit c7d02f4f3a27e26fc5c248fe8366e2d0b87a6de0 (2024-01-17), distributed under the Apache License
+2.0 (LICENSE in this directory). The original test set is described in
+
+  I. Maros and C. Mészáros, A repository of convex quadratic programming problems,
+  Optimization Methods and Software 11(1-4), 671-681, 1999. doi:10.1080/10556789908805768
+
+Modification: each .mat file was converted to a compressed .npz with the same fields (P and A in
+CSC form, q, r, l, u); no values were changed. The problems read
+
+  minimize 1/2 x^T P x + q^T x + r   subject to   l <= A x <= u,
+
+with P stored in full (both triangles) and +-1e20 (sometimes rounded to 9.999999999999998e19)
+standing for an infinite bound. The loader, _problem in
+tests/integration/test_sparse_kkt.py, splits equality, inequality and bound rows
+for the interior-point method's regularized systems.
+
+The problem archives above are unchanged copies from origin/devrush at the same basename.
+The added *_patterns.npz files are reference results, generated from the frozen branch's
+src/scaly/opt/ipm/kkt.py::Kernels.kkt_matrix, the corresponding full regularized system,
+and src/scaly/ad/sparsity.py::jacobian_sparsity. The source is read
+through git show; no devrush implementation is ported. Fields record both KKT patterns and
+their value Jacobians in CSC order, and the P, A, G,
+A-transpose and G-transpose product Jacobians with respect to the vector and matrix data.
+The P data contains its upper triangle, shared by the mirrored off-diagonal coordinates.
+Regularization entries and matrix values are independent symbolic parameters.
+
+The test rewrites that problem against main's public API and recomputes numerical references
+with SciPy and central differences. It follows devrush's equality/inequality/bound row split.

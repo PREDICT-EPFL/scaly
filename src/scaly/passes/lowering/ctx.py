@@ -253,6 +253,7 @@ class LowerCtx:
     self._orders: dict[int, np.ndarray] = {}
     self._canonical: dict[int, ProgramNode] = {}
     self._output_orders: dict[int, np.ndarray] = {}
+    self._shared_indices: dict[tuple[int, ...], ProgramNode] = {}
 
   # --- declarations ---------------------------------------------------------
 
@@ -297,11 +298,15 @@ class LowerCtx:
         raise LoweringError(f"output {name!r} expression was not lowered")
       if src == name or expr.type.storage_size == 0:
         continue  # already written in place, or nothing to copy
-      source = self.buf_of(expr)
-      if layout is None:
+      source = self.raw_buf_of(expr)
+      order = self._orders.get(expr.id)
+      permutation = order if layout is None else layout.permutation
+      if layout is not None and order is not None:
+        permutation = order[permutation]
+      if permutation is None:
         self.statements.append(_copy_loop(source, self.buffers[name], expr.type.storage_shape, self.names))
       else:
-        self.reorder(source, expr, layout.permutation, self.buffers[name])
+        self.reorder(source, expr, permutation, self.buffers[name])
 
   # --- body -----------------------------------------------------------------
 
@@ -335,7 +340,7 @@ class LowerCtx:
     return np.where(slots < 0, -1, slots // width * width + order[slots % width])
 
   def read_stored(self, expr: Expr, slots: np.ndarray, k: ProgramNode) -> ProgramNode:
-    return p.load(p.view(self.raw_buf_of(expr), [self.index_at(self.physical_slots(expr, slots), k)]))
+    return p.load(p.view(self.raw_buf_of(expr), [self.index_at(self.physical_slots(expr, slots), k, shared=True)]))
 
   def stored_view(self, expr: Expr, slot: ProgramNode) -> ProgramNode:
     if (order := self._orders.get(expr.id)) is not None and len(order):
@@ -344,7 +349,7 @@ class LowerCtx:
         index = slot.attrs["value"]
         slot = p.const_int(index // width * width + int(order[index % width]))
       else:
-        slot = p.add(p.mul(p.div(slot, p.const_int(width)), p.const_int(width)), self.index_at(order, p.mod(slot, p.const_int(width))))
+        slot = p.add(p.mul(p.div(slot, p.const_int(width)), p.const_int(width)), self.index_at(order, p.mod(slot, p.const_int(width)), shared=True))
     return p.view(self.raw_buf_of(expr), [slot])
 
   def new_private(self, dtype: DType, shape: tuple[int, ...], *, support: Support = None) -> ProgramNode:
@@ -422,16 +427,21 @@ class LowerCtx:
     self.statements.append(buf)
     return buf
 
-  def new_const_index(self, idx: Iterable[int]) -> ProgramNode:
+  def new_const_index(self, idx: Iterable[int], *, shared: bool = False) -> ProgramNode:
     """A read-only int64 index table (for GATHER/SCATTER), declared ``static const``."""
     values = [int(v) for v in idx]
+    key = tuple(values) if shared else ()
+    if shared and key in self._shared_indices:
+      return self._shared_indices[key]
     buf = p.const_buffer(self.names.allocate(f"k{self._tmp}", generated=True), dtypes.int64, (len(values),), values)
     self._tmp += 1
     self.buffers[buf.attrs["name"]] = buf
     self.statements.append(buf)
+    if shared:
+      self._shared_indices[key] = buf
     return buf
 
-  def index_at(self, idx: np.ndarray, k: ProgramNode) -> ProgramNode:
+  def index_at(self, idx: np.ndarray, k: ProgramNode, *, shared: bool = False) -> ProgramNode:
     """The GATHER source (or SCATTER destination) for element ``k``, as arithmetic where it can be.
 
     Every range whose contribution is affine becomes a term over ``k``; only the non-affine
@@ -447,7 +457,7 @@ class LowerCtx:
     period = len(amap.residual)
     out: ProgramNode | None = None
     if period > 1:
-      table = self.new_const_index(amap.residual)
+      table = self.new_const_index(amap.residual, shared=shared)
       out = p.load(p.view(table, [k if period == idx.size else p.mod(k, p.const_int(period))]))
     elif int(amap.residual[0]) or not amap.dims:
       out = p.const_int(int(amap.residual[0]))
