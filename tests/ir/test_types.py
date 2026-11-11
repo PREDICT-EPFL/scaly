@@ -84,7 +84,7 @@ def test_unsigned_constants_fold_within_their_own_range() -> None:
   assert evaluate(ProgramOp.ADD, [100, 27], dtypes.int64) == 127
 
 
-@pytest.mark.parametrize("dtype", ["uint8", dtypes.uint8], ids=["name", "descriptor"])
+@pytest.mark.parametrize("dtype", ["uint8", dtypes.uint8, replace(dtypes.uint8, name="u1")], ids=["name", "descriptor", "alias"])
 def test_uint8_is_not_an_expression_dtype(dtype: sc.DType | str) -> None:
   for make in (
     lambda: sc.TensorType((2,), dtype=sc.as_dtype(dtype)),

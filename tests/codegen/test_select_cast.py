@@ -136,12 +136,13 @@ CAST_CASES = np.array([-(2.0**62), -2.5, -1.5, -0.5, -0.0, 0.5, 1.9, 2.0**53, 2.
 
 
 @pytest.mark.parametrize("variant", ["block", "scalar"])
-def test_uint8_casts_are_rejected_before_lowering(variant: str) -> None:
+@pytest.mark.parametrize("dtype", [sc.dtypes.uint8, sc.DType("u1", 8, "uint8_t", is_integer=True, is_unsigned=True)], ids=["canonical", "alias"])
+def test_uint8_casts_are_rejected_before_lowering(variant: str, dtype: sc.DType) -> None:
   for x in (getattr(sc.const([0, 255]), variant)(), getattr(sc.sym("bytes", 2), variant)()):
     with pytest.raises(ValueError, match="unsupported expression dtype uint8"):
       sc.cast(x, "uint8")
     with pytest.raises(ValueError, match="unsupported expression dtype uint8"):
-      x.cast(sc.dtypes.uint8)
+      x.cast(dtype)
 
 
 @pytest.mark.parametrize("dtype", ["int32", "int64"])

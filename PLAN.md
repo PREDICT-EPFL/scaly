@@ -14,7 +14,7 @@ to other issues.
 - [x] Add failing public-path regressions, including 0 and 255 with scalar and block hints.
 - [x] Reject uint8 expression types, update the documented limit and verify internal masks.
 - [x] Update collection baseline and prove regressions fail without the guard.
-- [ ] Run the full pre-merge hook detached through the shared suite runner.
+- [x] Run the full pre-merge hook detached through the shared suite runner.
 - [ ] Open a draft PR on main after checks, link it, and get Opus cross-review and the required
       additional correctness review for IR changes. Fix findings and check only those fixes.
 - [ ] Remove this temporary plan, mark ready and report the result.
@@ -25,3 +25,11 @@ to other issues.
 Inspection also checked the frozen devrush dtype tests. They cover float32 metadata and coercion,
 not uint8 arithmetic. Existing tests cover NumPy references for both cast lowerings, bit selects
 at each lane width, packed-mask conversion and C snapshots.
+
+Draft PR: https://github.com/PREDICT-EPFL/scaly/pull/405. Initial full hook passed,
+3,776 passed and 55 skipped, plus smoke, docs and private-name checks.
+Sol found an alias bypass through `DType("u1", 8, "uint8_t", is_integer=True,
+is_unsigned=True)`. The guard now checks unsigned eight-bit descriptors as well as the canonical
+name. Three new alias cases failed before the fix, then all 117 focused checks passed, including
+internal masks and C/header snapshots. Full validation of this fix and a Sol delta check remain.
+Opus's original review is still pending. Keep all fixes together for the second push.
