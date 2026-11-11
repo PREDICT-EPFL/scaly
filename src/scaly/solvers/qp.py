@@ -90,7 +90,7 @@ def _decides_on(exprs: Sequence[Expr], variables: Sequence[Expr]) -> bool:
           seen.add(key)
           if visit(callee.results, formals):
             return True
-      elif not node.type.dtype.is_floating and any(_depends_on(node, v, memo) for v in active):
+      elif (node.op == ExprOp.LOOP or not node.type.dtype.is_floating) and any(_depends_on(node, v, memo) for v in active):
         return True
     return False
 

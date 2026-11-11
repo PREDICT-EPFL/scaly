@@ -76,7 +76,15 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
     expr, visited = pending.pop()
     if expr.id in tangents:
       continue
-    args = () if expr.op == ExprOp.STOP_GRADIENT else expr.args[:1] if expr.op == ExprOp.PRINT else read_args(expr) if callees_of(expr) else expr.args
+    args = (
+      ()
+      if expr.op == ExprOp.STOP_GRADIENT
+      else expr.args[:1]
+      if expr.op == ExprOp.PRINT
+      else read_args(expr)
+      if callees_of(expr) and expr.op != ExprOp.LOOP
+      else expr.args
+    )
     if expr.type.dtype.is_floating and nseed and args and not visited:
       pending.append((expr, True))
       pending.extend((arg, False) for arg in reversed(args) if arg.id not in tangents)
@@ -93,6 +101,8 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
         tangent = d[0]
       elif expr.op == ExprOp.EXTERN:
         raise NotImplementedError(f"active derivative through extern {expr.attrs['callee'].name!r} needs sc.custom_derivative on a wrapping Function")
+      elif expr.op == ExprOp.LOOP:
+        raise NotImplementedError("derivatives through scan and while_loop are not implemented yet")
       elif callees_of(expr):
         read = {arg.id for arg in args}
         call_tangents = [simplify_cse_fixpoint(t) if arg.id in read and (t := tangents[arg.id]) is not None else None for arg in expr.args]

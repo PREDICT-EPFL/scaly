@@ -18,7 +18,8 @@ Passes can also call it explicitly after graph rewrites or AD transforms.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 import numpy as np
 
@@ -38,7 +39,7 @@ from .expr import (
   topo,
 )
 from .spec import Rule, Spec, VerifyError
-from .types import CanonicalPattern, DType, broadcast_shape
+from .types import CanonicalPattern, DType, TensorType, broadcast_shape, dtypes
 
 
 def verify_expr(root: Expr | Iterable[Expr], spec: "Spec | None" = None) -> None:
@@ -324,6 +325,65 @@ def _vmap_attrs(expr: Expr) -> str | None:
   return None
 
 
+def loop_result_type(attrs: Mapping[str, Any], output: int) -> TensorType | None:
+  """The type of result ``output`` of a ``LOOP``: final carries, stacked ys, the trip count, then trajectories."""
+  callee, n_carry, length = attrs["callee"], int(attrs["n_carry"]), int(attrs["length"])
+  n_ys = len(callee.outputs) - n_carry
+  if 0 <= output < n_carry:
+    return callee.inputs[output].type
+  if n_carry <= output < n_carry + n_ys or n_carry + n_ys < output <= 2 * n_carry + n_ys:
+    source = callee.outputs[output] if output < n_carry + n_ys else callee.inputs[output - n_carry - n_ys - 1]
+    return TensorType((length * source.type.storage_size,), source.type.dtype)
+  return TensorType((), dtypes.int64) if output == n_carry + n_ys else None
+
+
+def _loop_attrs(expr: Expr) -> str | None:
+  """Verify ``LOOP``: ``args = (*inits, *outers[, trip])`` against ``body(*carries, [k], *xs) -> (*carries, *ys)``."""
+  for k in ("callee", "cond", "n_carry", "length", "starts", "strides", "index", "reverse", "in_place", "output"):
+    if k not in expr.attrs:
+      return f"LOOP missing {k!r} attr"
+  callee, cond, n_carry, length = expr.attrs["callee"], expr.attrs["cond"], int(expr.attrs["n_carry"]), int(expr.attrs["length"])
+  starts, strides, index = expr.attrs["starts"], expr.attrs["strides"], bool(expr.attrs["index"])
+  n_outer = len(starts)
+  if length < 0 or n_carry < 0 or len(strides) != n_outer or len(expr.args) not in (n_carry + n_outer, n_carry + n_outer + 1):
+    return f"LOOP length {length}, n_carry {n_carry}, {n_outer} starts, {len(strides)} strides and {len(expr.args)} args disagree"
+  formals = callee.inputs
+  if len(formals) != n_carry + index + n_outer or len(callee.outputs) < n_carry:
+    return (
+      f"LOOP body {callee.name!r} must take {n_carry} carries, {'the step number, ' if index else ''}{n_outer} slices and return the carries first"
+    )
+
+  def same(a: TensorType, b: TensorType) -> bool:
+    return a.shape == b.shape and a.dtype == b.dtype and a.pattern is b.pattern
+
+  for i, (init, formal, out) in enumerate(zip(expr.args[:n_carry], formals, callee.outputs, strict=False)):
+    if not same(init.type, formal.type) or not same(out.type, formal.type):
+      return f"LOOP carry {i} must keep its type: init {_type_text(init.type)}, body {_type_text(formal.type)} -> {_type_text(out.type)}"
+  if index and (formals[n_carry].shape != () or formals[n_carry].type.dtype != dtypes.int64):
+    return "LOOP step number formal must be an int64 scalar"
+  for i, (outer, start, stride, formal) in enumerate(zip(expr.args[n_carry:], starts, strides, formals[n_carry + index :], strict=False)):
+    start, stride = int(start), int(stride)
+    if len(outer.shape) != 1 or outer.type.dtype != formal.type.dtype:
+      return f"LOOP outer {i} must be rank-1 {formal.type.dtype}, got {_type_text(outer.type)}"
+    if start < 0 or stride < 0 or length > 0 and start + (length - 1) * stride + formal.type.storage_size > outer.size:
+      return f"LOOP outer {i} window start={start}, stride={stride} reads past its outer of size {outer.size} in {length} steps"
+  if len(expr.args) > n_carry + n_outer and (expr.args[-1].shape != () or expr.args[-1].type.dtype != dtypes.int64):
+    return "LOOP trip operand must be an int64 scalar"
+  if cond is not None:
+    if len(cond.inputs) != len(formals) or not all(same(c.type, f.type) for c, f in zip(cond.inputs, formals, strict=True)) or len(cond.outputs) != 1:
+      return f"LOOP condition {cond.name!r} must take the body's inputs and return one value"
+    if cond.outputs[0].shape != () or cond.outputs[0].type.dtype != dtypes.bool_:
+      return f"LOOP condition {cond.name!r} must return a bool scalar"
+    if expr.attrs["reverse"]:
+      return "LOOP with a condition cannot run in reverse"
+  if not all(0 <= int(i) < n_carry for i in expr.attrs["in_place"]) or len(set(expr.attrs["in_place"])) != len(expr.attrs["in_place"]):
+    return f"LOOP in_place {expr.attrs['in_place']} must name distinct carries"
+  expected = loop_result_type(expr.attrs, int(expr.attrs["output"]))
+  if expected is None or not same(expr.type, expected):
+    return f"LOOP result {expr.attrs['output']} {_type_text(expr.type)} != {'out of range' if expected is None else _type_text(expected)}"
+  return None
+
+
 def _scatter_indices(expr: Expr) -> str | None:
   if "indices" not in expr.attrs:
     return "SCATTER missing 'indices' attr"
@@ -421,6 +481,7 @@ spec_expr = Spec(
     Rule(ExprOp.CALL, "call-attrs", _call_attrs),
     Rule(ExprOp.EXTERN, "extern-attrs", _call_attrs),
     Rule(ExprOp.VMAP, "vmap-attrs", _vmap_attrs),
+    Rule(ExprOp.LOOP, "loop-attrs", _loop_attrs),
     Rule(ExprOp.GATHER, "gather-indices", _gather_indices),
     Rule(ExprOp.SCATTER, "scatter-indices", _scatter_indices),
     Rule(ExprOp.STACK, "stack-shapes", _stack_shapes),
