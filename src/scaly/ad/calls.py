@@ -9,7 +9,7 @@ from scipy.sparse import csr_array
 
 from ..function.concrete import ConcreteFunction, _JVP, _JVPMany, _VmapAdjoint
 from ..function.sugar import _mapped_call
-from ..ir.expr import Expr, ExprOp, as_expr, concat, gather, pack, scatter, stack, substitute, topo, values, zeros_like
+from ..ir.expr import Expr, ExprOp, as_expr, concat, gather, pack, _scatter_zero, stack, substitute, topo, values, zeros_like
 from ..ir.types import TensorType
 from ..passes.expr import simplify_cse_fixpoint
 from .helpers import HelperKey, helper_name
@@ -329,7 +329,7 @@ def _vmap_jvp_many(
             continue
           sources = np.broadcast_to(np.arange(length * active_count * slice_size).reshape(1, length, active_count, slice_size), chosen.shape)
           targets = np.broadcast_to(np.arange(nseed * length * slice_size).reshape(nseed, length, 1, slice_size), chosen.shape)
-          term = scatter(gather(mapped_flat, sources[chosen]), targets[chosen], (nseed, length * slice_size))
+          term = _scatter_zero(gather(mapped_flat, sources[chosen]), targets[chosen], (nseed, length * slice_size))
           ret = term if ret is None else ret + term
           continue
       for pos, c_local in enumerate(active):
@@ -463,7 +463,7 @@ def _vmap_vjp(
       segments = gather(mapped, indices).reshape((length, formal_size))
       vbar = Expr.const(np.ones(length, dtype=arg.type.dtype.numpy()), dtype=arg.type.dtype) @ segments
       if start != 0 or formal_size != arg.size:
-        vbar = scatter(vbar, start + np.arange(formal_size, dtype=np.int64), arg.shape)
+        vbar = _scatter_zero(vbar, start + np.arange(formal_size, dtype=np.int64), arg.shape)
     else:
       pieces: list[Expr] = []
       groups = -(-formal_size // stride)
@@ -472,7 +472,7 @@ def _vmap_vjp(
         indices = np.asarray([it * adj_size + offset + j for it in iterations for j in range(formal_size)], dtype=np.int64)
         destinations = np.asarray([start + it * stride + j for it in iterations for j in range(formal_size)], dtype=np.int64)
         if indices.size:
-          pieces.append(scatter(gather(mapped, indices), destinations, arg.shape))
+          pieces.append(_scatter_zero(gather(mapped, indices), destinations, arg.shape))
       vbar = _sum_exprs(pieces)
     ret.append((arg, vbar))
     offset += formal_size

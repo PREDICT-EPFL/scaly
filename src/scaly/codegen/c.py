@@ -320,6 +320,8 @@ def _emit_statement(
   elif stmt.op == ProgramOp.FOR:
     rng = stmt.args[0]
     if stmt.attrs.get("zero_fill"):
+      assert len(stmt.args) == 2 and stmt.args[1].op == ProgramOp.STORE
+      assert stmt.args[1].args[1].op in (ProgramOp.CONST_INT, ProgramOp.CONST_FLOAT) and stmt.args[1].args[1].attrs["value"] == 0
       target = _emit_view(stmt.args[1].args[0], ptr_expr, {rng.attrs["name"]: "0"})
       count = _emit_scalar(rng.args[1], ptr_expr)
       lines.append(f"{pad}memset(&{target}, 0, {count} * sizeof({stmt.args[1].dtype.c_type}));")

@@ -6,7 +6,22 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from ..ir.expr import _index_values, Expr, ExprOp, _uniform, callees_of, concat, from_dense, gather, pack, scatter, stack, to_dense, values
+from ..ir.expr import (
+  _index_values,
+  Expr,
+  ExprOp,
+  _scatter_zero,
+  _uniform,
+  callees_of,
+  concat,
+  from_dense,
+  gather,
+  pack,
+  scatter,
+  stack,
+  to_dense,
+  values,
+)
 from ..passes.expr import simplify_cse_fixpoint
 from .calls import _call_jvp_many, _is_zero_const, _vmap_jvp_many, read_args
 from .rules import ELEMENTWISE, scatter_weights, tangent as _elementwise_tangent
@@ -147,28 +162,26 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
     return d[0][(slice(None), *expr.attrs["index"])]
   if op == ExprOp.GATHER:
     if expr.args[1].value is None or expr.attrs.get("mode") == "fill":
-      return stack(
-        [gather(d[0][i], args[1], axis=expr.attrs.get("axis"), mode=expr.attrs.get("mode", "promise_in_bounds"), fill_value=0) for i in range(nseed)]
-      )
+      axis = expr.attrs.get("axis")
+      source = d[0].reshape((nseed, args[0].size)) if axis is None else d[0]
+      return gather(source, args[1], axis=1 if axis is None else axis + 1, mode=expr.attrs["mode"]).reshape((nseed, *expr.shape))
     indices = _index_values(expr).reshape(-1)
     full = (np.arange(nseed, dtype=np.int64)[:, None] * args[0].size + indices[None, :]).reshape(-1)
     return gather(d[0], full).reshape((nseed, *expr.shape))
   if op == ExprOp.SCATTER:
-    if expr.attrs["combine"] in ("set", "max", "min"):
-      base_weight, update_weight = scatter_weights(expr)
-      return stack(
-        [scatter(d[0][i] * base_weight, args[1], d[1][i] * update_weight, axis=expr.attrs.get("axis"), mode=expr.attrs["mode"]) for i in range(nseed)]
-      )
     if expr.args[1].value is None or expr.attrs["mode"] == "fill" or expr.attrs["combine"] != "add":
-      return stack(
-        [
-          scatter(d[0][i], args[1], d[1][i], axis=expr.attrs.get("axis"), combine=expr.attrs["combine"], mode=expr.attrs["mode"])
-          for i in range(nseed)
-        ]
-      )
+      base, updates = d
+      if expr.attrs["combine"] != "add":
+        base_weight, update_weight = scatter_weights(expr)
+        base, updates = base * base_weight, updates * update_weight
+      axis = expr.attrs.get("axis")
+      if axis is None:
+        base = base.reshape((nseed, expr.size))
+        updates = updates.reshape((nseed, *args[1].shape))
+      return scatter(base, args[1], updates, axis=1 if axis is None else axis + 1, mode=expr.attrs["mode"]).reshape((nseed, *expr.shape))
     indices = _index_values(expr).reshape(-1)
     full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.size + indices[None, :]).reshape(-1)
-    scattered = scatter(d[1].reshape((nseed * args[2].size,)), full, (nseed * expr.size,)).reshape((nseed, *expr.shape))
+    scattered = _scatter_zero(d[1].reshape((nseed * args[2].size,)), full, (nseed * expr.size,)).reshape((nseed, *expr.shape))
     return scattered if d[0].support == frozenset() else d[0] + scattered
   if op == ExprOp.STACK:
     return stack(d, axis=expr.attrs.get("axis", 0) + 1)

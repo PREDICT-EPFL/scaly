@@ -317,15 +317,18 @@ print(select_entries(np.array([2.0, 3.0, 5.0, 7.0]), np.array([3.0, -1.0, 1.0]))
 # [ 7. -1.  3.]
 ```
 
+Numerical function inputs currently accept only float64 arrays, so the body
+casts the positions to int64 before using them as indices.
+
 `sc.dynamic_slice(x, start, size)` reads `size` consecutive entries along the
 last axis, starting at an int64 scalar expression. The size stays fixed between
-calls. Each entry outside the axis returns the fill value, including when the
-source is empty. Both builders accept `axis=`.
+calls. Positions past either end of the axis return the fill value, including
+when the source is empty. The start is left unchanged. Both builders accept `axis=`.
 
 `sc.scatter(base, indices, values)` returns an updated array with the shape of
 `base`. The default `combine="add"` adds values in index order. `"set"` keeps
 the last write to each entry. `"max"` and `"min"` include the base value and
-propagate NaN. The base itself is unchanged. `sc.index_add` and `sc.index_set`
+propagate NaN. `sc.index_add` and `sc.index_set`
 update along the last axis by default, and accept `axis=`. With an axis, the
 values have the shape a gather at those indices would return.
 
@@ -336,8 +339,8 @@ Breaking that promise has undefined behavior. `take`, `dynamic_slice`,
 
 `sc.segment_sum(values, ids, n)` sums values into `n` segments, with zero for
 empty segments. `sc.segment_max` takes their maximum, using negative infinity
-for an empty segment, or a chosen `fill_value`. The zero-base accumulating form
-`sc.scatter(values, indices, shape)` is also available.
+for an empty segment, or a chosen `fill_value`. `segment_sum` requires ids in
+`[0, n)`, while `segment_max` discards out-of-range ids.
 
 ```python
 @sc.function(sc.arg("values", 4), outputs=sc.arg("totals"))
@@ -347,11 +350,11 @@ def totals(values: sc.Expr) -> sc.Expr:
 print(totals(np.array([1.0, 2.0, 3.0, 4.0])))  # [4. 0. 6. 0.]
 ```
 
-Derivatives treat indices as discrete choices. A gather sends its cotangent
-back to the selected source entries, summing repeated reads. A set update
+Derivatives treat indices as discrete choices. A gather adds the derivatives
+from repeated reads of the same source entry. A set update
 passes derivatives only through the last write and the untouched base entries.
 Maxima and minima split derivatives equally between tied updates and the base
-when it ties. Constant indices give an exact structural derivative pattern.
+when it ties. Constant indices give an exact Jacobian sparsity pattern.
 For runtime indices, that pattern includes every source entry an index might
 select.
 

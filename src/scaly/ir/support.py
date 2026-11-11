@@ -22,7 +22,7 @@ def index_shape(shape: tuple[int, ...], indices: tuple[int, ...], axis: int | No
 def index_entries(shape: tuple[int, ...], indices: np.ndarray, axis: int | None) -> np.ndarray:
   """Map constant axis indices to flat source coordinates, retaining invalid lanes."""
   if axis is None:
-    return indices
+    return np.where((indices >= 0) & (indices < int(np.prod(shape, dtype=int))), indices, -1)
   before = int(np.prod(shape[:axis], dtype=int))
   after = int(np.prod(shape[axis + 1 :], dtype=int))
   index = indices.reshape(1, -1, 1)

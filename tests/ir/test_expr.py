@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 
@@ -10,6 +12,61 @@ import scaly as sc
 from scaly.ir.expr import Expr, ExprOp, substitute
 from scaly.ir.types import TensorType, frozen
 from scaly.passes.expr import cse_many
+
+
+def test_scatter_accepts_tuple_values() -> None:
+  result = sc.scatter(sc.const([10.0, 20.0]), [0, 1], (2.0, 3.0), combine="set")
+  assert result.shape == (2,)
+  from scaly.passes.expr import simplify_cse_fixpoint
+
+  np.testing.assert_array_equal(simplify_cse_fixpoint(result).value, [2.0, 3.0])
+
+
+def test_scatter_sparse_values_into_nonzero_base() -> None:
+  from scaly.ir.expr import from_dense
+  from scaly.ir.types import CanonicalPattern
+
+  pattern = CanonicalPattern((2, 2), (0, 1), (0, 1))
+
+  @sc.function(sc.arg("base", 6), sc.arg("v", (2, 2)), outputs=sc.arg("y"))
+  def indexed(base, v):
+    return sc.scatter(base, [[5, 4], [1, 0]], from_dense(v, pattern))
+
+  base = np.arange(6.0) + 10
+  expected = base.copy()
+  np.add.at(expected, [5, 4, 1, 0], [1, 0, 0, 4])
+  np.testing.assert_array_equal(indexed(base, np.array([[1.0, 2.0], [3.0, 4.0]])), expected)
+
+
+def test_axis_scatter_rejects_transposed_update_shape() -> None:
+  with pytest.raises(ValueError, match="shape"):
+    sc.index_add(sc.const(np.zeros((2, 4))), [0, 1, 3], sc.sym("wrong_updates", (3, 2)))
+
+
+def test_fill_accepts_constant_int64_extremes() -> None:
+  indices = np.array([np.iinfo(np.int64).min, 0, np.iinfo(np.int64).max, 1])
+
+  @sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("g"), sc.arg("s")))
+  def indexed(x):
+    return sc.gather(x, indices, mode="fill"), sc.scatter(x, indices, sc.const([99.0, 2.0, 99.0, 3.0]), mode="fill")
+
+  g, s = indexed(np.array([5.0, 7.0, 11.0]))
+  np.testing.assert_array_equal(g, [0, 5, 0, 7])
+  np.testing.assert_array_equal(s, [7, 10, 11])
+
+
+@pytest.mark.parametrize("kind", ["gather", "add", "set", "max", "min"])
+def test_runtime_index_forward_graph_size_does_not_grow_with_seed_count(kind) -> None:
+  from scaly.ir.expr import topo
+
+  x, updates = sc.sym("batch_x", 8), sc.sym("batch_updates", 4)
+  indices = sc.sym("batch_indices", 4, dtype=sc.dtypes.int64)
+  y = sc.gather(x, indices, mode="fill") if kind == "gather" else sc.scatter(x, indices, updates, combine=kind, mode="fill")
+  sizes = []
+  for count in (2, 8):
+    derivative = sc.jvp_many(y * y, x, sc.sym(f"batch_seeds_{count}", (count, 8)))
+    sizes.append(sum(node.op in (ExprOp.GATHER, ExprOp.SCATTER) for node in topo((derivative,))))
+  assert sizes[0] == sizes[1]
 
 
 def test_gather_has_an_int64_index_operand() -> None:
@@ -480,7 +537,7 @@ def test_differentiability_metadata_propagates_through_exprs() -> None:
   assert not (p + c).type.diff
   assert x.reshape((3, 1)).T.type.diff
   assert x.gather([2, 0]).type.diff
-  assert sc.scatter(p.gather([1, 2]), [0, 2], 3).type.diff is False
+  assert _scatter_zero(p.gather([1, 2]), [0, 2], 3).type.diff is False
   assert sc.stack([p, c]).type.diff is False
   assert sc.concat([x[:1], p[:1]]).type.diff
   assert not x.floor().type.diff

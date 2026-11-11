@@ -2,6 +2,8 @@
 
 import math
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 
@@ -22,7 +24,7 @@ def _masked(name, mask) -> Expr:
 
 @pytest.mark.parametrize("operation", ["stack", "concat"])
 def test_support_combines_many_parts_in_one_coordinate_batch(operation, monkeypatch) -> None:
-  part = sc.scatter(sc.sym("many_support_entries", 2048), np.arange(2048) * 2, (4096,))
+  part = _scatter_zero(sc.sym("many_support_entries", 2048), np.arange(2048) * 2, (4096,))
   support = part.support
   assert support is not None
   cls = type(support)
@@ -43,7 +45,7 @@ def test_support_combines_many_parts_in_one_coordinate_batch(operation, monkeypa
 def test_compact_support_set_operations_and_sorted_coordinates() -> None:
   from scaly.ir.support import support_indices
 
-  support = sc.scatter(sc.sym("set_operations", 2048), np.arange(2048) * 2, (4096,)).support
+  support = _scatter_zero(sc.sym("set_operations", 2048), np.arange(2048) * 2, (4096,)).support
   assert support is not None
   reference, small = frozenset(range(0, 4096, 2)), frozenset({8, 1000, 1001})
   assert support - small == reference - small
@@ -59,7 +61,7 @@ def test_growing_support_caches_use_compact_immutable_coordinates(width) -> None
   from scaly.ir.support import support_indices
 
   x = sc.sym("support_partial_sums", width)
-  parts = [sc.scatter(x, np.arange(width) + i * 4096, (100_000_000,)) for i in range(40)]
+  parts = [_scatter_zero(x, np.arange(width) + i * 4096, (100_000_000,)) for i in range(40)]
   sums = [parts[0]]
   for part in parts[1:]:
     sums.append(sums[-1] + part)
@@ -145,8 +147,8 @@ def test_static_coordinate_images_and_reduction() -> None:
   indices = np.array([[11, 1, 1], [0, 3, 8]])
   assert x.gather(indices).support == _entries(mask.reshape(-1)[indices])
   values = _masked("support_scatter_values", [1, 0, 1, 0])
-  assert sc.scatter(values, [2, 4, 2, 0], (6,)).support == frozenset({2})
-  assert sc.scatter(sc.sym("support_scatter_unknown", 4), [2, 4, 2, 0], (6,)).support == frozenset({0, 2, 4})
+  assert _scatter_zero(values, [2, 4, 2, 0], (6,)).support == frozenset({2})
+  assert _scatter_zero(sc.sym("support_scatter_unknown", 4), [2, 4, 2, 0], (6,)).support == frozenset({0, 2, 4})
   for axis in range(4):
     assert sc.stack([x, x * 0], axis=axis).support == _entries(np.stack([mask, np.zeros_like(mask)], axis=axis))
   for axis in range(3):

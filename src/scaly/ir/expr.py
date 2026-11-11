@@ -1343,7 +1343,7 @@ def gather(x: Any, indices: Any, *, axis: int | None = None, mode: str = "promis
     ExprOp.GATHER,
     (x, idx),
     TensorType(shape, dtype=x.type.dtype, diff=x.type.diff, pattern=pattern),
-    attrs={"axis": axis, "mode": mode, "fill_value": fill_value},
+    attrs={"axis": axis, "mode": mode, "fill_value": np.asarray(fill_value, dtype=x.type.dtype.numpy()).item()},
     lowering=x.lowering,
   )
 
@@ -1354,15 +1354,8 @@ def scatter(base: Any, indices: Any, values: Any, *, axis: int | None = None, co
   ``combine`` is ``set``, ``add``, ``max`` or ``min``. ``fill`` discards
   out-of-range updates. ``axis=None`` addresses the flattened base. With an
   axis, values have the shape a gather at the same indices would return.
-  A shape as the third argument retains the zero-base
-  accumulating form ``scatter(values, indices, shape)``.
   """
-  if isinstance(values, (int, tuple)):
-    source = as_expr(base)
-    base = _uniform(0, as_shape(values), dtype=source.type.dtype, lowering=source.lowering)
-    values = source
-  else:
-    base, values = as_expr(base), as_expr(values)
+  base, values = as_expr(base), as_expr(values)
   if combine not in ("set", "add", "max", "min"):
     raise ValueError(f"unknown scatter combination {combine!r}")
   if mode not in ("fill", "promise_in_bounds"):
@@ -1372,6 +1365,8 @@ def scatter(base: Any, indices: Any, values: Any, *, axis: int | None = None, co
     raise TypeError("indices must have dtype int64")
   axis = _index_axis(base.shape, axis)
   expected = index_shape(base.shape, idx.shape, axis)
+  if axis is not None and values.shape != expected:
+    raise ValueError(f"scatter values shape {values.shape} must match indexed shape {expected}")
   if int(np.prod(expected, dtype=int)) != values.size:
     raise ValueError(f"scatter has {idx.size} indices but values shape {values.shape} has {values.size} entries")
   if base.type.dtype != values.type.dtype:
@@ -1380,7 +1375,7 @@ def scatter(base: Any, indices: Any, values: Any, *, axis: int | None = None, co
     _index_array(idx.value, base.size if axis is None else base.shape[axis])
   if base.type.pattern is not None:
     base = to_dense(base)
-  if values.type.pattern is not None and (idx.value is None or mode == "fill" or combine != "add"):
+  if values.type.pattern is not None and (idx.value is None or mode == "fill" or combine != "add" or base.support != frozenset()):
     values = to_dense(values)
   pattern = None
   if idx.value is not None and base.support == frozenset() and mode == "promise_in_bounds":
@@ -1394,13 +1389,18 @@ def scatter(base: Any, indices: Any, values: Any, *, axis: int | None = None, co
   )
 
 
+def _scatter_zero(values: Any, indices: Any, shape: int | tuple[int, ...], *, axis: int | None = None, mode: str = "promise_in_bounds") -> Expr:
+  values = as_expr(values)
+  return scatter(_uniform(0, as_shape(shape), dtype=values.type.dtype, lowering=values.lowering), indices, values, axis=axis, mode=mode)
+
+
 def segment_sum(values: Any, ids: Any, n: int) -> Expr:
   """Sum flat ``values`` by segment id into a vector of length ``n``.
 
   Segment ids are int64 values in ``[0, n)``. Empty segments are zero, and
   repeated ids accumulate in input order.
   """
-  return scatter(values, ids, n)
+  return _scatter_zero(values, ids, n)
 
 
 def segment_max(values: Any, ids: Any, n: int, *, fill_value: float = -np.inf) -> Expr:
@@ -1424,7 +1424,8 @@ def take(x: Any, indices: Any, *, axis: int = -1, mode: str = "fill", fill_value
 def dynamic_slice(x: Any, start: Any, size: int, *, axis: int = -1, mode: str = "fill", fill_value: float = 0.0) -> Expr:
   """Read a fixed-size interval with an int64 start that may vary at runtime.
 
-  Entries outside the selected axis return ``fill_value`` under ``fill``.
+  Positions past either end of the selected axis return ``fill_value`` under
+  ``fill``, with the start left unchanged.
   """
   if size < 0:
     raise ValueError("dynamic slice size must be nonnegative")
@@ -1571,7 +1572,7 @@ def to_dense(value: Any) -> Expr:
   x = as_expr(value)
   if x.type.pattern is None:
     return x
-  return scatter(values(x).vec(), stored_indices(x.type), x.size).reshape(x.shape)
+  return _scatter_zero(values(x).vec(), stored_indices(x.type), x.size).reshape(x.shape)
 
 
 def from_dense(value: Any, pattern: CanonicalPattern | SparsityPattern) -> Expr:

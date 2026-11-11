@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _uniform, cast, equal, gather, not_equal, pack, scatter, values, where
+from ..ir.expr import Expr, ExprOp, _scatter_zero, _uniform, cast, equal, gather, not_equal, pack, scatter, values, where
 from ..ir.program import ProgramOp
 from ..ir.support import support_indices, project_entries
 from ..ir.types import TensorType, dtypes, stored_indices
@@ -233,12 +233,12 @@ def cotangent(expr: Expr, cot: Expr, position: int) -> Expr:
     operand = expr.args[position]
     projected = project_entries(stored_indices(expr.type), operand.shape, expr.shape)
     if operand.type.pattern is None:
-      return scatter(contribution, projected, operand.shape)
+      return _scatter_zero(contribution, projected, operand.shape)
     entries = stored_indices(operand.type)
     slots = np.searchsorted(entries, projected)
     keep = slots < len(entries)
     keep[keep] &= entries[slots[keep]] == projected[keep]
-    result = scatter(gather(contribution, np.flatnonzero(keep)), slots[keep], operand.type.storage_shape)
+    result = _scatter_zero(gather(contribution, np.flatnonzero(keep)), slots[keep], operand.type.storage_shape)
     return pack(result, operand.type.pattern, shape=operand.shape)
   partials = ELEMENTWISE[ExprOp(expr.op)].partials
   assert partials is not None
@@ -253,7 +253,7 @@ def cotangent(expr: Expr, cot: Expr, position: int) -> Expr:
 
 
 def carry_mask(cot: Expr, transpose: Callable[[Expr], tuple[Expr | None, ...]]) -> tuple[Expr | None, ...]:
-  """``transpose(cot)`` for a linear map whose weights are 0 or 1, such as a sum, a slice or a
+  """``transpose(cot)`` for a linear map with nonnegative weights, such as a sum, a slice or a
   reshape, each result masked where no entry the mask on ``cot`` keeps reaches it."""
   results = transpose(cot)
   mask = _mask_of(cot)
@@ -315,7 +315,7 @@ def _sample_stored(expr: Expr, output: TensorType) -> Expr:
   keep = slots < len(entries)
   keep[keep] &= entries[slots[keep]] == logical[keep]
   sampled = gather(values(expr), slots[keep])
-  return scatter(sampled, np.flatnonzero(keep), output.storage_shape)
+  return _scatter_zero(sampled, np.flatnonzero(keep), output.storage_shape)
 
 
 def _times_partial(local: Local, t: Expr, align: Callable[[Expr], Expr] | None = None) -> Expr:
@@ -354,7 +354,7 @@ def _unbroadcast(cot: Expr, in_shape: tuple[int, ...], out_shape: tuple[int, ...
   if (support := _prunable_support(cot)) is not None and len(support) < cot.size:
     entries = support_indices(support)
     source = project_entries(entries, in_shape, out_shape)
-    return scatter(gather(cot, entries), source, in_shape)
+    return _scatter_zero(gather(cot, entries), source, in_shape)
   source = np.arange(int(np.prod(in_shape, dtype=int))).reshape(in_shape)
   source = np.broadcast_to(source, out_shape).reshape(-1)
-  return scatter(cot, source, in_shape)
+  return _scatter_zero(cot, source, in_shape)

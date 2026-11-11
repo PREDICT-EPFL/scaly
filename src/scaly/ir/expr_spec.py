@@ -330,7 +330,10 @@ def _scatter_indices(expr: Expr) -> str | None:
   axis = expr.attrs.get("axis")
   if axis is not None and (not isinstance(axis, int) or not 0 <= axis < len(expr.shape)):
     return "SCATTER axis must be a normalized base axis"
-  if int(np.prod(index_shape(expr.shape, expr.args[1].shape, expr.attrs.get("axis")), dtype=int)) != expr.args[2].size:
+  expected = index_shape(expr.shape, expr.args[1].shape, axis)
+  if axis is not None and expr.args[2].shape != expected:
+    return "SCATTER values shape must match the indexed shape"
+  if int(np.prod(expected, dtype=int)) != expr.args[2].size:
     return "SCATTER index and values sizes differ"
   if expr.shape != expr.args[0].shape or expr.type.dtype != expr.args[0].type.dtype or expr.type.dtype != expr.args[2].type.dtype:
     return "SCATTER base shape and value dtypes must match the result"

@@ -10,6 +10,8 @@ import time
 import tracemalloc
 from ctypes import wintypes
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 
@@ -58,7 +60,7 @@ def _workload(n: int, entries: int) -> None:
   x = sc.sym("scale_x")
   positions = np.arange(entries, dtype=np.int64)
   indices = (positions // 10) * n + positions % 10
-  matrix = sc.scatter(x * sc.const(np.ones(entries)), indices, (n, n))
+  matrix = _scatter_zero(x * sc.const(np.ones(entries)), indices, (n, n))
   assert matrix.support is not None and len(matrix.support) == entries
   zero = zeros_like(matrix)
   assert zero.support == frozenset()
@@ -73,7 +75,7 @@ def _workload(n: int, entries: int) -> None:
   selected = matrix[-1:, :10].sum()
   adjoint = simplify_cse_fixpoint(vjp((selected,), (x,), (sc.const(1.0),))[0])
   assert adjoint.shape == ()
-  vector = sc.scatter(sc.const([1.0]), [0], (n,))
+  vector = _scatter_zero(sc.const([1.0]), [0], (n,))
   product = matrix @ vector
   assert jacobian_sparsity(product, x).nnz == entries // 10
   assert (sc.sym("scale_unknown", (n, n)) @ vector).support is None
@@ -161,7 +163,7 @@ print(baseline, peak())
 def test_sparse_assembly_movement_and_derivatives_match_numpy(index) -> None:
   x = sc.sym("scale_reference", 6)
   positions = np.array([0, 4, 7, 16, 22, 22])
-  matrix = sc.scatter(x * x, positions, (5, 5))
+  matrix = _scatter_zero(x * x, positions, (5, 5))
   moved = matrix.T[index]
   coefficient = np.array([0.0, 2.0, 0.0, 3.0, 0.0])
   product = matrix @ sc.const(coefficient)

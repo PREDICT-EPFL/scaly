@@ -6,7 +6,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ..ir.expr import _index_values, Expr, ExprOp, _uniform, from_dense, gather, pack, scatter, topo, to_dense, values, zeros_like
+from ..ir.expr import _index_values, Expr, ExprOp, _uniform, from_dense, gather, pack, _scatter_zero, topo, to_dense, values, zeros_like
 from ..ir.support import slice_indices, support_indices
 from .calls import _call_vjp, _vmap_vjp
 from .rules import ELEMENTWISE, accumulate, carry_mask, cotangent, scatter_weights
@@ -65,7 +65,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
   return tuple(adjoints.get(wrt.id, zeros_like(wrt)) for wrt in wrts)
 
 
-# Structural ops whose transposes weigh each entry by 0 or 1, so a select's mask passes through them.
+# Transpose rules with nonnegative weights let a select's mask pass through them.
 _SELECTIONS = {
   ExprOp.SUM,
   ExprOp.RESHAPE,
@@ -105,10 +105,10 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
     entries = support_indices(support) if support is not None and len(support) < cot.size else None
     indices = slice_indices(args[0].shape, expr.attrs["index"], entries)
     selected = gather(cot, entries) if entries is not None else cot
-    return (scatter(selected, indices, args[0].shape),)
+    return (_scatter_zero(selected, indices, args[0].shape),)
   if expr.op == ExprOp.GATHER:
     if expr.args[1].value is None or expr.attrs.get("mode") == "fill":
-      return (scatter(cot, expr.args[1], args[0].shape, axis=expr.attrs.get("axis"), mode=expr.attrs.get("mode", "promise_in_bounds")), None)
+      return (_scatter_zero(cot, expr.args[1], args[0].shape, axis=expr.attrs.get("axis"), mode=expr.attrs.get("mode", "promise_in_bounds")), None)
     return (_gather_vjp(cot, _index_values(expr), args[0].shape), None)
   if expr.op == ExprOp.SCATTER:
     if expr.attrs["combine"] != "add":
@@ -140,7 +140,7 @@ def _ones_like(expr: Expr) -> Expr:
 
 
 def _gather_vjp(cot: Expr, indices: np.ndarray, shape: tuple[int, ...]) -> Expr:
-  return scatter(cot, indices, shape)
+  return _scatter_zero(cot, indices, shape)
 
 
 def _stack_vjp(cot: Expr, nargs: int, axis: int) -> tuple[Expr, ...]:

@@ -266,16 +266,17 @@ The outer function of the printed module is one mapped call and one gather
 ```
   expr.func @stages_spjac_residuals_zs(%zs: tensor<8xfloat64 diff>) -> (%spjac_residuals_zs: tensor<16xfloat64 diff>) {
     %0 = expr.input {lowering="auto", name="zs"} : tensor<8xfloat64 diff>
-    %1 = expr.vmap(%0) {callee="stage_fwd2c9dba5c50e0_residual_z", length=4, output=0, slice_size=4, starts=[0], strides=[2]} : tensor<16xfloat64 diff>
-    %2 = expr.gather(%1) {indices=[ 0,  2,  1, ..., 14, 13, 15]} : tensor<16xfloat64 diff>
-    expr.return %2
+    %1 = expr.vmap(%0) {callee="stage_fwd_d88f5d3f27", length=4, output=0, slice_size=4, starts=[0], strides=[2]} : tensor<16xfloat64 diff>
+    %2 = expr.const {lowering="auto", value=[ 0,  2,  1, ..., 14, 13, 15]} : tensor<16xint64>
+    %3 = expr.gather(%1, %2) {axis=None, fill_value=0.0, mode="promise_in_bounds"} : tensor<16xfloat64 diff>
+    expr.return %3
   }
 ```
 
 Scaly colors the stage's own 2 by 2 pattern rather than the 8 by 8 global
-one. In the callee's name, `fwd2` counts the two seed directions and the
-hexadecimal part after `c` identifies them, so derivatives of the same stage
-with different seeds get different names. The
+one. The `fwd` in the callee's name marks a forward derivative, and the
+hexadecimal suffix distinguishes derivative requests and constant seeds, so
+derivatives of the same stage with different seeds get different names. The
 stage derivative takes only `z`, and its two seed directions are constants
 inside its body, where the multiplications by zero and one fold away. The
 gather puts the four values each stage returns into pattern order.
@@ -321,26 +322,33 @@ stage 3                     [zz0   zz1]
 Scaly splits the stages into groups whose windows do not overlap, here the
 even stages and the odd stages, scatters each group into a vector the size of
 `z`, and adds the groups. The outer function of `sc.gradient(chain, "cost",
-"z")` shows this, with the stage adjoint `link_adj0_0` omitted:
+"z")` shows this, with the stage adjoint function omitted:
 
 ```
   expr.func @chain_grad_cost_z(%z: tensor<5xfloat64 diff>, %p: tensor<1xfloat64 diff>) -> (%grad_cost_z: tensor<5xfloat64 diff>) {
-    %0 = expr.input {lowering="auto", name="z"} : tensor<5xfloat64 diff>
-    %1 = expr.input {lowering="auto", name="p"} : tensor<1xfloat64 diff>
-    %2 = expr.const {lowering="auto", value=1.} : tensor<float64>
-    %3 = expr.const {lowering="auto", value=[1., 1., 1., 1.]} : tensor<4xfloat64>
-    %4 = expr.mul(%2, %3) : tensor<4xfloat64>
-    %5 = expr.vmap(%0, %1, %4) {callee="link_adj0_0", length=4, output=0, slice_size=2, starts=[0, 0, 0], strides=[1, 0, 1]} : tensor<8xfloat64 diff>
-    %6 = expr.gather(%5) {indices=[0, 1, 4, 5]} : tensor<4xfloat64 diff>
-    %7 = expr.scatter(%6) {indices=[0, 1, 2, 3]} : tensor<5xfloat64 diff>
-    %8 = expr.gather(%5) {indices=[2, 3, 6, 7]} : tensor<4xfloat64 diff>
-    %9 = expr.scatter(%8) {indices=[1, 2, 3, 4]} : tensor<5xfloat64 diff>
-    %10 = expr.add(%7, %9) : tensor<5xfloat64 diff>
-    expr.return %10
+    %0 = expr.const {lowering="auto", value=[0., 0., 0., 0., 0.]} : tensor<5xfloat64>
+    %1 = expr.const {lowering="auto", value=[0, 1, 2, 3]} : tensor<4xint64>
+    %2 = expr.input {lowering="auto", name="z"} : tensor<5xfloat64 diff>
+    %3 = expr.input {lowering="auto", name="p"} : tensor<1xfloat64 diff>
+    %4 = expr.const {lowering="auto", value=1.} : tensor<float64>
+    %5 = expr.const {lowering="auto", value=[1., 1., 1., 1.]} : tensor<4xfloat64>
+    %6 = expr.mul(%4, %5) : tensor<4xfloat64>
+    %7 = expr.reshape(%6) {shape=[4]} : tensor<4xfloat64>
+    %8 = expr.reshape(%7) {shape=[4]} : tensor<4xfloat64>
+    %9 = expr.vmap(%2, %3, %8) {callee="link_adj_8652465680", length=4, output=0, slice_size=2, starts=[0, 0, 0], strides=[1, 0, 1]} : tensor<8xfloat64 diff>
+    %10 = expr.const {lowering="auto", value=[0, 1, 4, 5]} : tensor<4xint64>
+    %11 = expr.gather(%9, %10) {axis=None, fill_value=0.0, mode="promise_in_bounds"} : tensor<4xfloat64 diff>
+    %12 = expr.scatter(%0, %1, %11) {axis=None, combine="add", mode="promise_in_bounds"} : tensor<5xfloat64 diff>
+    %13 = expr.const {lowering="auto", value=[1, 2, 3, 4]} : tensor<4xint64>
+    %14 = expr.const {lowering="auto", value=[2, 3, 6, 7]} : tensor<4xint64>
+    %15 = expr.gather(%9, %14) {axis=None, fill_value=0.0, mode="promise_in_bounds"} : tensor<4xfloat64 diff>
+    %16 = expr.scatter(%0, %13, %15) {axis=None, combine="add", mode="promise_in_bounds"} : tensor<5xfloat64 diff>
+    %17 = expr.add(%12, %16) : tensor<5xfloat64 diff>
+    expr.return %17
   }
 ```
 
-`%6` holds the adjoints from stages 0 and 2, and `%8` those from stages 1 and 3.
+`%11` holds the adjoints from stages 0 and 2, and `%15` those from stages 1 and 3.
 For the shared weight, every stage reads the same slice, so the adjoint is the
 sum over stages. The outer function of `sc.gradient(chain, "cost", "p")` writes
 that sum as a product with a vector of ones:
@@ -351,11 +359,14 @@ that sum as a product with a vector of ones:
     %1 = expr.input {lowering="auto", name="z"} : tensor<5xfloat64 diff>
     %2 = expr.const {lowering="auto", value=1.} : tensor<float64>
     %3 = expr.mul(%2, %0) : tensor<4xfloat64>
-    %4 = expr.vmap(%1, %3) {callee="link_adj0_1", length=4, output=0, slice_size=1, starts=[0, 0], strides=[1, 1]} : tensor<4xfloat64 diff>
-    %5 = expr.gather(%4) {indices=[0, 1, 2, 3]} : tensor<4xfloat64 diff>
-    %6 = expr.reshape(%5) {shape=[4, 1]} : tensor<4x1xfloat64 diff>
-    %7 = expr.matmul(%0, %6) : tensor<1xfloat64 diff>
-    expr.return %7
+    %4 = expr.reshape(%3) {shape=[4]} : tensor<4xfloat64>
+    %5 = expr.reshape(%4) {shape=[4]} : tensor<4xfloat64>
+    %6 = expr.vmap(%1, %5) {callee="link_adj_7027c40181", length=4, output=0, slice_size=1, starts=[0, 0], strides=[1, 1]} : tensor<4xfloat64 diff>
+    %7 = expr.const {lowering="auto", value=[0, 1, 2, 3]} : tensor<4xint64>
+    %8 = expr.gather(%6, %7) {axis=None, fill_value=0.0, mode="promise_in_bounds"} : tensor<4xfloat64 diff>
+    %9 = expr.reshape(%8) {shape=[4, 1]} : tensor<4x1xfloat64 diff>
+    %10 = expr.matmul(%0, %9) : tensor<1xfloat64 diff>
+    expr.return %10
   }
 ```
 

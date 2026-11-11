@@ -3,6 +3,8 @@
 from collections.abc import Callable
 import importlib
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 
@@ -90,7 +92,7 @@ def test_shifted_ranges_align_through_input_offsets():
   z = sc.sym("z", 14)
   a = _mapped_call(first, 7, [(z, 0, 2)])
   b = _mapped_call(second, 6, [(z, 2, 2)])
-  out = a + sc.scatter(b, np.arange(2, 14), (14,))
+  out = a + _scatter_zero(b, np.arange(2, 14), (14,))
   fn = _function("range_offsets", [z], [out])
   _assert_fused(lower_function(fn))
   data = np.linspace(-0.9, 0.8, 14)

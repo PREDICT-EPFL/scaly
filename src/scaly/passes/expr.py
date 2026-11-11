@@ -132,9 +132,13 @@ def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None
     out = args[0].copy().reshape(-1)
     indices = _index_values(e).reshape(-1)
     combine = e.attrs["combine"]
-    for index, value in zip(indices, args[2].reshape(-1), strict=True):
-      if 0 <= index < e.size:
-        out[index] = value if combine == "set" else {"add": np.add, "max": np.maximum, "min": np.minimum}[combine](out[index], value)
+    valid = (indices >= 0) & (indices < e.size)
+    updates = args[2].reshape(-1)[valid]
+    indices = indices[valid]
+    if combine == "set":
+      out[indices] = updates
+    else:
+      {"add": np.add, "max": np.maximum, "min": np.minimum}[combine].at(out, indices, updates)
     out = out.reshape(e.shape)
   elif e.op == ExprOp.STACK:
     out = np.stack(args, axis=e.attrs.get("axis", 0))
