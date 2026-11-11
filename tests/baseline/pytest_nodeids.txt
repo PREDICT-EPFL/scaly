@@ -5491,7 +5491,7 @@ tests/passes/test_widen_ranges.py::test_scalar_accumulator_is_staged_only_for_an
 tests/passes/test_widen_ranges.py::test_scalar_accumulator_is_staged_only_for_an_ordered_update[self_dependency]
 tests/passes/test_widen_ranges.py::test_scheduled_index_is_not_an_independent_contiguous_output
 tests/passes/test_widen_ranges.py::test_store_schedule_reduces_live_values_without_reordering_memory
-tests/passes/test_widen_ranges.py::test_store_schedule_refuses_alias_reads_and_mutable_scalarsERROR: pytest node-ID baseline is stale: 0 collected node IDs are missing and 2 baseline IDs are extra. Regenerate it with the safe recipe in docs/dev/contributing.md; the initial collection may exit nonzero while this baseline is stale.
+tests/passes/test_widen_ranges.py::test_store_schedule_refuses_alias_reads_and_mutable_scalars
 tests/solvers/test_codegen.py::test_exported_solver_accepts_runtime_options[c]
 tests/solvers/test_codegen.py::test_exported_solver_accepts_runtime_options[cpp]
 tests/solvers/test_codegen.py::test_solver_interface_is_static[piqp]
