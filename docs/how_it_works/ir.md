@@ -17,7 +17,7 @@ An `Expr` has these fields:
 | `op`       | The `ExprOp` operation tag                                    |
 | `args`     | Ordered operand nodes                                         |
 | `type`     | A `TensorType`: shape, data type and the `diff` flag          |
-| `attrs`    | Operation-specific data, such as a callee or gather indices   |
+| `attrs`    | Operation-specific data, such as a callee or transpose axes  |
 | `name`     | The input name, or `None` for other nodes                     |
 | `value`    | The NumPy array of a constant, or `None` for other nodes      |
 | `lowering` | The `auto`, `scalar` or `block` hint                          |
@@ -122,7 +122,7 @@ Arity is the number of operands.
 | Integer         | `floordiv`, `mod`                             | 2        | Rounding down, as in NumPy                |
 | Reduction       | `reduce`                                      | 1        | Sum, maximum or minimum over chosen axes |
 | Shape           | `reshape`, `transpose`                        | 1        | Size-preserving reshape, axis permutation |
-| Indexing        | `slice`, `gather`, `scatter`                  | 1        | Gather and scatter use flat index tables  |
+| Indexing        | `slice`, `gather`, `scatter`                  | 1, 2 or 3 | Gather and scatter take int64 index operands |
 | Assembly        | `stack`, `concat`                             | Variable | Along one axis                            |
 | Linear algebra  | `matmul`                                      | 2        | Operands of rank at most two              |
 | Function calls  | `call`, `vmap`                                | Variable | An ordinary or a mapped call              |

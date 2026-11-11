@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 
@@ -25,7 +27,7 @@ def test_uniform_sum_keeps_numpy_signed_zero(dense_first) -> None:
 
 def test_small_constant_scatter_still_folds() -> None:
   values = sc.const([2.0, 1.0, 2.0, 0.0])
-  folded = sc.simplify(sc.scatter(values, [0, 1, 4, 4], (6,)))
+  folded = sc.simplify(_scatter_zero(values, [0, 1, 4, 4], (6,)))
   assert folded.op == sc.ExprOp.CONST
   np.testing.assert_array_equal(folded.value, [2.0, 1.0, 0.0, 0.0, 2.0, 0.0])
 

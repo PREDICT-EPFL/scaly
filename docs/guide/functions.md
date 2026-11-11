@@ -364,11 +364,51 @@ the size of the intermediate arrays.
 become expressions, and `sc.cast(x, "uint8")` raises `ValueError`. Convert byte
 data to a supported type explicitly, for example with `sc.const(data, dtype="int32")`.
 
+### Runtime indexing
+
 `sc.gather(x, indices)` reads flat entries of `x`, with the result shaped like
-`indices`. `sc.scatter(values, indices, shape)` places values into a zero array.
-Repeated indices sum in input order. `sc.segment_sum(values, ids, n)` uses the
-same operation to sum values into `n` segments, with zero for empty segments.
-Indices and segment ids are fixed when the function is built.
+`indices`. The indices can be a fixed integer array or an int64 expression
+computed by the function. `axis=` selects an axis instead of the flattened
+array. Its dimension is replaced by the shape of `indices`, as with
+`np.take`. Negative indices are out of range, rather than counting from the end.
+
+`sc.take` reads along the last axis by default. Its default `mode="fill"`
+returns zero for an out-of-range index, or the specified `fill_value`:
+
+```python
+@sc.function(sc.arg("x", 4), sc.arg("positions", 3), outputs=sc.arg("selected"))
+def select_entries(x: sc.Expr, positions: sc.Expr) -> sc.Expr:
+    indices = sc.cast(positions, sc.dtypes.int64)
+    return sc.take(x, indices, fill_value=-1.0)
+
+print(select_entries(np.array([2.0, 3.0, 5.0, 7.0]), np.array([3.0, -1.0, 1.0])))
+# [ 7. -1.  3.]
+```
+
+Numerical function inputs currently accept only float64 arrays, so the body
+casts the positions to int64 before using them as indices.
+
+`sc.dynamic_slice(x, start, size)` reads `size` consecutive entries along the
+last axis, starting at an int64 scalar expression. The size stays fixed between
+calls. Positions past either end of the axis return the fill value, including
+when the source is empty. The start is left unchanged. Both builders accept `axis=`.
+
+`sc.scatter(base, indices, values)` returns an updated array with the shape of
+`base`. The default `combine="add"` adds values in index order. `"set"` keeps
+the last write to each entry. `"max"` and `"min"` include the base value and
+propagate NaN. `sc.index_add` and `sc.index_set`
+update along the last axis by default, and accept `axis=`. With an axis, the
+values have the shape a gather at those indices would return.
+
+In `mode="fill"`, out-of-range writes are discarded. `gather` and `scatter`
+default to `mode="promise_in_bounds"`, which requires every index to be valid.
+Breaking that promise has undefined behavior. `take`, `dynamic_slice`,
+`index_add` and `index_set` default to `"fill"`.
+
+`sc.segment_sum(values, ids, n)` sums values into `n` segments, with zero for
+empty segments. `sc.segment_max` takes their maximum, using negative infinity
+for an empty segment, or a chosen `fill_value`. `segment_sum` requires ids in
+`[0, n)`, while `segment_max` discards out-of-range ids.
 
 ```python
 @sc.function(sc.arg("values", 4), outputs=sc.arg("totals"))
@@ -377,6 +417,14 @@ def totals(values: sc.Expr) -> sc.Expr:
 
 print(totals(np.array([1.0, 2.0, 3.0, 4.0])))  # [4. 0. 6. 0.]
 ```
+
+Derivatives treat indices as discrete choices. A gather adds the derivatives
+from repeated reads of the same source entry. A set update
+passes derivatives only through the last write and the untouched base entries.
+Maxima and minima split derivatives equally between tied updates and the base
+when it ties. Constant indices give an exact Jacobian sparsity pattern.
+For runtime indices, that pattern includes every source entry an index might
+select.
 
 ## Numerical evaluation and symbolic composition
 

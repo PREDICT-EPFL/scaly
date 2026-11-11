@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from ...ir import program as p
-from ...ir.expr import Expr, ExprOp
+from ...ir.expr import _index_values, Expr, ExprOp
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.support import project_entries, slice_indices, transpose_entries, _constant_condition
 from ...ir.types import CanonicalPattern, dtypes, stored_indices
@@ -200,7 +200,9 @@ def emit_map(
 ) -> None:
   """Emit a compact map directly into the output's physical order through the loop compiler."""
   out = ctx.alloc_tmp(node)
-  operands = node.args if operands is None else operands
+  operands = (
+    (node.args[2:] if node.op == ExprOp.SCATTER else node.args[:1] if node.op == ExprOp.GATHER else node.args) if operands is None else operands
+  )
   writes = np.arange(node.type.storage_size, dtype=np.int64) if writes is None else writes
   writes = ctx.physical_slots(node, writes)
   reads = tuple(ctx.physical_slots(arg, slots) for arg, slots in zip(operands, reads, strict=True))
@@ -227,9 +229,9 @@ def lower_movement(ctx: LowerCtx, node: Expr) -> None:
   logical = stored_indices(node.type)
   op = node.op
   if op == ExprOp.SCATTER:
-    src = node.args[0]
+    src = node.args[2]
     source = stored_indices(src.type)
-    destinations = node.attrs["indices"].reshape(-1)[source]
+    destinations = _index_values(node).reshape(-1)[source]
     dst = stored_slots(node, destinations)
     out = ctx.alloc_tmp(node)
     ranges, (i,) = ctx.nest((node.type.storage_size,), f"zero_{out.attrs['name']}")
@@ -261,7 +263,7 @@ def lower_movement(ctx: LowerCtx, node: Expr) -> None:
   elif op == ExprOp.SLICE:
     logical = slice_indices(src.shape, node.attrs["index"], logical)
   elif op == ExprOp.GATHER:
-    logical = node.attrs["indices"].reshape(-1)[logical]
+    logical = _index_values(node).reshape(-1)[logical]
   emit_map(ctx, node, [stored_slots(src, logical)], lambda v: v[0])
 
 

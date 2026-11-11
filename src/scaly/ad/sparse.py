@@ -13,7 +13,7 @@ from typing import Literal
 import numpy as np
 
 from ..function.sugar import _mapped_call
-from ..ir.expr import Expr, ExprOp, concat, gather, pack, scatter, values as stored_values
+from ..ir.expr import Expr, ExprOp, _index_values, concat, gather, pack, _scatter_zero, values as stored_values
 from ..passes.expr import cse, simplify, simplify_cse_fixpoint
 from .derivatives import gradient, jacobian
 from .calls import _call_jvp_many_const_function
@@ -65,7 +65,7 @@ class SparseJacobian:
 
   def to_dense(self) -> Expr:
     """Scatter the values into a dense matrix expression."""
-    return scatter(self.values, self.flat_indices, self.sparsity.shape)
+    return _scatter_zero(self.values, self.flat_indices, self.sparsity.shape)
 
   def triangle(self, triangle: Triangle) -> SparseJacobian:
     """Select one triangle from a symmetric sparse matrix without rebuilding its JVP batch."""
@@ -292,7 +292,15 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
     while source.op == ExprOp.RESHAPE:
       source = source.args[0]
     if source.id == wrt.id:
-      direct_formals[f_idx] = actual.attrs["indices"].reshape(-1) if actual.op == ExprOp.GATHER else np.arange(actual.size)
+      if actual.op == ExprOp.GATHER:
+        if actual.args[1].value is None:
+          return sparse_jacobian_colored(vmap_expr, wrt)
+        indices = _index_values(actual).reshape(-1)
+        if np.any(indices < 0):
+          return sparse_jacobian_colored(vmap_expr, wrt)
+        direct_formals[f_idx] = indices
+      else:
+        direct_formals[f_idx] = np.arange(actual.size)
     elif _depends_on(actual, wrt, dep_memo):
       # Indirect dependency would require a chain-rule through actual_outer; fall back.
       return sparse_jacobian_colored(vmap_expr, wrt)
@@ -371,7 +379,7 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
     return SparseJacobian(permuted, values, coloring_width)
   values = None
   for gathered, contrib_idx in pieces:
-    piece_values = gathered if np.array_equal(contrib_idx, np.arange(nnz)) else scatter(gathered, contrib_idx, (nnz,))
+    piece_values = gathered if np.array_equal(contrib_idx, np.arange(nnz)) else _scatter_zero(gathered, contrib_idx, (nnz,))
     values = piece_values if values is None else values + piece_values
   assert values is not None
   return SparseJacobian(global_sparsity, values, coloring_width)

@@ -4,6 +4,8 @@ from typing import cast
 
 from tests.matmul_cases import SHAPES
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 
@@ -170,7 +172,7 @@ def test_sparsity_combines_many_parts_in_one_coordinate_batch(operation, monkeyp
   import scaly.ad.sparsity as analysis
 
   x = sc.sym("many_incidence_parts")
-  part = sc.scatter(x * sc.const(np.ones(2048)), np.arange(2048) * 2, (4096,))
+  part = _scatter_zero(x * sc.const(np.ones(2048)), np.arange(2048) * 2, (4096,))
   original = analysis._incidence
   work = 0
 
@@ -236,7 +238,7 @@ def test_ordinary_derivative_relations_stay_within_each_nodes_support() -> None:
   b = sc.concat([a.sin(), a[:, ::-1]], axis=0)
   product = b @ sc.const([[0, 1], [1, 0], [0, 0]])
   moved = product.T.reshape((8,)).gather([7, 0, 1, 1])
-  scattered = sc.scatter(moved, [2, 4, 2, 0], (6,))
+  scattered = _scatter_zero(moved, [2, 4, 2, 0], (6,))
   output = sc.concat([scattered, (a / (x * x + 1)).vec(), sc.stack([a.sum(), (a * 0).sum()])])
   memo = {}
   _jac_mask(output, x, memo)

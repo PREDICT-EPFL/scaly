@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from itertools import combinations
 from typing import Any, Callable
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 from scipy.special import erf
@@ -241,8 +243,8 @@ def _cases() -> list[Case]:
       Case("slice-scalar", ExprOp.SLICE, (x,), lambda x: x[1, 2], lambda x: x[1, 2]),
       Case("gather-repeated", ExprOp.GATHER, (x,), lambda x: sc.gather(x, [[4, 1], [4, 0]]), lambda x: x.reshape(-1)[[[4, 1], [4, 0]]]),
       Case("gather-empty", ExprOp.GATHER, (x,), lambda x: sc.gather(x, np.empty((0, 2), dtype=int)), lambda x: np.empty((0, 2))),
-      Case("scatter-repeated", ExprOp.SCATTER, (x,), lambda x: sc.scatter(x, [[4, 1, 4], [0, 1, 5]], (2, 3)), _scatter_numpy),
-      Case("scatter-empty", ExprOp.SCATTER, (np.empty((0,)),), lambda x: sc.scatter(x, [], (2, 3)), lambda x: np.zeros((2, 3))),
+      Case("scatter-repeated", ExprOp.SCATTER, (x,), lambda x: _scatter_zero(x, [[4, 1, 4], [0, 1, 5]], (2, 3)), _scatter_numpy),
+      Case("scatter-empty", ExprOp.SCATTER, (np.empty((0,)),), lambda x: _scatter_zero(x, [], (2, 3)), lambda x: np.zeros((2, 3))),
     ]
   )
   for rank in [1, 2, 3, 4]:

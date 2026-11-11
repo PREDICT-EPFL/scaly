@@ -8,10 +8,49 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _full_like, _uniform, cast, equal, gather, not_equal, pack, scatter, to_dense, values, where, zeros_like
+from ..ir.expr import (
+  Expr,
+  ExprOp,
+  _full_like,
+  _scatter_zero,
+  _uniform,
+  cast,
+  equal,
+  gather,
+  not_equal,
+  pack,
+  scatter,
+  to_dense,
+  values,
+  where,
+  zeros_like,
+)
 from ..ir.program import ProgramOp
 from ..ir.support import project_entries
-from ..ir.types import TensorType, stored_indices
+from ..ir.types import TensorType, dtypes, stored_indices
+
+
+def scatter_weights(expr: Expr) -> tuple[Expr, Expr]:
+  """Return the base and update weights for an ordered scatter derivative."""
+  base, index, updates = expr.args
+  mode = expr.attrs["mode"]
+  axis = expr.attrs.get("axis")
+  one = _uniform(1, (), dtype=expr.type.dtype)
+  if expr.attrs["combine"] == "set":
+    positions = Expr.const(np.arange(updates.size, dtype=np.int64).reshape(updates.shape) + 1, dtype=dtypes.int64)
+    winners = scatter(_uniform(0, base.shape, dtype=dtypes.int64), index, positions, axis=axis, combine="set", mode=mode)
+    update_weight = cast(equal(gather(winners, index, axis=axis, mode=mode).reshape(updates.shape), positions), expr.type.dtype).reshape(
+      updates.shape
+    )
+    base_weight = cast(equal(winners, _uniform(0, (), dtype=dtypes.int64)), expr.type.dtype)
+    return base_weight, update_weight
+  base_mask = cast(equal(base, expr), expr.type.dtype)
+  update_mask = cast(equal(updates, gather(expr, index, axis=axis, mode=mode).reshape(updates.shape)), expr.type.dtype)
+  count = scatter(base_mask, index, update_mask, axis=axis, mode=mode)
+  denominator = where(equal(count, _uniform(0, (), dtype=expr.type.dtype)), one, count)
+  base_weight = base_mask / denominator
+  update_weight = update_mask / gather(denominator, index, axis=axis, mode=mode, fill_value=1).reshape(updates.shape)
+  return base_weight, update_weight
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,12 +299,12 @@ def cotangent(expr: Expr, cot: Expr, position: int) -> Expr:
 
     def transpose(c: Expr) -> tuple[Expr]:
       if operand.type.pattern is None:
-        return (scatter(c, projected, operand.shape),)
+        return (_scatter_zero(c, projected, operand.shape),)
       entries = stored_indices(operand.type)
       slots = np.searchsorted(entries, projected)
       keep = slots < len(entries)
       keep[keep] &= entries[slots[keep]] == projected[keep]
-      result = scatter(gather(c, np.flatnonzero(keep)), slots[keep], operand.type.storage_shape)
+      result = _scatter_zero(gather(c, np.flatnonzero(keep)), slots[keep], operand.type.storage_shape)
       return (pack(result, operand.type.pattern, shape=operand.shape),)
 
     (result,) = carry_mask(contribution, transpose)
@@ -284,7 +323,7 @@ def cotangent(expr: Expr, cot: Expr, position: int) -> Expr:
 
 
 def carry_mask(cot: Expr, transpose: Callable[[Expr], tuple[Expr | None, ...]]) -> tuple[Expr | None, ...]:
-  """``transpose(cot)`` for a linear map whose weights are 0 or 1, such as a sum, a slice or a
+  """``transpose(cot)`` for a linear map with nonnegative weights, such as a sum, a slice or a
   reshape, each result masked where no entry the mask on ``cot`` keeps reaches it."""
   results = transpose(cot)
   mask = _mask_of(cot)
@@ -371,7 +410,7 @@ def _sample_stored_unmasked(expr: Expr, output: TensorType) -> Expr:
   keep = slots < len(entries)
   keep[keep] &= entries[slots[keep]] == logical[keep]
   sampled = gather(values(expr), slots[keep])
-  return scatter(sampled, np.flatnonzero(keep), output.storage_shape)
+  return _scatter_zero(sampled, np.flatnonzero(keep), output.storage_shape)
 
 
 def _times_partial(local: Local, t: Expr, align: Callable[[Expr], Expr] | None = None) -> Expr:

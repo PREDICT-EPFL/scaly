@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 
@@ -248,7 +250,7 @@ def test_views_broadcast_gather_and_scatter() -> None:
     broadcast = sliced + x[1:2, 1::2]
     moved = sc.concat([broadcast.T, sliced.T], axis=1).reshape((12,))
     gathered = sc.gather(moved, np.array([[11, 0, 4], [3, 9, 1]]))
-    scattered = sc.scatter(gathered.reshape((6,)), np.array([3, 1, 4, 0, 5, 2]), (7,))
+    scattered = _scatter_zero(gathered.reshape((6,)), np.array([3, 1, 4, 0, 5, 2]), (7,))
     return sc.stack([scattered, scattered * 2], axis=1).scalar(), x[1:, :][1:, 1:3]
 
   _assert_scalar(main_proc(lower_function(fn)))

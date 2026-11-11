@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 
@@ -68,7 +70,7 @@ def test_slice_split_eval_and_ad() -> None:
 def test_gather_scatter_eval_and_ad() -> None:
   @sc.function(sc.arg("x", 5), outputs=sc.arg("y", 5))
   def f(x):
-    return sc.scatter(x.gather([3, 1, 4]), [0, 2, 3], 5)
+    return _scatter_zero(x.gather([3, 1, 4]), [0, 2, 3], 5)
 
   (x,) = as_concrete(f).inputs
   jf = sc.jacobian(f, "y", "x")
@@ -177,7 +179,7 @@ def test_solver_call_with_inactive_parameter_allows_other_derivatives(mapped) ->
 def test_scatter_accumulates_in_index_order(ids: list[int], scalar: bool) -> None:
   @sc.function(sc.arg("v", 5), outputs=sc.arg("y"))
   def f(v):
-    out = sc.scatter(v, ids, 6)
+    out = _scatter_zero(v, ids, 6)
     return out.scalar() if scalar else out
 
   for values in (np.array([1.5, -2.0, 3.0, 0.5, -1.0]), np.array([1e16, 1.0, -1e16, 2.0, 3.0]), np.array([-0.0, 0.0, -0.0, 0.0, -0.0])):
@@ -195,7 +197,7 @@ def test_scatter_accumulates_in_index_order(ids: list[int], scalar: bool) -> Non
 def test_segment_sum_is_scatter_builder() -> None:
   v = sc.sym("v", 5)
   ids = [1, 3, 1, 1, 0]
-  assert sc.segment_sum(v, ids, 6) is sc.scatter(v, ids, 6)
+  assert sc.segment_sum(v, ids, 6) is _scatter_zero(v, ids, 6)
 
 
 @pytest.mark.parametrize("n", [20, 2000])
@@ -204,8 +206,8 @@ def test_gather_adjoint_has_one_scatter(n: int) -> None:
   cot = sc.sym("cot", (2, n))
   adj = _gather_vjp(cot, ids.reshape(2, n), (n,))
   assert adj.op == ExprOp.SCATTER
-  assert len(topo((adj,))) == 2
-  assert adj.attrs["indices"].size == 2 * n
+  assert len(topo((adj,))) == 4
+  assert adj.args[1].size == 2 * n
 
 
 def test_repeated_gather_reverse_adjoint_matches_numpy() -> None:
@@ -243,6 +245,6 @@ def test_unbroadcast_uses_axis_reduction_without_scatter(shape: tuple[int, ...],
 def test_constant_scatter_accumulates() -> None:
   @sc.function(sc.arg("x", 1), outputs=sc.arg("y"))
   def f(x):
-    return sc.scatter(sc.const([2.0, 5.0, -1.0]), [1, 1, 0], 3) + x
+    return _scatter_zero(sc.const([2.0, 5.0, -1.0]), [1, 1, 0], 3) + x
 
   np.testing.assert_array_equal(f(np.array([0.0])), [-1.0, 7.0, 0.0])

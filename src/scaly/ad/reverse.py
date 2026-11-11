@@ -6,11 +6,23 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _uniform, gather, matmul, pack, scatter, topo, to_dense, values, zeros_like
+from ..ir.expr import _index_values, Expr, ExprOp, _uniform, gather, matmul, pack, _scatter_zero, topo, to_dense, values, zeros_like
+
 from ..ir.support import slice_indices, support_indices
 from ..ir.types import stored_indices
 from .calls import _call_vjp, _cond_vjp, _vmap_vjp
-from .rules import ELEMENTWISE, _masked, accumulate, carry_mask, cotangent, _unbroadcast, reduction_partial, times_partial, zero_partial
+from .rules import (
+  ELEMENTWISE,
+  _masked,
+  accumulate,
+  carry_mask,
+  cotangent,
+  _unbroadcast,
+  reduction_partial,
+  times_partial,
+  zero_partial,
+  scatter_weights,
+)
 from .sparsity import _check_wrt, _depends_on, _prunable_support
 
 
@@ -77,7 +89,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
   return tuple(adjoints.get(wrt.id, zeros_like(wrt)) for wrt in wrts)
 
 
-# Structural ops whose transposes weigh each entry by 0 or 1, so a select's mask passes through them.
+# Transpose rules with nonnegative weights let a select's mask pass through them.
 _SELECTIONS = {
   ExprOp.PACK,
   ExprOp.VALUES,
@@ -126,15 +138,21 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
     entries = support_indices(support) if support is not None and len(support) < cot.size else None
     indices = slice_indices(args[0].shape, expr.attrs["index"], entries)
     selected = gather(cot, entries) if entries is not None else cot
-    return (scatter(selected, indices, args[0].shape),)
+    return (_scatter_zero(selected, indices, args[0].shape),)
   if expr.op == ExprOp.GATHER:
     if args[0].type.pattern is not None:
-      return (_stored_movement_vjp(expr, cot),)
-    return (_gather_vjp(cot, expr.attrs["indices"], args[0].shape),)
+      return (_stored_movement_vjp(expr, cot), None)
+    if expr.args[1].value is None or expr.attrs.get("mode") == "fill":
+      return (_scatter_zero(cot, expr.args[1], args[0].shape, axis=expr.attrs.get("axis"), mode=expr.attrs.get("mode", "promise_in_bounds")), None)
+    return (_gather_vjp(cot, _index_values(expr), args[0].shape), None)
   if expr.op == ExprOp.SCATTER:
-    if args[0].type.pattern is not None:
-      return (_stored_movement_vjp(expr, cot),)
-    return (gather(cot, expr.attrs["indices"]).reshape(args[0].shape),)
+    if args[2].type.pattern is not None:
+      return (cot, None, _stored_movement_vjp(expr, cot))
+    if expr.attrs["combine"] != "add":
+      base_weight, update_weight = scatter_weights(expr)
+      selected = gather(cot, args[1], axis=expr.attrs.get("axis"), mode=expr.attrs["mode"]).reshape(args[2].shape)
+      return (cot * base_weight, None, selected * update_weight)
+    return (cot, None, gather(cot, expr.args[1], axis=expr.attrs.get("axis"), mode=expr.attrs["mode"]).reshape(args[2].shape))
   if expr.op == ExprOp.STACK:
     return _stack_vjp(cot, len(args), expr.attrs.get("axis", 0))
   if expr.op == ExprOp.CONCAT:
@@ -170,19 +188,19 @@ def _on_pattern(value: Expr, primal: Expr) -> Expr:
 
 
 def _stored_movement_vjp(expr: Expr, cot: Expr) -> Expr:
-  src = expr.args[0]
+  src = expr.args[2] if expr.op == ExprOp.SCATTER else expr.args[0]
   pattern = src.type.pattern
   assert pattern is not None
   entries = stored_indices(src.type)
   if expr.op == ExprOp.SCATTER:
-    selected = gather(cot, expr.attrs["indices"].reshape(-1)[entries]).reshape(src.type.storage_shape)
+    selected = gather(cot, _index_values(expr).reshape(-1)[entries]).reshape(src.type.storage_shape)
   else:
     outputs = stored_indices(expr.type)
-    inputs = slice_indices(src.shape, expr.attrs["index"], outputs) if expr.op == ExprOp.SLICE else expr.attrs["indices"].reshape(-1)[outputs]
+    inputs = slice_indices(src.shape, expr.attrs["index"], outputs) if expr.op == ExprOp.SLICE else _index_values(expr).reshape(-1)[outputs]
     slots = np.searchsorted(entries, inputs)
     keep = slots < len(entries)
     keep[keep] &= entries[slots[keep]] == inputs[keep]
-    selected = scatter(gather(cot, outputs[keep]), slots[keep], src.type.storage_shape)
+    selected = _scatter_zero(gather(cot, outputs[keep]), slots[keep], src.type.storage_shape)
   return pack(selected, pattern, shape=src.shape)
 
 
@@ -206,7 +224,7 @@ def _stored_matmul_vjp(x: Expr, y: Expr, cot: Expr, active: tuple[int, ...] | No
       (sparse_cot,) = carry_mask(contribution, lambda c: (pack(c, pattern),))
     if (1 if left else 0) in active:
       contribution = _masked(sampled, lambda c: values(src) * c)
-      (dense_cot,) = carry_mask(contribution, lambda c: (scatter(c, inner, dense.shape),))
+      (dense_cot,) = carry_mask(contribution, lambda c: (_scatter_zero(c, inner, dense.shape),))
   else:
     width = dense.shape[1] if left else dense.shape[0]
     axis = np.arange(width, dtype=np.int64)
@@ -220,7 +238,7 @@ def _stored_matmul_vjp(x: Expr, y: Expr, cot: Expr, active: tuple[int, ...] | No
       (sparse_cot,) = carry_mask(contribution, lambda c: (pack(c @ _uniform(1, (width,), dtype=cot.type.dtype), pattern),))
     if (1 if left else 0) in active:
       contribution = _masked(sampled, lambda c: values(src).reshape((pattern.nnz, 1)) * c)
-      (dense_cot,) = carry_mask(contribution, lambda c: (scatter(c.vec(), dense_indices.reshape(-1), dense.shape),))
+      (dense_cot,) = carry_mask(contribution, lambda c: (_scatter_zero(c.vec(), dense_indices.reshape(-1), dense.shape),))
   return (sparse_cot, dense_cot) if left else (dense_cot, sparse_cot)
 
 
@@ -231,7 +249,7 @@ def _ones_like(expr: Expr) -> Expr:
 
 
 def _gather_vjp(cot: Expr, indices: np.ndarray, shape: tuple[int, ...]) -> Expr:
-  return scatter(cot, indices, shape)
+  return _scatter_zero(cot, indices, shape)
 
 
 def _stack_vjp(cot: Expr, nargs: int, axis: int) -> tuple[Expr, ...]:

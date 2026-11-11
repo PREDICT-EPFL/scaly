@@ -6,11 +6,27 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _uniform, callees_of, concat, from_dense, gather, matmul, pack, scatter, stack, to_dense, values
+from ..ir.expr import (
+  _index_values,
+  Expr,
+  ExprOp,
+  _scatter_zero,
+  _uniform,
+  callees_of,
+  concat,
+  from_dense,
+  gather,
+  matmul,
+  pack,
+  scatter,
+  stack,
+  to_dense,
+  values,
+)
 from ..ir.types import TensorType, stored_indices
 from ..passes.expr import simplify_cse_fixpoint
 from .calls import _call_jvp_many, _cond_jvp_many, _is_zero_const, _vmap_jvp_many, read_args
-from .rules import ELEMENTWISE, Mask, reduction_partial, times_partial, tangent as _elementwise_tangent
+from .rules import ELEMENTWISE, Mask, reduction_partial, times_partial, scatter_weights, tangent as _elementwise_tangent
 from .sparsity import _check_wrt, _prunable_support
 
 
@@ -113,6 +129,10 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
           raise NotImplementedError(f"JVP for nonsmooth op {expr.op!r} in callee {callee!r} is not implemented")
         tangent = _elementwise_tangent(expr, d, nseed)
       else:
+        if expr.op == ExprOp.GATHER:
+          args, d = args[:1], d[:1]
+        elif expr.op == ExprOp.SCATTER:
+          args, d = (args[0], args[2]), (d[0], d[2])
         assert all(arg.type.dtype.is_floating for arg in args)
         d = [t if t is not None else _zero_tangent(arg, nseed) for arg, t in zip(args, d, strict=True)]
         tangent = _pushforward_rule(expr, d, nseed, callee)
@@ -164,17 +184,32 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
   if op == ExprOp.SLICE:
     return d[0][(slice(None), *expr.attrs["index"])]
   if op == ExprOp.GATHER:
-    indices = expr.attrs["indices"].reshape(-1)
+    if expr.args[1].value is None or expr.attrs.get("mode") == "fill":
+      axis = expr.attrs.get("axis")
+      source = d[0].reshape((nseed, args[0].size)) if axis is None else d[0]
+      return gather(source, args[1], axis=1 if axis is None else axis + 1, mode=expr.attrs["mode"]).reshape((nseed, *expr.shape))
+    indices = _index_values(expr).reshape(-1)
     if args[0].type.pattern is not None:
-      return stack(gather(d[0][i], expr.attrs["indices"]) for i in range(nseed))
+      return stack(gather(d[0][i], args[1], axis=expr.attrs.get("axis")) for i in range(nseed))
     full = (np.arange(nseed, dtype=np.int64)[:, None] * args[0].size + indices[None, :]).reshape(-1)
     return gather(d[0], full).reshape((nseed, *expr.shape))
   if op == ExprOp.SCATTER:
-    indices = expr.attrs["indices"].reshape(-1)
-    if args[0].type.pattern is not None:
-      return stack(scatter(d[0][i], indices, expr.shape) for i in range(nseed))
+    if expr.args[1].value is None or expr.attrs["mode"] == "fill" or expr.attrs["combine"] != "add":
+      base, updates = d
+      if expr.attrs["combine"] != "add":
+        base_weight, update_weight = scatter_weights(expr)
+        base, updates = base * base_weight, updates * update_weight
+      axis = expr.attrs.get("axis")
+      if axis is None:
+        base = base.reshape((nseed, expr.size))
+        updates = updates.reshape((nseed, *args[1].shape))
+      return scatter(base, args[1], updates, axis=1 if axis is None else axis + 1, mode=expr.attrs["mode"]).reshape((nseed, *expr.shape))
+    indices = _index_values(expr).reshape(-1)
+    if args[2].type.pattern is not None:
+      return stack(_scatter_zero(d[1][i], indices, expr.shape) for i in range(nseed))
     full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.size + indices[None, :]).reshape(-1)
-    return scatter(d[0].reshape((nseed * args[0].size,)), full, (nseed * expr.size,)).reshape((nseed, *expr.shape))
+    scattered = _scatter_zero(d[1].reshape((nseed * args[2].size,)), full, (nseed * expr.size,)).reshape((nseed, *expr.shape))
+    return scattered if d[0].support == frozenset() else d[0] + scattered
   if op == ExprOp.STACK:
     return stack(d, axis=expr.attrs.get("axis", 0) + 1)
   if op == ExprOp.CONCAT:
