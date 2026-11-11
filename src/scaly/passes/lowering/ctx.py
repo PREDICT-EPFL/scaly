@@ -163,6 +163,7 @@ def _lower_to_proc(
   observe_expr: ExprObserver | None = None,
   argument_support: tuple[Support, ...] | None = None,
   symbol: str | None = None,
+  inout_carries: dict[int, tuple[Expr, ...]] | None = None,
 ) -> ProgramNode:
   lowering = fun._effective_lowering
   symbol = symbols[fun] if symbol is None else symbol
@@ -173,6 +174,7 @@ def _lower_to_proc(
   if argument_support is not None:
     ctx.seed_pairs = True
     ctx.support_of = specialize_support(fun, argument_support, OP_INFO)
+  ctx.inout_carries = inout_carries or {}
   nodes = fun.nodes
   # Float32 constants and operations retain their rounding during scalar substitution.
   ctx.scalarize = all(n.type.dtype in _EXACT_STORES for n in (*fun.inputs, *nodes)) and (
@@ -191,6 +193,7 @@ def _lower_to_proc(
     {
       **proc.attrs,
       "input_count": len(fun.inputs),
+      **({"inout_carries": tuple(ctx.inout_carries)} if ctx.inout_carries else {}),
       "lowering": lowering,
       # Apple clang 17 (Xcode 16.4, macOS 15 arm64) miscompiles inlined forward-AD helpers for CALL
       # Jacobians, so they stay real call frames. See internal/notes/macos_clang_call_miscompile.md.
@@ -228,6 +231,8 @@ class LowerCtx:
     self.input_names = tuple(self.names.allocate(n) for n in fun.input_names)
     self.output_names = tuple(self.names.allocate(n) for n in fun.output_names)
     self.observe_expr = observe_expr
+    self.inout_carries: dict[int, tuple[Expr, ...]] = {}
+    self.fused_scatter: dict[int, set[Expr]] = {}
     self.params: list[ProgramNode] = []
     self.statements: list[ProgramNode] = []
     self.buffers: dict[str, ProgramNode] = {}
@@ -251,8 +256,10 @@ class LowerCtx:
   # --- declarations ---------------------------------------------------------
 
   def emit_inputs(self) -> None:
-    for name, expr, layout in zip(self.input_names, self.fun.inputs, self.fun.input_tree.layouts, strict=True):
-      buf = p.buffer(name, expr.type.dtype, _shape_or_scalar(expr.type.storage_shape), address_space="global")
+    for k, (name, expr, layout) in enumerate(zip(self.input_names, self.fun.inputs, self.fun.input_tree.layouts, strict=True)):
+      buf = p.buffer(
+        name, expr.type.dtype, _shape_or_scalar(expr.type.storage_shape), address_space="global", intent="inout" if k in self.inout_carries else None
+      )
       self.params.append(buf)
       self.buffers[name] = buf
       self.value_buffers[expr.id] = name
@@ -266,7 +273,9 @@ class LowerCtx:
     """Register output BUFFER params and alias each unique computed output Expr to
     its output buffer, so its rule writes directly into the output (no copy)."""
     seen: set[int] = set()
-    for name, expr, layout in zip(self.output_names, self.fun.outputs, self.fun.output_tree.layouts, strict=True):
+    for k, (name, expr, layout) in enumerate(zip(self.output_names, self.fun.outputs, self.fun.output_tree.layouts, strict=True)):
+      if k in self.inout_carries:
+        continue
       buf = _with_support(
         p.buffer(name, expr.type.dtype, _shape_or_scalar(expr.type.storage_shape), address_space="global"),
         self.storage_support(expr, None if layout is None else layout.permutation),
@@ -290,7 +299,9 @@ class LowerCtx:
         self._output_orders[expr.id] = layout.inverse_permutation
 
   def emit_outputs(self) -> None:
-    for name, expr, layout in zip(self.output_names, self.fun.outputs, self.fun.output_tree.layouts, strict=True):
+    for k, (name, expr, layout) in enumerate(zip(self.output_names, self.fun.outputs, self.fun.output_tree.layouts, strict=True)):
+      if k in self.inout_carries:
+        continue
       if name in self._declared:
         expr, layout = self._declared[name], None
       src = self.value_buffers.get(expr.id)
@@ -311,6 +322,12 @@ class LowerCtx:
   # --- body -----------------------------------------------------------------
 
   def emit_body(self) -> None:
+    from .in_place import same_index_sources
+
+    self.fused_scatter = {
+      node.id: sources for chain in self.inout_carries.values() for node in chain if (sources := same_index_sources(self.fun, node))
+    }
+    deferred = set().union(*self.fused_scatter.values())
     needed = set()
     for node in topo(self._computed):
       operands = node.args
@@ -321,6 +338,8 @@ class LowerCtx:
       needed.update(operands)
     needed.update(self._computed)
     for node in topo(self._computed):
+      if node in deferred:
+        continue
       if node.op == ExprOp.CONST and node not in needed:
         continue
       if node.id in self.value_buffers:
@@ -328,6 +347,9 @@ class LowerCtx:
       rule = _RULES.get(ExprOp(node.op))
       if rule is None:
         raise LoweringError(f"Expression op {node.op!r} is not yet lowered to Program IR")
+      for k, chain in self.inout_carries.items():
+        if node in chain:
+          self.value_buffers[node.id] = self.value_buffers[self.fun.inputs[k].id]
       rule(self, node)
 
   # --- helpers --------------------------------------------------------------

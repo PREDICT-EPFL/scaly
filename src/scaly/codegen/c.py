@@ -248,7 +248,7 @@ def _render_raw_callee(
   pointer per param plus the workspace tail (spilled slots index into ``w``; ``call`` sites pass
   the caller's ``w`` advanced past its own spill window). ``w`` points to ``unit``, the
   program's workspace dtype, and is ``void*`` for a byte workspace. The leading ``input_count`` params are
-  inputs and are ``const``-qualified (read-only by construction), so a solver wrapper can pass
+  inputs and are ``const``-qualified except for explicit ``inout`` parameters, so a solver wrapper can pass
   its ``const double*`` arguments without discarding qualifiers. No ABI wrapper.
 
   Callees stay inline unless lowering marks them ``noinline``, which it does for forward-AD helpers;
@@ -262,7 +262,10 @@ def _render_raw_callee(
   ptr_expr = {pp.attrs["name"]: c_ident(pp.attrs["name"]) for pp in params}
   param_decls = ", ".join(
     [
-      *(f"{'const ' if i < input_count else ''}{pp.dtype.c_type}* {c_ident(pp.attrs['name'])}" for i, pp in enumerate(params)),
+      *(
+        f"{'const ' if i < input_count and pp.attrs.get('intent') != 'inout' else ''}{pp.dtype.c_type}* {c_ident(pp.attrs['name'])}"
+        for i, pp in enumerate(params)
+      ),
       f"{ENTRY_C_TYPES[unit]}* w",
     ]
   )

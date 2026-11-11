@@ -11,6 +11,7 @@ from scaly.function.model import as_concrete
 from scaly.function.sugar import _loop_node
 from scaly.ir.expr import callees_of
 from scaly.ir.spec import VerifyError
+from scaly.passes.lowering import lower_function
 
 DT = 0.1
 from_exprs = ConcreteFunction._from_exprs
@@ -440,7 +441,11 @@ def test_callees_and_the_verifier() -> None:
   refused("must name distinct carries", in_place=(1,))
   refused("step number", index=True, args=[c0, xs], starts=(0,), strides=(1,))
   with pytest.raises(NotImplementedError, match="in_place"):
-    sc.scan(mix, c0, (sc.broadcast(c0), xs), length=4, in_place=(0,))
+    lower_function(
+      ConcreteFunction._from_exprs(
+        "refused_inplace", [c0, xs], [sc.scan(mix, c0, (sc.broadcast(c0), xs), length=4, in_place=(0,))[0]], ["c0", "xs"], ["c"]
+      )
+    )
   with pytest.raises(ValueError, match=r"expected slice shape \(2,\), got \(3,\)"):
     sc.function(sc.arg("c0", 3), sc.arg("xs", 4))(lambda c, xs: sc.scan(mix, c, (sc.broadcast(sc.const(np.ones(2))), xs), length=4)[0])
 

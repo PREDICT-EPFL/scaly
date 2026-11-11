@@ -167,6 +167,8 @@ def expand_static_loop(
 
 def _scalarize_proc(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
   params = proc.args[: proc.attrs["param_count"]]
+  if any(param.attrs.get("intent") == "inout" for param in params):
+    raise NotImplementedError("scalarize refuses inout parameters")
   n_in = proc.attrs["input_count"]
   pointers = [
     _Pointer([p.load(p.view(param, [p.const_int(i)])) if k < n_in else None for i in range(math.prod(param.attrs["shape"]))])
@@ -235,7 +237,11 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
     param_work = sum(math.prod(param.attrs["shape"]) for param in proc.args[: proc.attrs["param_count"]])
     total_work = param_work + sum(value for value in body_work if value is not None)
     mode = proc.attrs.get("scalarize_mode", "disabled")
-    eligible = mode != "disabled" and all(value is not None for value in body_work)
+    eligible = (
+      mode != "disabled"
+      and all(value is not None for value in body_work)
+      and not any(param.attrs.get("intent") == "inout" for param in proc.args[: proc.attrs["param_count"]])
+    )
     if eligible and proc.attrs["lowering"] == "auto" and total_work > AUTO_EXPANSION_WORK_PER_PROC:
       eligible = False
     if not eligible:

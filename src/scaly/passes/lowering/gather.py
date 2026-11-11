@@ -9,6 +9,7 @@ from ...ir.types import dtypes
 from ..arith import constant
 from .ctx import LowerCtx, lowers, _size_of
 from .plans import lower_movement
+from .in_place import fused_value, scatter_reuse
 
 
 def _address(ctx: LowerCtx, node: Expr, k: ProgramNode, *, clamp: bool = False) -> tuple[ProgramNode, ProgramNode]:
@@ -84,6 +85,7 @@ def _lower_scatter(ctx: LowerCtx, node: Expr) -> None:
     return
   src = node.args[2]
   base, index, _ = node.args
+  reuse = node.id in ctx.value_buffers or scatter_reuse(ctx, node)
   if index.value is None or base.support != frozenset() or node.attrs["combine"] != "add" or node.attrs["mode"] == "fill":
     out = ctx.alloc_tmp(node)
     fill = node.attrs["mode"] == "fill"
@@ -99,17 +101,17 @@ def _lower_scatter(ctx: LowerCtx, node: Expr) -> None:
         else k
       )
       initial = p.load(p.view(ctx.buf_of(base), [address]))
-    if base.support == frozenset():
+    if not reuse and base.support == frozenset():
       loop = p.for_(ranges[0], [p.store(p.view(work, [k]), initial)])
       ctx.statements.append(ProgramNode(loop.op, loop.args, {**loop.attrs, "zero_fill": True}, dtype=loop.dtype))
-    else:
+    elif not reuse:
       ctx.emit(ranges, [p.store(p.view(work, [k]), initial)])
     ranges, (i,) = ctx.nest((src.size,), f"scatter_{work.attrs['name']}", kind=RangeKind.REDUCE)
     dst, valid = _address(ctx, node, i, clamp=fill)
     if fill:
       dst = ProgramNode(ProgramOp.SELECT, (valid, dst, p.const_int(node.size)), dtype=dtypes.int64)
     target = p.view(work, [dst])
-    value = p.load(p.view(ctx.buf_of(src), [i]))
+    value = fused_value(ctx, src, node, i, dst) if node.id in ctx.fused_scatter else p.load(p.view(ctx.buf_of(src), [i]))
     combine = node.attrs["combine"]
     if combine == "add":
       value = p.add(p.load(target), value)

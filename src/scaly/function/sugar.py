@@ -428,7 +428,16 @@ def _symbolic(item: Any) -> Any:
 
 
 def _loop(
-  body: Any, cond: Any, init: Any, xs: tuple[Any, ...], length: int, trip: Any, index: bool, reverse: bool, what: str
+  body: Any,
+  cond: Any,
+  init: Any,
+  xs: tuple[Any, ...],
+  length: int,
+  trip: Any,
+  index: bool,
+  reverse: bool,
+  what: str,
+  in_place: tuple[int | str, ...] = (),
 ) -> tuple[Any, Any, Expr]:
   if not isinstance(body, Function | ConcreteFunction) or cond is not None and not isinstance(cond, Function | ConcreteFunction):
     raise TypeError(f"{what} body and condition must be scaly Functions")
@@ -453,7 +462,7 @@ def _loop(
     "strides": tuple(stride for _, stride in layouts[skip:]),
     "index": bool(index),
     "reverse": bool(reverse),
-    "in_place": (),
+    "in_place": tuple(callee.input_names.index(k) if isinstance(k, str) else k for k in in_place),
   }
   args = (*leaves, *outers, *trips)
   parts = callee.output_tree.parts if isinstance(callee.output_tree, _G) else (callee.output_tree,)
@@ -478,7 +487,7 @@ def scan(
   trip: Any = None,
   index: bool = False,
   reverse: bool = False,
-  in_place: tuple[int, ...] = (),
+  in_place: tuple[int | str, ...] = (),
 ) -> tuple[Any, Any]:
   """Run ``body`` for ``length`` steps, threading a carry and stacking per-step outputs.
 
@@ -492,12 +501,10 @@ def scan(
   outputs, each with a leading axis of ``length``. ``trip``, an int64 scalar, runs only the first
   ``min(trip, length)`` steps; the unused entries of the stacked outputs are zero. With ``reverse``
   the steps run from the last to the first, and step ``k`` still reads slice ``k`` and writes
-  output ``k``. ``in_place`` must be empty. Differentiating through the loop raises
+  output ``k``. ``in_place`` names carry positions or input names that lowering must prove safe to update in place. Differentiating through the loop raises
   ``NotImplementedError``.
   """
-  if in_place:
-    raise NotImplementedError("scan does not support in_place carries yet")
-  carry, ys, _ = _loop(body, None, init, tuple(xs), length, trip, index, reverse, "scan")
+  carry, ys, _ = _loop(body, None, init, tuple(xs), length, trip, index, reverse, "scan", in_place)
   return carry, ys
 
 

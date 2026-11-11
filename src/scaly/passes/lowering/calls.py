@@ -11,7 +11,8 @@ from ...ir.types import DType, dtypes
 from ...function.concrete import ConcreteFunction
 from ...ir.support import Support, _mapped_support_groups
 from ..program.scalarize import expand_static_loop
-from .ctx import LowerCtx, LoweringError, lowers, _lower_to_proc
+from .ctx import LowerCtx, LoweringError, lowers, _lower_to_proc, _normalize_function
+from .in_place import carry_reuse
 
 
 STATIC_LOOP_BUDGET = 256
@@ -232,6 +233,27 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
   siblings = ctx.used_results[invocation_key(node)]
   used = {int(sibling.attrs["output"]): sibling for sibling in siblings}
   traj = {c for c in range(n_carry) if n_carry + n_ys + 1 + c in used}
+  symbol = ctx.symbols[callee]
+  normalized = _normalize_function(callee, residuals=callee in ctx.residuals)
+  chains = carry_reuse(normalized, n_carry, length, index, traj)
+  reuse = set(chains)
+  for j in node.attrs["in_place"]:
+    if j not in reuse:
+      raise LoweringError(f"cannot prove in_place carry {callee.input_names[j]!r} of {callee.name!r}")
+  if reuse:
+    symbol = ctx.program_names.procedure(f"{callee.name}_inplace")
+    variant = normalized._replace(name=symbol)
+    ctx.symbols[variant] = symbol
+    ctx.callees[variant] = _lower_to_proc(
+      variant,
+      ctx.callees,
+      ctx.solver_fns,
+      ctx.program_names,
+      ctx.symbols,
+      ctx.residuals,
+      observe_expr=ctx.observe_expr,
+      inout_carries=chains,
+    )
   early = cond is not None or trip is not None
   name = ctx.names.allocate("i_loop")
   i = p.var(name)
@@ -248,12 +270,16 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
     ctx.buf_of(arg)
   before_loop = len(ctx.statements)
   existing_buffers = list(ctx.buffers.values())
-  slots = [ctx.new_private(c.type.dtype, ((length + 1 if j in traj else 2) * sizes[j],)) for j, c in enumerate(callee.inputs[:n_carry])]
+  slots = [
+    ctx.new_private(c.type.dtype, ((length + 1 if j in traj else 1 if j in reuse else 2) * sizes[j],)) for j, c in enumerate(callee.inputs[:n_carry])
+  ]
 
   def slot(j: int, at: ProgramNode) -> ProgramNode:
     """The offset of carry ``j``'s slot after ``at`` executed steps."""
     if j in traj:
       at = p.sub(count, at) if reverse else at
+    elif j in reuse:
+      at = p.const_int(0)
     else:
       at = p.mod(at, p.const_int(2))
     return p.mul(at, p.const_int(sizes[j]))
@@ -301,7 +327,16 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
     else:
       scratch.append((y, ctx.new_private(result.type.dtype, result.type.storage_shape)))
       outs.append(scratch[-1][1])
-  ctx.statements.append(_call(ctx, callee, inputs(callee), _proc_results(ctx, callee, outs)))
+  ins = inputs(callee)
+  results = _proc_results(ctx, callee, outs)
+  results = [out for j, out in enumerate(results) if j not in reuse]
+  ctx.statements.append(
+    ProgramNode(
+      ProgramOp.CALL,
+      (*ins, *results),
+      attrs={"callee": symbol, "n_in": len(ins), "n_out": len(results), "inout": tuple(sorted(reuse)), "returns": ()},
+    )
+  )
   for y, buf in scratch:
     result = callee.outputs[n_carry + y]
     ctx.reorder(

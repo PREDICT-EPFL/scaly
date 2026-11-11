@@ -111,6 +111,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.passes.lowering.plans": 6,
   "scaly.passes.lowering.calls": 6,
   "scaly.passes.lowering.gather": 6,
+  "scaly.passes.lowering.in_place": 6,
   "scaly.passes.lowering.effects": 6,
   "scaly.codegen.abi": 7,
   "scaly.codegen.jit": 7,

@@ -1,0 +1,54 @@
+{
+  "carry_entries": 100000,
+  "updated_entries_per_step": 4,
+  "steps": 100,
+  "baseline": {
+    "source_bytes": 5103,
+    "compile_seconds": 0.030843873973935843,
+    "step_operations": {
+      "store": 100004,
+      "load": 100012,
+      "add": 4
+    },
+    "workspace_elements": 200000,
+    "parameters": [
+      {
+        "name": "carry",
+        "shape": [
+          100000
+        ],
+        "intent": "input"
+      },
+      {
+        "name": "update_four_2",
+        "shape": [
+          100000
+        ],
+        "intent": "output"
+      }
+    ],
+    "carry_slots": 2,
+    "carry_buffer_bytes": 1600000
+  },
+  "reused": {
+    "source_bytes": 4142,
+    "compile_seconds": 0.02952151803765446,
+    "step_operations": {
+      "load": 8,
+      "store": 4,
+      "add": 4
+    },
+    "workspace_elements": 100000,
+    "parameters": [
+      {
+        "name": "carry",
+        "shape": [
+          100000
+        ],
+        "intent": "inout"
+      }
+    ],
+    "carry_slots": 1,
+    "carry_buffer_bytes": 800000
+  }
+}

@@ -20,6 +20,17 @@ def verify_program(root: ProgramNode, spec: "Spec | None" = None) -> None:
     duplicate = next((name for i, name in enumerate(names) if name in names[:i]), None)
     if duplicate is not None:
       raise VerifyError(f"verify_program: duplicate procedure name {duplicate!r}")
+  if root.op == ProgramOp.PROGRAM:
+    procs = {proc.attrs["name"]: proc for proc in root.args}
+    for call in walk_program(root):
+      if call.op != ProgramOp.CALL or call.attrs["callee"] not in procs:
+        continue
+      callee = procs[call.attrs["callee"]]
+      expected = tuple(k for k, param in enumerate(callee.args[: callee.attrs["param_count"]]) if param.attrs.get("intent") == "inout")
+      if expected and (len(call.args) != callee.attrs["param_count"] or call.attrs.get("n_in") != callee.attrs.get("input_count")):
+        raise VerifyError("verify_program: inout CALL argument counts do not match the callee")
+      if call.attrs.get("inout", ()) != expected:
+        raise VerifyError("verify_program: CALL inout positions do not match the callee parameters")
   for node in walk_program(root):
     result = spec.check(node)
     if result is not None:
@@ -106,6 +117,10 @@ def _buffer_attrs(n: ProgramNode) -> str | None:
       return f"BUFFER missing {k!r} attr"
   if n.attrs["address_space"] not in ADDRESS_SPACES:
     return f"BUFFER address_space {n.attrs['address_space']!r} not in {sorted(ADDRESS_SPACES)}"
+  if n.attrs.get("intent") not in (None, "inout"):
+    return "BUFFER intent must be inout when present"
+  if n.attrs.get("intent") == "inout" and n.attrs["address_space"] != "global":
+    return "inout BUFFER must be a global procedure parameter"
   if not isinstance(n.attrs["device"], DeviceSpec):
     return f"BUFFER 'device' must be DeviceSpec, got {type(n.attrs['device']).__name__}"
   return None
@@ -225,6 +240,13 @@ def _break_if_attrs(n: ProgramNode) -> str | None:
 def _call_attrs(n: ProgramNode) -> str | None:
   if "callee" not in n.attrs:
     return "CALL missing 'callee' name attr"
+  inout = n.attrs.get("inout", ())
+  if (
+    not isinstance(inout, tuple)
+    or len(set(inout)) != len(inout)
+    or any(not isinstance(k, int) or k < 0 or k >= n.attrs.get("n_in", 0) for k in inout)
+  ):
+    return "CALL inout must name distinct input positions"
   return None
 
 
@@ -274,6 +296,8 @@ def _proc_params(n: ProgramNode) -> str | None:
   for i in range(pc):
     if n.args[i].op != ProgramOp.BUFFER:
       return f"PROC param {i} op={n.args[i].op} is not BUFFER"
+    if n.args[i].attrs.get("intent") == "inout" and i >= n.attrs.get("input_count", 0):
+      return "inout parameter must be among the PROC inputs"
   mode = n.attrs.get("scalarize_mode")
   if mode is not None and mode not in {"disabled", "inline", "procedure"}:
     return f"PROC scalarize_mode {mode!r} is not disabled/inline/procedure"
