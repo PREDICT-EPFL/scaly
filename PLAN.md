@@ -2,7 +2,8 @@
 
 Automatic differentiation (AD) work for #364 and folded-in #414, under compiler run
 section 4 (#24). PR #434 is draft and already linked/watched. Base is main; the
-conflict-driven rebase includes #408, #361 and #405. No push since the original draft.
+conflict-driven rebase includes #408, #361 and #405. Push the checked combined fixes
+while the main review is paused by Claude's weekly limit.
 
 ## Scope and rule
 
@@ -27,8 +28,10 @@ sampled sparse adjoints and forward call helpers remain documented open boundari
       and leave #432 open. Record the rule and every known open boundary as requested.
 - [x] Run the final full pre-merge hook detached through ~/.scaly-suite/run on this scoped state.
 - [ ] Get the main review from claude-fable-5-2 at high effort, per the updated RULES.md Models
-      section. No Opus review ran; its obsolete quota-failed task was cancelled and settled.
-- [ ] Confirm Sol's correctness findings in one fresh low-effort delta task against the rebased
+      section. It hit the weekly usage limit before reviewing and is snoozed until
+      2026-11-12 17:00 UTC / 18:00 Europe/Zurich. Do not duplicate, cancel or settle it.
+      No Opus review ran; its obsolete quota-failed task was cancelled and settled.
+- [x] Confirm Sol's correctness findings in one fresh low-effort delta task against the rebased
       equivalent of its reviewed head, covering only fixes and the explicit scope revision.
 - [ ] Fix review findings; confirm only the main review's fixes with a low-effort delta if needed.
 - [ ] Delete this temporary plan, push combined review fixes/rebase, rewrite PR evidence and
@@ -52,3 +55,9 @@ sampled sparse adjoints and forward call helpers remain documented open boundari
   /tmp/scaly-364-scoped-perturb.log and /tmp/scaly-364-scoped-restored.log.
 - Sol's full review returned changes needed; the thread was settled. All in-scope findings are
   fixed locally. Its demand to include #432 is superseded by the coordinator's scope revision.
+- Sol's low-effort delta approved the fixes, reran all 99 select tests and found no adjacent
+  breakage or remaining in-scope point. Its completed thread was settled. Do not launch a third
+  Sol round. The delta reviewed the source before this plan-only update.
+- Fable task suffix scaly-434-fable-main-20261111-33f6a08d still owes the main review and
+  should resume automatically after its weekly reset. Its task/thread ids are in this thread's
+  tool record. Reviewed source is unchanged since the passed full hook.
