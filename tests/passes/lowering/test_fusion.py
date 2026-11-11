@@ -273,8 +273,8 @@ def test_loop_operands_are_computed_once_outside_the_carried_range() -> None:
 
   @sc.function(sc.arg("c0", 3), sc.arg("w", 3), sc.arg("v", (4, 3)), name="loop_operands")
   def fn(c0, w, v):
-    c, (ys,) = sc.scan(step, c0, (sc.broadcast(w.sin()), v.exp()), length=4)
-    return c, ys
+    # One used result, so the loop is each operand's only reader.
+    return sc.scan(step, c0, (sc.broadcast(w.sin()), v.exp()), length=4)[0]
 
   proc = _lowered(fn)
   loop = _carried_loop(proc)
@@ -282,13 +282,10 @@ def test_loop_operands_are_computed_once_outside_the_carried_range() -> None:
   assert _work(proc, ProgramOp.SIN) == 3 and _work(proc, ProgramOp.EXP) == 12
   rng = np.random.default_rng(31)
   c0, w, v = rng.uniform(-1, 1, 3), rng.uniform(-1, 1, 3), rng.uniform(-1, 1, (4, 3))
-  c, ys = c0, []
+  c = c0
   for k in range(4):
-    ys.append(c.sum())
     c = c * np.sin(w) + np.exp(v[k])
-  got = fn(c0, w, v)
-  np.testing.assert_allclose(got[0], c, rtol=1e-14)
-  np.testing.assert_allclose(got[1], ys, rtol=1e-14)
+  np.testing.assert_allclose(np.asarray(fn(c0, w, v)), c, rtol=1e-14)
 
 
 @needs_cc
