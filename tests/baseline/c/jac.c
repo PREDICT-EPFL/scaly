@@ -82,40 +82,40 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, i
   for (long long i_t6 = 0; i_t6 < 2; ++i_t6) {
     s0[i_t6] = (2.0 * t5[i_t6]);
   }
-  double acc_t9 = 0.0;
-  double acc_t9_2 = 0.0;
-  double acc_t9_3 = 0.0;
-  double acc_t9_4 = 0.0;
-  for (long long k_t9 = 0; k_t9 < 2; ++k_t9) {
-    acc_t9 = (acc_t9 + (s0[k_t9] * k1[k_t9]));
-    acc_t9_2 = (acc_t9_2 + (s0[k_t9] * k1[(2 + k_t9)]));
-    acc_t9_3 = (acc_t9_3 + (s0[k_t9] * k1[(4 + k_t9)]));
-    acc_t9_4 = (acc_t9_4 + (s0[k_t9] * k1[(6 + k_t9)]));
+  double acc_t8 = 0.0;
+  double acc_t8_2 = 0.0;
+  double acc_t8_3 = 0.0;
+  double acc_t8_4 = 0.0;
+  for (long long k_t8 = 0; k_t8 < 2; ++k_t8) {
+    acc_t8 = (acc_t8 + (s0[k_t8] * k1[k_t8]));
+    acc_t8_2 = (acc_t8_2 + (s0[k_t8] * k1[(2 + k_t8)]));
+    acc_t8_3 = (acc_t8_3 + (s0[k_t8] * k1[(4 + k_t8)]));
+    acc_t8_4 = (acc_t8_4 + (s0[k_t8] * k1[(6 + k_t8)]));
   }
-  *(double2*)(s0) = (double2){acc_t9, acc_t9_2};
-  *(double2*)(s0 + 2) = (double2){acc_t9_3, acc_t9_4};
-  for (long long i_t10_start = 0; i_t10_start <= 4 - SCALY_WIDTH_4_4_4_4; i_t10_start += SCALY_WIDTH_4_4_4_4) {
-    lanes_1(i_t10_start, SCALY_WIDTH_4_4_4_4, s0, s1);
+  *(double2*)(s0) = (double2){acc_t8, acc_t8_2};
+  *(double2*)(s0 + 2) = (double2){acc_t8_3, acc_t8_4};
+  for (long long i_t9_start = 0; i_t9_start <= 4 - SCALY_WIDTH_4_4_4_4; i_t9_start += SCALY_WIDTH_4_4_4_4) {
+    lanes_1(i_t9_start, SCALY_WIDTH_4_4_4_4, s0, s1);
   }
 #if (4 % SCALY_WIDTH_4_4_4_4) != 0
   lanes_1(4 - 4 % SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, s0, s1);
 #endif
-  double acc_t14 = 0.0;
-  for (long long i_t14 = 0; i_t14 < 2; ++i_t14) {
-    double v0 = t5[i_t14];
-    acc_t14 = (acc_t14 + (v0 * v0));
+  double acc_t13 = 0.0;
+  for (long long i_t13 = 0; i_t13 < 2; ++i_t13) {
+    double v0 = t5[i_t13];
+    acc_t13 = (acc_t13 + (v0 * v0));
   }
-  s0[0] = acc_t14;
+  s0[0] = acc_t13;
   s2[0] = (0.10000000000000001 * s0[0]);
-  for (long long j_t20_0_0 = 0; j_t20_0_0 < 4; ++j_t20_0_0) {
-    for (long long j_t20_0 = 0; j_t20_0 < 2; ++j_t20_0) {
-      s0[((j_t20_0_0 * 4) + j_t20_0)] = k0[((j_t20_0_0 * 2) + j_t20_0)];
+  for (long long j_t19_0_0 = 0; j_t19_0_0 < 4; ++j_t19_0_0) {
+    for (long long j_t19_0 = 0; j_t19_0 < 2; ++j_t19_0) {
+      s0[((j_t19_0_0 * 4) + j_t19_0)] = k0[((j_t19_0_0 * 2) + j_t19_0)];
     }
   }
-  for (long long j_t20_1_0 = 0; j_t20_1_0 < 4; ++j_t20_1_0) {
-    for (long long j_t20_1 = 0; j_t20_1 < 2; ++j_t20_1) {
-      double v1 = k1[((j_t20_1_0 * 2) + j_t20_1)];
-      s0[((j_t20_1_0 * 4) + (2 + j_t20_1))] = (v1 - (0.050000000000000003 * ((s1[j_t20_1_0] * t5[j_t20_1]) + (s2[0] * v1))));
+  for (long long j_t19_1_0 = 0; j_t19_1_0 < 4; ++j_t19_1_0) {
+    for (long long j_t19_1 = 0; j_t19_1 < 2; ++j_t19_1) {
+      double v1 = k1[((j_t19_1_0 * 2) + j_t19_1)];
+      s0[((j_t19_1_0 * 4) + (2 + j_t19_1))] = (v1 - (0.050000000000000003 * ((s1[j_t19_1_0] * t5[j_t19_1]) + (s2[0] * v1))));
     }
   }
   for (long long i_jac_znext_z_0 = 0; i_jac_znext_z_0 < 4; ++i_jac_znext_z_0) {

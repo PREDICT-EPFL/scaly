@@ -161,9 +161,17 @@ def _elementwise_shape_dtype(expr: Expr) -> str | None:
   return None
 
 
-def _sum_shape(expr: Expr) -> str | None:
-  if expr.shape != ():
-    return f"SUM output must be scalar, got shape {expr.shape}"
+def _reduce_shape(expr: Expr) -> str | None:
+  axes = expr.attrs.get("axes")
+  if expr.attrs.get("kind") not in {"add", "max", "min"}:
+    return "REDUCE requires kind add, max or min"
+  if not isinstance(axes, tuple) or any(not isinstance(i, int) or i < 0 or i >= len(expr.args[0].shape) for i in axes):
+    return "REDUCE requires normalized axes"
+  if tuple(sorted(set(axes))) != axes:
+    return "REDUCE axes must be sorted and unique"
+  shape = tuple(n for i, n in enumerate(expr.args[0].shape) if i not in axes)
+  if expr.shape != shape or expr.type.dtype != expr.args[0].type.dtype:
+    return f"REDUCE output must have shape {shape} and its input dtype"
   return None
 
 
@@ -409,7 +417,7 @@ spec_expr = Spec(
     Rule(ExprOp.VALUES, "stored-value-conversion", _storage_conversion),
     *_elementwise_rules,
     Rule(ExprOp.STOP_GRADIENT, "stop-gradient-shape-dtype", _unary_shape_dtype),
-    Rule(ExprOp.SUM, "sum-output-scalar", _sum_shape),
+    Rule(ExprOp.REDUCE, "reduce-shape-kind", _reduce_shape),
     Rule(ExprOp.RESHAPE, "reshape-size", _reshape_size),
     Rule(ExprOp.TRANSPOSE, "transpose-axes", _transpose_axes),
     Rule(ExprOp.SLICE, "slice-index", _slice_index),

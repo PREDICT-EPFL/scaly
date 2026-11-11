@@ -275,8 +275,13 @@ def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> 
     return _combine(a, b, intersection=False)
   if op == "numerator":
     return _broadcast_support(node.args[0], node.shape, support_of(node.args[0]))
-  if op == "sum":
-    return frozenset() if support_of(node.args[0]) == frozenset() else frozenset({0})
+  if op == "reduce":
+    src = node.args[0]
+    axes = node.attrs["axes"]
+    if node.attrs["kind"] != "add" and any(src.shape[axis] == 0 for axis in axes):
+      return None
+    support = support_of(src)
+    return None if support is None else _make_support(reduce_entries(support_indices(support), src.shape, axes))
   if op in {"transpose", "slice", "gather"}:
     support = support_of(node.args[0])
     if support is None:
@@ -331,6 +336,16 @@ def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> 
     result = _pattern(a, xshape).matmul(_pattern(b, yshape))
     return _make_support(np.asarray(result.rows, dtype=np.int64) * result.shape[1] + np.asarray(result.cols, dtype=np.int64))
   return None
+
+
+def reduce_entries(entries: np.ndarray, shape: tuple[int, ...], axes: tuple[int, ...]) -> np.ndarray:
+  """Project input coordinates onto the axes retained by a reduction."""
+  coords = np.unravel_index(entries, shape) if shape else ()
+  output = np.zeros(len(entries), dtype=np.int64)
+  for axis, (dim, coord) in enumerate(zip(shape, coords, strict=True)):
+    if axis not in axes:
+      output = output * dim + coord
+  return output
 
 
 def transpose_entries(entries: np.ndarray, shape: tuple[int, ...], axes: tuple[int, ...]) -> np.ndarray:

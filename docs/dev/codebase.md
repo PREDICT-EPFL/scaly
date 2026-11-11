@@ -34,7 +34,7 @@ src/scaly/
       ctx.py            lowering state, rule registry, loop nests and access maps, lower_function
       elementwise.py    unary and binary arithmetic with broadcasting
       movement.py       constants, reshapes, slices, transposes, stacks, concatenations
-      reduce.py         full tensor reductions
+      reduce.py         axis reductions over dense and stored coordinates
       contraction.py    vector and matrix products
       schedule.py       ordered reduction schedules and scalar accumulators
       plans.py          stored-coordinate maps and their kernel regions

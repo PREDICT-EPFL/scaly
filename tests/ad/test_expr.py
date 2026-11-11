@@ -223,11 +223,11 @@ def test_repeated_gather_reverse_adjoint_matches_numpy() -> None:
 
 
 @pytest.mark.parametrize("shape,out_shape", [((1, 3), (4, 3)), ((2, 1), (2, 4)), ((3,), (2, 4, 3))])
-def test_unbroadcast_uses_one_scatter(shape: tuple[int, ...], out_shape: tuple[int, ...]) -> None:
+def test_unbroadcast_uses_axis_reduction_without_scatter(shape: tuple[int, ...], out_shape: tuple[int, ...]) -> None:
   cot = sc.sym("cot", out_shape)
   adj = _unbroadcast(cot, shape, out_shape)
-  assert adj.op == ExprOp.SCATTER
-  assert len(topo((adj,))) == 2
+  assert any(node.op == ExprOp.REDUCE for node in topo((adj,)))
+  assert not any(node.op == ExprOp.SCATTER for node in topo((adj,)))
 
   @sc.function(sc.arg("cot", out_shape), outputs=sc.arg("y"))
   def f(cot):
@@ -238,6 +238,22 @@ def test_unbroadcast_uses_one_scatter(shape: tuple[int, ...], out_shape: tuple[i
   expected = np.zeros(np.prod(shape))
   np.add.at(expected, ids, values.reshape(-1))
   np.testing.assert_array_equal(f(values), expected.reshape(shape))
+
+
+@pytest.mark.parametrize("kind", ["max", "min"])
+@pytest.mark.parametrize("mode", ["forward", "many", "reverse"])
+def test_internal_extremum_derivatives_name_the_followup(kind, mode) -> None:
+  from scaly.ir.expr import _reduce
+
+  x = sc.sym("extremum_active", (2, 3))
+  y = _reduce(x, kind, 1)
+  with pytest.raises(NotImplementedError, match=f"{kind}.*#65"):
+    if mode == "forward":
+      sc.jvp(y, x, sc.const(np.ones(x.shape)))
+    elif mode == "many":
+      sc.jvp_many(y, x, sc.const(np.ones((2, *x.shape))))
+    else:
+      sc.vjp((y,), (x,), (sc.const(np.ones(y.shape)),))
 
 
 def test_constant_scatter_accumulates() -> None:

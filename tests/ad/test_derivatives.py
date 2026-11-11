@@ -207,9 +207,8 @@ def test_jvp_many_sum_batches_seeds_without_unrolling() -> None:
   assert structural.shape == (4,)
   nodes = topo((structural,))
   assert len(nodes) == len(topo((one_seed,)))
-  assert sum(node.op == sc.ExprOp.MATMUL for node in nodes) == 1
-  assert sum(node.op == sc.ExprOp.RESHAPE for node in nodes) == 1
-  assert not any(node.op == sc.ExprOp.STACK for node in nodes)
+  assert sum(node.op == sc.ExprOp.REDUCE for node in nodes) == 1
+  assert not any(node.op in {sc.ExprOp.STACK, sc.ExprOp.MATMUL, sc.ExprOp.SCATTER} for node in nodes)
 
   xv = np.random.default_rng(16).normal(size=(2, 3))
   seedv = np.random.default_rng(17).normal(size=(4, 2, 3))

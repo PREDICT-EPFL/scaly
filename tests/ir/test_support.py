@@ -1,6 +1,7 @@
 """Value support rules, cache behavior and randomized soundness against NumPy."""
 
 import math
+from itertools import combinations
 
 import numpy as np
 import pytest
@@ -10,6 +11,30 @@ from scaly.function.concrete import ConcreteFunction
 from scaly.function.sugar import _mapped_call
 from scaly.ir.expr import OP_INFO, Expr, ExprOp, binary, unary
 from scaly.ir.types import SparsityPattern, TensorType
+
+
+def test_reduction_support_and_jacobian_project_the_kept_axes() -> None:
+  from scaly.ir.expr import _reduce
+
+  rng = np.random.default_rng(66)
+  for shape in [(2, 3, 4), (1, 3, 1), (2, 0, 3)]:
+    mask = rng.random(shape) < 0.3
+    x = sc.sym("axis_support", shape)
+    masked = x * sc.const(mask.astype(float))
+    for count in range(len(shape) + 1):
+      for axes in combinations(range(len(shape)), count):
+        expected = mask.any(axis=axes)
+        y = masked.sum(axes)
+        assert y.support == _entries(expected)
+        jac = sc.jacobian_sparsity(y, x)
+        incidence = np.eye(x.size, dtype=bool).reshape((*shape, x.size)) * mask[..., None]
+        np.testing.assert_array_equal(jac.to_mask(), incidence.any(axis=axes).reshape(y.size, x.size))
+        for kind in ("max", "min"):
+          result = _reduce(masked, kind, axes)
+          if any(shape[axis] == 0 for axis in axes):
+            assert result.support is None
+          else:
+            assert result.support == _entries(expected)
 
 
 def _entries(mask) -> frozenset[int]:

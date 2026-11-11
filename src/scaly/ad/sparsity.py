@@ -15,7 +15,16 @@ import numpy as np
 from scipy import sparse
 
 from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_TERNARY, COMMON_ELEMENTWISE_UNARY, OP_INFO, Expr, ExprOp, callees_of
-from ..ir.support import Support, broadcast_entries, transpose_entries, slice_entries, support_indices, project_entries, specialize_support
+from ..ir.support import (
+  reduce_entries,
+  Support,
+  broadcast_entries,
+  transpose_entries,
+  slice_entries,
+  support_indices,
+  project_entries,
+  specialize_support,
+)
 from ..ir.types import SparsityPattern, TensorType, broadcast_shape, stored_indices
 
 
@@ -263,9 +272,10 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_a
   if expr.op in COMMON_ELEMENTWISE_TERNARY:
     _, x, y = expr.args
     return _or(_broadcast_mask(_jac_mask(x, wrt, memo), x.shape, expr.shape), _broadcast_mask(_jac_mask(y, wrt, memo), y.shape, expr.shape))
-  if expr.op == ExprOp.SUM:
+  if expr.op == ExprOp.REDUCE:
     child = _jac_mask(expr.args[0], wrt, memo)
-    return _incidence((1, wrt.size), np.zeros(child.nnz, dtype=np.int64), child.col)
+    rows = reduce_entries(child.row, expr.args[0].shape, expr.attrs["axes"])
+    return _incidence((expr.size, wrt.size), rows, child.col)
   if expr.op in {ExprOp.RESHAPE, ExprOp.PRINT}:
     return _jac_mask(expr.args[0], wrt, memo)
   if expr.op == ExprOp.TRANSPOSE:

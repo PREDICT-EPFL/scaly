@@ -107,7 +107,7 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
         d = [t if t is not None else _zero_tangent(arg, nseed) for arg, t in zip(args, d, strict=True)]
         tangent = _pushforward_rule(expr, d, nseed, callee)
         if expr.op in {
-          ExprOp.SUM,
+          ExprOp.REDUCE,
           ExprOp.RESHAPE,
           ExprOp.TRANSPOSE,
           ExprOp.SLICE,
@@ -131,10 +131,11 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
     return pack(d[0], expr.type.pattern, shape=(nseed, *expr.shape))
   if op == ExprOp.VALUES:
     return values(d[0])
-  if op == ExprOp.SUM:
-    width = args[0].type.storage_size
-    ones = _uniform(1, (width,), dtype=expr.type.dtype)
-    return values(d[0]).reshape((nseed, width)) @ ones
+  if op == ExprOp.REDUCE:
+    if expr.attrs["kind"] != "add":
+      raise NotImplementedError(f"JVP for REDUCE {expr.attrs['kind']} awaits #65")
+    tangent = d[0].sum(tuple(axis + 1 for axis in expr.attrs["axes"]))
+    return to_dense(tangent) if expr.type.pattern is None else tangent
   if op == ExprOp.RESHAPE:
     return _reshape_tangent(d[0], expr, nseed)
   if op == ExprOp.TRANSPOSE:

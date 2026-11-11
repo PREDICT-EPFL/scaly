@@ -94,6 +94,10 @@ expression graph for inspection and export.
 
 ## Builders
 
+::: scaly.ir.expr.diag
+    options:
+      show_source: false
+
 ::: scaly.ir.expr.dot
     options:
       show_source: false

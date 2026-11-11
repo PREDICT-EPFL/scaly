@@ -134,12 +134,18 @@ def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None
     out = np.stack(args, axis=e.attrs.get("axis", 0))
   elif e.op == ExprOp.CONCAT:
     out = np.concatenate(args, axis=e.attrs.get("axis", 0))
-  elif e.op == ExprOp.SUM:
+  elif e.op == ExprOp.REDUCE:
     value = args[0]
-    if value.size > 1024 and _uniform_value(value) is not None:
-      out = np.asarray(np.sum(value.flat[:1]) * value.size, dtype=e.type.dtype.numpy())
+    kind, axes = e.attrs["kind"], e.attrs["axes"]
+    count = int(np.prod([value.shape[axis] for axis in axes], dtype=np.int64))
+    uniform = _uniform_value(value)
+    if uniform is not None:
+      result = np.multiply(np.sum(value.flat[:1]), count) if kind == "add" else uniform if count else {"max": -np.inf, "min": np.inf}[kind]
+      out = np.broadcast_to(np.asarray(result, dtype=e.type.dtype.numpy()), e.shape)
+    elif kind == "add":
+      out = np.sum(value, axis=axes, dtype=e.type.dtype.numpy())
     else:
-      out = np.asarray(np.sum(value), dtype=np.float64)
+      out = (np.max if kind == "max" else np.min)(value, axis=axes, initial=-np.inf if kind == "max" else np.inf)
   elif e.op == ExprOp.MATMUL:
     out = args[0] @ args[1]
   elif e.op in ELEMENTWISE:
@@ -261,14 +267,12 @@ def _matmul_transpose_fold(e: Expr) -> Expr:
 
 def _matmul_ones_vector(e: Expr) -> bool:
   a, b = e.args
-  return len(a.shape) == len(b.shape) == 1 and (_is_one(a) or _is_one(b))
+  return len(a.shape) == 1 and _is_one(a) or len(b.shape) == 1 and _is_one(b)
 
 
 def _matmul_ones(e: Expr) -> Expr:
-  """``v @ 1 -> sum(v)``. The matrix forms wait for an axis reduction in the IR: as stacked row sums
-  they lower to one loop per row and lose the fused producer, which is slower in loop form."""
   a, b = e.args
-  return (b if _is_one(a) else a).sum()
+  return b.sum(0) if len(a.shape) == 1 and _is_one(a) else a.sum(-1)
 
 
 def _gather_identity(e: Expr) -> bool:
@@ -284,7 +288,7 @@ SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
   Pattern(ExprOp.TRANSPOSE, lambda e: e.attrs["axes"] == tuple(range(len(e.attrs["axes"]))), _transpose_identity),
   Pattern(ExprOp.MATMUL, _matmul_of_transpose_and_vector, _matmul_transpose_fold),
   Pattern(ExprOp.MATMUL, _matmul_ones_vector, _matmul_ones),
-  Pattern(ExprOp.SUM, lambda e: _is_zero(e.args[0]), _zero_unary),
+  Pattern(ExprOp.REDUCE, lambda e: _is_zero(e), _zero_unary),
   Pattern(ExprOp.GATHER, lambda e: _is_zero(e.args[0]), _zero_unary),
   Pattern(ExprOp.GATHER, _gather_identity, lambda e: e.args[0].reshape(e.shape)),
   Pattern(ExprOp.SCATTER, lambda e: _is_zero(e.args[0]), _zero_unary),

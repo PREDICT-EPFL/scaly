@@ -106,6 +106,19 @@ def test_broadcasting_shares_batch_pattern_and_expands_matrix_axes() -> None:
   verify_expr(result)
 
 
+def test_reductions_project_patterns_without_using_numerical_support() -> None:
+  mask = np.array([[True, False, True], [False, False, False]])
+  x = _input("reduce_pattern", mask, (4,))
+  assert x.sum(0).type.pattern is x.type.pattern
+  assert x.sum((1, 2)).type.pattern is None
+  assert x.sum(1).type.pattern is _pattern(np.broadcast_to(mask.any(axis=0), (4, 3)))
+  assert x.sum(2).type.pattern is _pattern(np.broadcast_to(mask.any(axis=1), (4, 2)))
+  for result in (x.sum(0), x.sum(1), x.sum(2), x.sum((1, 2)), x.sum(1, True), (x * 0).sum(0)):
+    verify_expr(result)
+  assert (x * 0).sum(0).type.pattern is x.type.pattern
+  assert x.mean(0).type.pattern is x.type.pattern
+
+
 def test_matmul_pattern_is_boolean_product_including_empty_and_dense_operands() -> None:
   rng = np.random.default_rng(404)
   for m, k, n in [(3, 4, 5), (0, 2, 4), (3, 0, 2), (3, 2, 0)]:
@@ -156,7 +169,6 @@ def test_zero_preserving_unary_retains_pattern(op: ExprOp) -> None:
     ExprOp.COSH,
     ExprOp.EXP,
     ExprOp.LOG,
-    ExprOp.SUM,
     ExprOp.SOLVER_CALL,
     ExprOp.PRINT,
     ExprOp.DIV,

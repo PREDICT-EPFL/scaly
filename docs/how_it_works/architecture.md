@@ -62,7 +62,7 @@ import scaly as sc
 x = sc.sym("x", 3)
 y = (x.sin() + x * x).sum()
 
-y.op                        # ExprOp.SUM
+y.op                        # ExprOp.REDUCE
 y.type.shape                # ()
 s = y.args[0]
 s.op                        # ExprOp.ADD
@@ -82,7 +82,7 @@ expr.func @f(%x: tensor<3xfloat64 diff>) -> (%y: tensor<float64 diff>) {
   %1 = expr.sin(%0) : tensor<3xfloat64 diff>
   %2 = expr.mul(%0, %0) : tensor<3xfloat64 diff>
   %3 = expr.add(%1, %2) : tensor<3xfloat64 diff>
-  %4 = expr.sum(%3) : tensor<float64 diff>
+  %4 = expr.reduce(%3) {axes=[0], kind="add"} : tensor<float64 diff>
   expr.return %4
 }
 ```
