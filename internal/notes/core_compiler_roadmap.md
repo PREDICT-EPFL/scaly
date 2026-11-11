@@ -414,8 +414,8 @@ content-derived.
 - `SOLVER_CALL` has a hard-wired zero derivative in `ad/forward.py`, `ad/reverse.py` and
   `ad/sparsity.py`. An active derivative through a solver raises instead. Solver derivatives through
   the implicit function theorem come later with their own design.
-- `OP_INFO` folds `MINIMUM`/`MAXIMUM` with `np.minimum`/`np.maximum` while `c.py` renders
-  `fmin`/`fmax`, so constant folding and generated code disagree on NaN. Fold with `np.fmin`/`np.fmax`.
+- [#65] replaces the earlier `fmin`/`fmax` choice with NaN-propagating elementwise extrema,
+  so folding and generated C both follow `np.minimum`/`np.maximum`.
 
 **[#16]. An immutable Function.** One private constructor with one `_validate`, and a public
 `Function.build(name, input_tree, inputs, output_tree, outputs, *, output_sparsities=None,
