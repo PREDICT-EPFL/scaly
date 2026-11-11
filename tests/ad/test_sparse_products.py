@@ -95,6 +95,9 @@ def test_masked_sparse_product_guards_infinite_coefficients_per_term(left, lower
   grad = sc.gradient(loss, wrt="v")
   np.testing.assert_allclose(grad(point, mask.ravel()), expected.ravel() * 0.5 / np.sqrt(point), atol=1e-12)
   np.testing.assert_array_equal(grad(np.zeros(4), -np.ones(output.nnz)), np.zeros(4))
+  hess = sc.hessian(loss, wrt="v")
+  np.testing.assert_allclose(hess(point, mask.ravel()), np.diag(-0.25 * expected.ravel() / point**1.5), atol=1e-12)
+  np.testing.assert_array_equal(hess(np.zeros(4), -np.ones(output.nnz)), np.zeros((4, 4)))
 
 
 @pytest.mark.parametrize("left", [False, True])
