@@ -90,7 +90,7 @@ def lower_movement(ctx: LowerCtx, node: Expr) -> None:
     dst = stored_slots(node, destinations)
     out = ctx.alloc_tmp(node)
     ranges, (i,) = ctx.nest((node.type.storage_size,), f"zero_{out.attrs['name']}")
-    ctx.emit(ranges, [p.store(p.view(out, [i]), p.const_float(0, dtype=node.type.dtype))])
+    ctx.emit(ranges, [p.store(p.view(out, [i]), constant(0, node.type.dtype))])
     repeated = len(np.unique(dst)) != len(dst)
     ranges, (i,) = ctx.nest((len(source),), f"scatter_{out.attrs['name']}", kind=RangeKind.REDUCE if repeated else RangeKind.GLOBAL)
     target = p.view(out, [ctx.index_at(ctx.physical_slots(node, dst), i, shared=True)])

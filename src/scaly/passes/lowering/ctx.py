@@ -26,7 +26,7 @@ from ..affine import affine_index_map
 from ..arith import fold_program
 from ..expr import cse_many, simplify
 
-_EXACT_STORES = (dtypes.float64, dtypes.int64, dtypes.bool_)
+_EXACT_STORES = (dtypes.float64, dtypes.float32, dtypes.int64, dtypes.bool_)
 LowerRule = Callable[["LowerCtx", Expr], None]
 _RULES: dict[ExprOp, LowerRule] = {}
 
@@ -35,7 +35,7 @@ def _with_support(buf: ProgramNode, support: Support) -> ProgramNode:
   # Support is for scalar expansion only; later buffer rewrites may invalidate it.
   if support is None or len(support) == _size_of(buf.attrs["shape"]):
     return buf
-  return ProgramNode(buf.op, buf.args, {**buf.attrs, "support": support}, buf.dtype)
+  return ProgramNode(buf.op, buf.args, {**buf.attrs, "support": support}, dtype=buf.dtype)
 
 
 def lowers(*ops: ExprOp) -> Callable[[LowerRule], LowerRule]:
@@ -91,7 +91,7 @@ def lower_function(
       if oracle not in callees:
         callees[oracle] = _lower_to_proc(oracle, callees, solver_fns, names, symbols, residuals, observe_expr=observe_expr)
     prog = p.program([*callees.values()])
-    prog = ProgramNode(ProgramOp.PROGRAM, prog.args, {**prog.attrs, "solver_root": symbols[fun]}, prog.dtype)
+    prog = ProgramNode(ProgramOp.PROGRAM, prog.args, {**prog.attrs, "solver_root": symbols[fun]}, dtype=prog.dtype)
   else:
     root = _lower_to_proc(fun, callees, solver_fns, names, symbols, residuals, auto_scalarize=False, observe_expr=observe_expr)
     prog = p.program([*callees.values(), root])
@@ -110,11 +110,11 @@ def lower_function(
       ProgramOp.PROGRAM,
       prog.args,
       {**prog.attrs, "solver_oracles": solver_oracles, "solver_external_workspace": solver_external_workspace},
-      prog.dtype,
+      dtype=prog.dtype,
     )
   externs = tuple(fn for fn in symbols if isinstance(fn, _Extern))
   prog = ProgramNode(
-    prog.op, prog.args, {**prog.attrs, "function_symbols": tuple(symbols.items()), **({"externs": externs} if externs else {})}, prog.dtype
+    prog.op, prog.args, {**prog.attrs, "function_symbols": tuple(symbols.items()), **({"externs": externs} if externs else {})}, dtype=prog.dtype
   )
   if observe is not None:
     observe("lowered", prog)
@@ -187,8 +187,7 @@ def _lower_to_proc(
     observe_expr("normalized", fun)
   ctx = LowerCtx(fun, callees, solver_fns, names, symbols, residuals, observe_expr)
   nodes = fun.nodes
-  # Narrower stores round or truncate; scalar substitution must not erase those conversions. int64
-  # and bool hold every value their operations give, so substituting them changes nothing.
+  # Float32 constants and operations retain their rounding during scalar substitution.
   ctx.scalarize = all(n.type.dtype in _EXACT_STORES for n in (*fun.inputs, *nodes)) and (
     lowering == "scalar" or lowering == "auto" and auto_scalarize
   )
@@ -213,7 +212,7 @@ def _lower_to_proc(
       # "inline" because they only expand with their caller.
       "scalarize_mode": "procedure" if ctx.scalarize else "disabled",
     },
-    proc.dtype,
+    dtype=proc.dtype,
   )
 
 
@@ -555,7 +554,7 @@ class LowerCtx:
 
       def offset(view: ProgramNode) -> ProgramNode:
         index = view.args[0]
-        return ProgramNode(ProgramOp.VIEW, (unit if index.attrs["value"] == 0 else p.add(index, unit),), view.attrs, view.dtype)
+        return ProgramNode(ProgramOp.VIEW, (unit if index.attrs["value"] == 0 else p.add(index, unit),), view.attrs, dtype=view.dtype)
 
       pattern = Pattern(ProgramOp.VIEW, lambda v: v.args[0].op == ProgramOp.CONST_INT, offset)
       stmts = [rewrite(stmt, [pattern], rebuild=rebuild_program, fixpoint=False) for stmt in stmts]

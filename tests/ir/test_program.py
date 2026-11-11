@@ -55,7 +55,7 @@ def test_elementwise_proc_verifies_and_prints() -> None:
 
 def test_for_first_arg_must_be_range() -> None:
   # forge a malformed FOR whose first arg is a CONST_INT instead of a RANGE
-  bad = ProgramNode(ProgramOp.FOR, (p.const_int(0),), attrs={"body_len": 0})
+  bad = ProgramNode(ProgramOp.FOR, (p.const_int(0),), attrs={"body_len": 0}, dtype=dtypes.float64)
   with pytest.raises(VerifyError, match="for-body"):
     verify_program(bad)
 
@@ -114,12 +114,12 @@ def test_every_observed_program_stage_verifies() -> None:
 @pytest.mark.parametrize("attrs,args", [({}, (p.const_float(1),)), ({"target": "v"}, ()), ({"target": "v", "declare": "yes"}, (p.const_float(1),))])
 def test_invalid_scalar_assignment_rejected(attrs, args) -> None:
   with pytest.raises(VerifyError, match="assign-attrs"):
-    verify_program(ProgramNode(ProgramOp.ASSIGN, args, attrs))
+    verify_program(ProgramNode(ProgramOp.ASSIGN, args, attrs, dtype=dtypes.float64))
 
 
 def test_range_kind_value_must_be_enum_member() -> None:
   # forge a RANGE with a non-enum 'kind' attr
-  bad = ProgramNode(ProgramOp.RANGE, (p.const_int(0), p.const_int(4), p.const_int(1)), attrs={"name": "i", "kind": "bogus"})
+  bad = ProgramNode(ProgramOp.RANGE, (p.const_int(0), p.const_int(4), p.const_int(1)), attrs={"name": "i", "kind": "bogus"}, dtype=dtypes.float64)
   with pytest.raises(VerifyError, match="range-attrs"):
     verify_program(bad)
 
@@ -138,7 +138,7 @@ def test_view_requires_one_flat_index(count: int) -> None:
   with pytest.raises(ValueError, match="exactly one flat index"):
     p.view(buf, indices)
   with pytest.raises(VerifyError, match="exactly one flat index"):
-    verify_program(ProgramNode(ProgramOp.VIEW, tuple(indices), {"buffer": "matrix"}, dtypes.float64))
+    verify_program(ProgramNode(ProgramOp.VIEW, tuple(indices), {"buffer": "matrix"}, dtype=dtypes.float64))
 
 
 def test_view_rejects_non_scalar_index() -> None:
@@ -146,7 +146,7 @@ def test_view_rejects_non_scalar_index() -> None:
   with pytest.raises(TypeError, match="index must be a scalar"):
     p.view(buf, [buf])
   with pytest.raises(VerifyError, match="index op=.*not scalar"):
-    verify_program(ProgramNode(ProgramOp.VIEW, (buf,), {"buffer": "matrix"}, dtypes.float64))
+    verify_program(ProgramNode(ProgramOp.VIEW, (buf,), {"buffer": "matrix"}, dtype=dtypes.float64))
 
 
 def test_signed_zeros_are_two_constants() -> None:
@@ -160,10 +160,10 @@ def test_interning_hit_returns_the_node_as_it_was_built() -> None:
   """The key matches values that are equal and not identical, so a hit must not assign them:
   programs already hold the node."""
   x = p.var("intern_x", dtypes.float64)
-  node = ProgramNode(ProgramOp.NEG, (x,), {"width": 3}, dtypes.float64)
+  node = ProgramNode(ProgramOp.NEG, (x,), {"width": 3}, dtype=dtypes.float64)
   attrs = node.attrs
 
-  again = ProgramNode(ProgramOp.NEG, (x,), {"width": np.int64(3)}, dtypes.float64)
+  again = ProgramNode(ProgramOp.NEG, (x,), {"width": np.int64(3)}, dtype=dtypes.float64)
 
   assert again is node and node.attrs is attrs and type(attrs["width"]) is int
 
@@ -197,22 +197,22 @@ def test_interning_distinguishes_every_dtype_field(field: str, value: object, re
 
 def test_node_holds_a_frozen_copy_of_its_attributes() -> None:
   given = {"name": "intern_v"}
-  node = ProgramNode(ProgramOp.VAR, (), given, dtypes.int64)
+  node = ProgramNode(ProgramOp.VAR, (), given, dtype=dtypes.int64)
   given["name"] = "intern_w"
 
   assert node.attrs == {"name": "intern_v"}
-  assert ProgramNode(ProgramOp.VAR, (), {"name": "intern_v"}, dtypes.int64) is node
+  assert ProgramNode(ProgramOp.VAR, (), {"name": "intern_v"}, dtype=dtypes.int64) is node
   with pytest.raises(TypeError):
     node.attrs["name"] = "intern_w"  # ty: ignore[invalid-assignment]
 
 
 def test_a_constant_table_is_copied_all_the_way_down() -> None:
   values = [1.0, 2.0]
-  node = ProgramNode(ProgramOp.BUFFER, (), {"name": "intern_k", "values": values, "nested": {"rows": [0, 1]}}, dtypes.float64)
+  node = ProgramNode(ProgramOp.BUFFER, (), {"name": "intern_k", "values": values, "nested": {"rows": [0, 1]}}, dtype=dtypes.float64)
   values[0] = 9.0
 
   assert node.attrs["values"] == (1.0, 2.0) and node.attrs["nested"]["rows"] == (0, 1)
-  assert ProgramNode(ProgramOp.BUFFER, (), {"name": "intern_k", "values": [1.0, 2.0], "nested": {"rows": [0, 1]}}, dtypes.float64) is node
+  assert ProgramNode(ProgramOp.BUFFER, (), {"name": "intern_k", "values": [1.0, 2.0], "nested": {"rows": [0, 1]}}, dtype=dtypes.float64) is node
   assert p.const_buffer("intern_t", dtypes.float64, (2,), [1.0, 2.0]) is p.const_buffer(
     "intern_t", dtypes.float64, (2,), [np.float64(1), np.float64(2)]
   )
@@ -223,17 +223,17 @@ def test_a_constant_table_is_copied_all_the_way_down() -> None:
 @pytest.mark.parametrize(("first", "second"), [(1, True), (1, 1.0), ((1, 0), (True, False)), ((0.0, 1.0), (-0.0, 1.0))])
 def test_interning_tells_attributes_apart_by_kind_and_bits(first, second) -> None:
   assert first == second
-  a = ProgramNode(ProgramOp.CONST_INT, (), {"value": first}, dtypes.int64)
-  b = ProgramNode(ProgramOp.CONST_INT, (), {"value": second}, dtypes.int64)
+  a = ProgramNode(ProgramOp.CONST_INT, (), {"value": first}, dtype=dtypes.int64)
+  b = ProgramNode(ProgramOp.CONST_INT, (), {"value": second}, dtype=dtypes.int64)
 
   assert a is not b
   assert repr(a.attrs["value"]) == repr(frozen(first)) and repr(b.attrs["value"]) == repr(frozen(second))
-  assert ProgramNode(ProgramOp.CONST_INT, (), {"value": first}, dtypes.int64) is a
+  assert ProgramNode(ProgramOp.CONST_INT, (), {"value": first}, dtype=dtypes.int64) is a
 
 
 def test_interning_shares_numpy_scalars_with_their_python_kind() -> None:
-  flag = ProgramNode(ProgramOp.CONST_INT, (), {"value": True}, dtypes.bool_)
-  assert ProgramNode(ProgramOp.CONST_INT, (), {"value": np.True_}, dtypes.bool_) is flag
+  flag = ProgramNode(ProgramOp.CONST_INT, (), {"value": True}, dtype=dtypes.bool_)
+  assert ProgramNode(ProgramOp.CONST_INT, (), {"value": np.True_}, dtype=dtypes.bool_) is flag
   assert p.const_float(np.float64(1.5)) is p.const_float(1.5)
 
 
@@ -331,20 +331,20 @@ def test_break_if_requires_a_boolean_scalar(value):
   with pytest.raises(TypeError, match="bool scalar"):
     p.break_if(value)
   with pytest.raises(VerifyError, match="bool scalar"):
-    verify_program(ProgramNode(ProgramOp.BREAK_IF, (value,)))
+    verify_program(ProgramNode(ProgramOp.BREAK_IF, (value,), dtype=dtypes.float64))
 
 
 @pytest.mark.parametrize("args", [(), (p.var("flag", dtypes.bool_),) * 2])
 def test_break_if_requires_exactly_one_condition(args):
   with pytest.raises(VerifyError, match="one bool scalar"):
-    verify_program(ProgramNode(ProgramOp.BREAK_IF, args))
+    verify_program(ProgramNode(ProgramOp.BREAK_IF, args, dtype=dtypes.float64))
 
 
 @pytest.mark.parametrize("attr,value", [("carried", 1), ("carried", "yes"), ("exit_var", 1), ("exit_var", "yes")])
 def test_carried_and_exit_markers_are_boolean(attr, value):
   rng = p.range_("i", 0, 3, carried=True)
   node = rng if attr == "carried" else p.for_(rng, [])
-  malformed = ProgramNode(node.op, node.args, {**node.attrs, attr: value}, node.dtype)
+  malformed = ProgramNode(node.op, node.args, {**node.attrs, attr: value}, dtype=node.dtype)
   with pytest.raises(VerifyError, match=f"{attr}.*bool"):
     verify_program(malformed)
 
@@ -360,6 +360,6 @@ def test_exit_variable_is_a_trip_count(start, step):
 def test_carried_ranges_cannot_be_vectorized(lanes):
   rng = p.range_("i", 0, 3, kind=RangeKind.VECTOR, carried=True)
   if lanes:
-    rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "lanes": 2, "lane_cap": 2}, rng.dtype)
+    rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "lanes": 2, "lane_cap": 2}, dtype=rng.dtype)
   with pytest.raises(VerifyError, match="carried.*VECTOR"):
     verify_program(rng)

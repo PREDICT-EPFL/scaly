@@ -654,7 +654,8 @@ lanes come from `widen_ranges` and later [#71], not from devrush's hand-written 
 pass int64 constants through `float(v)` (`lowering.py:492`). libm names by dtype (`sinf`, `fabsf`,
 `fminf`) and integer `abs`/`min`/`max`. The scalarize gate admits float32 once folding keeps each
 store's rounding. `widen_ranges` handles float32 lanes; `coalesce_stores` generalizes `STORE_PAIR`
-or a test pins float32 as untouched; `pack_workspace` spills by [#56]'s workspace rule.
+or a test pins float32 as untouched. `pack_workspace` spills float64 buffers only.
+Typed spilling is deferred to [#56] so that one layer owns the workspace format.
 `ProgramNode` loses its float64 default so every implicit double shows up, and `verify_program`
 checks that loads and stores match their buffer's dtype. Integer sums use integer accumulators.
 Tests: a float32 twin of every op test against NumPy float32 with ulp tolerances.
@@ -664,7 +665,8 @@ the constant `C_API_SIGNATURE`. All float64 (leaves and every buffer the workspa
 signature and `double* w`, unchanged. All float32: `const float** arg, float** res, float* w`.
 Anything else: `const void** arg, void** res, void* w`, with one cast per leaf in the prologue
 (defined, because each pointer came from an object of that type) and a byte-addressed workspace in
-which `SZ_W` counts bytes. In every workspace each spilled buffer starts at a 64-byte offset, with
+which `SZ_W` counts bytes. This also enables spills of the non-float64 buffers left on the stack
+by [#55]. In every workspace each spilled buffer starts at a 64-byte offset, with
 the padding counted in `SZ_W`. Nothing runs faster for it yet, because the vector typedefs are
 `aligned(8)`; it fixes the layout once for [#71]'s alignment measurement. Settle the
 C spelling of that workspace in the header (a caller `malloc` or a union) with a test compiled under

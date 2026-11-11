@@ -237,14 +237,15 @@ class ProgramNode:
   op: ProgramOp
   args: tuple["ProgramNode", ...] = ()
   attrs: Mapping[str, Any] = field(default_factory=dict)
-  dtype: DType = dtypes.float64
+  dtype: DType = field(kw_only=True)
 
   def __new__(
     cls,
     op: ProgramOp,
     args: tuple["ProgramNode", ...] = (),
     attrs: Mapping[str, Any] | None = None,
-    dtype: DType = dtypes.float64,
+    *,
+    dtype: DType,
   ) -> "ProgramNode":
     attrs = attrs or {}
     key = (op.value, tuple(weakref.ref(a) for a in args), _attrs_key(attrs), dtype)
@@ -291,7 +292,7 @@ def const_int(value: int) -> ProgramNode:
 
 
 def const_float(value: float, dtype: DType = dtypes.float64) -> ProgramNode:
-  return ProgramNode(ProgramOp.CONST_FLOAT, (), attrs={"value": float(value)}, dtype=dtype)
+  return ProgramNode(ProgramOp.CONST_FLOAT, (), attrs={"value": np.asarray(value).astype(dtype.numpy()).item()}, dtype=dtype)
 
 
 def var(name: str, dtype: DType = dtypes.int64) -> ProgramNode:
@@ -394,22 +395,22 @@ def for_(rng: ProgramNode, body: Sequence[ProgramNode], *, exit_var: bool = Fals
   """Run a range's body, retaining its zero-based, unit-step trip count with ``exit_var``."""
   if rng.op != ProgramOp.RANGE:
     raise TypeError(f"for_ requires a RANGE, got {rng.op}")
-  return ProgramNode(ProgramOp.FOR, (rng, *body), attrs={"body_len": len(body), **({"exit_var": exit_var} if exit_var else {})})
+  return ProgramNode(ProgramOp.FOR, (rng, *body), attrs={"body_len": len(body), **({"exit_var": exit_var} if exit_var else {})}, dtype=dtypes.float64)
 
 
 def break_if(cond: ProgramNode) -> ProgramNode:
   """Leave the nearest carried loop with an exit variable when a bool scalar holds."""
   if cond.op not in SCALAR_OPS or not cond.dtype.is_bool:
     raise TypeError(f"break_if needs a bool scalar, got {cond.op} {cond.dtype}")
-  return ProgramNode(ProgramOp.BREAK_IF, (cond,))
+  return ProgramNode(ProgramOp.BREAK_IF, (cond,), dtype=dtypes.float64)
 
 
 def block(*statements: ProgramNode) -> ProgramNode:
-  return ProgramNode(ProgramOp.BLOCK, tuple(statements))
+  return ProgramNode(ProgramOp.BLOCK, tuple(statements), dtype=dtypes.float64)
 
 
 def call(callee: str, args: Sequence[ProgramNode], *, returns: Sequence[str] = ()) -> ProgramNode:
-  return ProgramNode(ProgramOp.CALL, tuple(args), attrs={"callee": callee, "returns": tuple(returns)})
+  return ProgramNode(ProgramOp.CALL, tuple(args), attrs={"callee": callee, "returns": tuple(returns)}, dtype=dtypes.float64)
 
 
 def print_(pieces: Sequence[str], values: Sequence[ProgramNode]) -> ProgramNode:
@@ -418,21 +419,23 @@ def print_(pieces: Sequence[str], values: Sequence[ProgramNode]) -> ProgramNode:
     raise ValueError(f"print needs {len(values) + 1} pieces of text for {len(values)} values, got {len(pieces)}")
   if any(v.op not in SCALAR_OPS for v in values):
     raise TypeError("print values must be scalar ProgramNodes")
-  return ProgramNode(ProgramOp.PRINT, tuple(values), attrs={"pieces": tuple(pieces)})
+  return ProgramNode(ProgramOp.PRINT, tuple(values), attrs={"pieces": tuple(pieces)}, dtype=dtypes.float64)
 
 
 def proc(name: str, params: Sequence[ProgramNode], body: Sequence[ProgramNode], *, device: DeviceSpec | str | None = None) -> ProgramNode:
   for p in params:
     if p.op != ProgramOp.BUFFER:
       raise TypeError(f"proc params must be BUFFER nodes, got {p.op}")
-  return ProgramNode(ProgramOp.PROC, (*params, *body), attrs={"name": name, "param_count": len(params), "device": DeviceSpec.parse(device)})
+  return ProgramNode(
+    ProgramOp.PROC, (*params, *body), attrs={"name": name, "param_count": len(params), "device": DeviceSpec.parse(device)}, dtype=dtypes.float64
+  )
 
 
 def program(procs: Sequence[ProgramNode]) -> ProgramNode:
   for p in procs:
     if p.op != ProgramOp.PROC:
       raise TypeError(f"program procs must be PROC nodes, got {p.op}")
-  return ProgramNode(ProgramOp.PROGRAM, tuple(procs), attrs={"proc_count": len(procs)})
+  return ProgramNode(ProgramOp.PROGRAM, tuple(procs), attrs={"proc_count": len(procs)}, dtype=dtypes.float64)
 
 
 # Binary scalar helpers — used by the lowerer (Phase 5+) and by tests.

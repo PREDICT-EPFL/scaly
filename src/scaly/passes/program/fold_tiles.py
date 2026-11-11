@@ -55,13 +55,13 @@ def _fold_proc(proc: ProgramNode) -> ProgramNode:
     if period == 1 and _scalar_safe(decl.attrs["values"][0]):
       return constant(decl.attrs["values"][0], node.dtype)
     index = p.mod(view.args[0], p.const_int(period))
-    return p.load(ProgramNode(ProgramOp.VIEW, (index,), view.attrs, view.dtype))
+    return p.load(ProgramNode(ProgramOp.VIEW, (index,), view.attrs, dtype=view.dtype))
 
   pattern = Pattern(ProgramOp.LOAD, lambda n: n.args[0].attrs["buffer"] in periods, load)
   out = []
   for stmt in body:
     if stmt.op == ProgramOp.BUFFER and (period := periods.get(stmt.attrs["name"])) is not None:
-      out.append(ProgramNode(stmt.op, stmt.args, {**stmt.attrs, "shape": (period,), "values": stmt.attrs["values"][:period]}, stmt.dtype))
+      out.append(ProgramNode(stmt.op, stmt.args, {**stmt.attrs, "shape": (period,), "values": stmt.attrs["values"][:period]}, dtype=stmt.dtype))
     else:
       out.append(rewrite(stmt, [pattern], rebuild=rebuild_program, fixpoint=False))
   return prune_dead_buffers(_rebuild_proc(proc, params, out))

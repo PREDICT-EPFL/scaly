@@ -54,7 +54,7 @@ def test_integer_division_is_unchanged():
 def test_alias_store_blocks_hoisting():
   proc = _program().args[0]
   x, y, out, loop = proc.args
-  alias = ProgramNode(ProgramOp.BUFFER, (), {**y.attrs, "name": "alias", "alias_of": "y"}, y.dtype)
+  alias = ProgramNode(ProgramOp.BUFFER, (), {**y.attrs, "name": "alias", "alias_of": "y"}, dtype=y.dtype)
   write = p.store(p.view(alias, [p.const_int(0)]), p.const_float(2))
   prog = p.program([p.proc("alias_write", [x, y, out], [alias, p.for_(loop.args[0], [*loop.args[1:], write])])])
   assert hoist_reciprocals(prog) is prog

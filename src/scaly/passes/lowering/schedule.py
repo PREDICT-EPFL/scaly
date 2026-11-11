@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 from ...ir import program as p
 from ...ir.program import ProgramNode, ProgramOp, walk_program
+from ..arith import constant
 from ..program._common import substitute_var, trip_count
 from .ctx import LowerCtx, _coefficients
 
@@ -28,7 +29,7 @@ def emit_reduction(
   their output coordinates outside the reduction and disable lane expansion.
   """
   if identity is None:
-    identity = p.const_float({"add": 0.0, "max": -float("inf"), "min": float("inf")}[kind], dtype=value.dtype)
+    identity = constant({"add": 0, "max": -float("inf"), "min": float("inf")}[kind], value.dtype)
   operation = {"add": ProgramOp.ADD, "max": ProgramOp.MAXIMUM, "min": ProgramOp.MINIMUM}[kind]
 
   def combine(a: ProgramNode, b: ProgramNode) -> ProgramNode:

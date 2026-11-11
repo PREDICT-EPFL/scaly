@@ -30,7 +30,7 @@ def _postorder(root: ProgramNode) -> Iterable[ProgramNode]:
 
 def rebuild_program(node: ProgramNode, args: tuple[ProgramNode, ...]) -> ProgramNode:
   """The program-dialect adapter for ``ir.match.rewrite``: ``node`` with new ``args``."""
-  return ProgramNode(node.op, args, node.attrs, node.dtype)
+  return ProgramNode(node.op, args, node.attrs, dtype=node.dtype)
 
 
 def inline_producer(stmt: ProgramNode) -> tuple[str, str, ProgramNode] | None:
@@ -86,12 +86,12 @@ def _proc_parts(proc: ProgramNode) -> tuple[list[ProgramNode], list[ProgramNode]
 
 def _rebuild_proc(proc: ProgramNode, params: list[ProgramNode], body: list[ProgramNode], **extra_attrs: object) -> ProgramNode:
   attrs = {**proc.attrs, "param_count": len(params), **extra_attrs}
-  return ProgramNode(ProgramOp.PROC, (*params, *body), attrs, proc.dtype)
+  return ProgramNode(ProgramOp.PROC, (*params, *body), attrs, dtype=proc.dtype)
 
 
 def _map_procs(prog: ProgramNode, fn: Callable[[ProgramNode], ProgramNode]) -> ProgramNode:
   """Apply a per-PROC transform to every proc."""
-  return ProgramNode(ProgramOp.PROGRAM, tuple(fn(pr) for pr in prog.args), prog.attrs, prog.dtype)
+  return ProgramNode(ProgramOp.PROGRAM, tuple(fn(pr) for pr in prog.args), prog.attrs, dtype=prog.dtype)
 
 
 def _size_of(shape: tuple[int, ...]) -> int:
@@ -279,4 +279,4 @@ def prune_procedures(prog: ProgramNode) -> ProgramNode:
   kept = [proc for proc in procs if proc.attrs["name"] in reachable]
   if len(kept) == len(procs):
     return prog
-  return ProgramNode(ProgramOp.PROGRAM, tuple(kept), {**prog.attrs, "proc_count": len(kept)}, prog.dtype)
+  return ProgramNode(ProgramOp.PROGRAM, tuple(kept), {**prog.attrs, "proc_count": len(kept)}, dtype=prog.dtype)

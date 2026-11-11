@@ -405,6 +405,8 @@ def check_stored_pattern(op: ExprOp | str, args: tuple[Expr, ...], type_: Tensor
 
 def _asarray(value: Any, *, dtype: DType | str | None = None) -> np.ndarray:
   np_dtype = as_dtype(dtype).numpy() if dtype is not None else np.float64
+  if np.issubdtype(np_dtype, np.floating):
+    return np.asarray(value).astype(np_dtype, copy=False)
   return np.asarray(value, dtype=np_dtype)
 
 
@@ -625,9 +627,9 @@ class Expr:
   def scalar(self) -> Expr:
     """Return this expression with a hint to expand its procedure into straight-line scalar code.
 
-    The hint overrides the automatic size limits and applies to the entry point too. Only
-    procedures whose values are all ``float64``, ``int64`` or ``bool`` expand, and a ``block`` hint
-    in the same function wins. See the lowering page of *How it works* for the policy.
+    The hint overrides the automatic size limits and applies to the entry point too. Procedures
+    expand only when scalar substitution preserves each store's rounding and conversion. A
+    ``block`` hint in the same function wins. See the lowering page of *How it works* for the policy.
     """
     return self.with_lowering("scalar")
 
@@ -706,9 +708,10 @@ class Expr:
 
     Negative axes count from the end. An empty tuple leaves every entry unchanged.
     ``keepdims`` retains the reduced axes with extent one. Empty domains sum to zero.
+    The result keeps the operand's dtype.
     """
-    if not self.type.dtype.is_floating:
-      raise TypeError(f"sum takes floating values, got {self.type.dtype}; convert with sc.cast")
+    if not (self.type.dtype.is_floating or self.type.dtype.is_integer):
+      raise TypeError(f"sum takes floating values or integers, got {self.type.dtype}; convert with sc.cast")
     result = _reduce(self, "add", axis)
     return result.reshape(tuple(1 if i in result.attrs["axes"] else n for i, n in enumerate(self.shape))) if keepdims else result
 
@@ -779,6 +782,7 @@ class Expr:
     return unary(ExprOp.SQRT, self)
 
   def abs(self) -> Expr:
+    """Elementwise absolute value, retaining the operand's dtype."""
     return unary(ExprOp.ABS, self)
 
   def floor(self) -> Expr:
@@ -1016,6 +1020,7 @@ _LOGIC = {ExprOp.AND, ExprOp.OR, ExprOp.NOT}
 # What C computes exactly on integers; the libm functions and / would round through a double.
 _INTEGER_OPS = _PREDICATES | {
   ExprOp.NEG,
+  ExprOp.ABS,
   ExprOp.ADD,
   ExprOp.SUB,
   ExprOp.MUL,

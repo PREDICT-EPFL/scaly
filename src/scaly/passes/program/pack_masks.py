@@ -200,7 +200,7 @@ def _rewrite(stmt: ProgramNode, layout: _Layout, masks: dict[str, ProgramNode], 
     def visit(node: ProgramNode) -> ProgramNode:
       if node.op == ProgramOp.MUL and any(_is_mask(a, name, masks) for a in node.args) and not all(_is_mask(a, name, masks) for a in node.args):
         mask, other = (node.args[0], node.args[1]) if _is_mask(node.args[0], name, masks) else (node.args[1], node.args[0])
-        word = p.load(ProgramNode(ProgramOp.VIEW, (word_index,), mask.args[0].attrs, dtypes.uint8))
+        word = p.load(ProgramNode(ProgramOp.VIEW, (word_index,), mask.args[0].attrs, dtype=dtypes.uint8))
         return p.bit_select(word, bit, visit(other))
       if node.op == ProgramOp.LOAD and id(node) in layout.reads:
         # Read the alias's owner directly: the vectorizer will not widen a loop that reads through an alias.
@@ -210,13 +210,13 @@ def _rewrite(stmt: ProgramNode, layout: _Layout, masks: dict[str, ProgramNode], 
         start += offset
         moving = position if stride == 1 else p.mul(p.const_int(stride), position)
         index = p.const_int(start) if not stride else moving if not start else p.add(p.const_int(start), moving)
-        return p.load(ProgramNode(ProgramOp.VIEW, (index,), {**view.attrs, "buffer": owner}, view.dtype))
+        return p.load(ProgramNode(ProgramOp.VIEW, (index,), {**view.attrs, "buffer": owner}, dtype=view.dtype))
       if not node.args:
         return node
       return rebuild_program(node, tuple(visit(a) for a in node.args))
 
     entry = p.add(p.mul(direction, p.const_int(layout.positions)), position)
-    out = ProgramNode(ProgramOp.VIEW, (entry,), target.attrs, target.dtype)
+    out = ProgramNode(ProgramOp.VIEW, (entry,), target.attrs, dtype=target.dtype)
     return p.store(out, visit(value))
 
   loops = []

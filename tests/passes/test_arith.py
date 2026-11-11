@@ -219,7 +219,7 @@ def test_int64_index_arithmetic_folds_with_c_truncation() -> None:
 
 def test_known_invalid_constants_stay_runtime_operations() -> None:
   zero = p.const_float(0.0)
-  assert fold_program(ProgramNode(ProgramOp.DIV, (zero, zero))).op == ProgramOp.DIV
+  assert fold_program(ProgramNode(ProgramOp.DIV, (zero, zero), dtype=dtypes.float64)).op == ProgramOp.DIV
   x = sc.sym("x", 2)
   kept = sc.simplify(sc.const([0.0, 1.0]) / sc.const([0.0, 0.0]))
   assert kept.op == sc.ExprOp.DIV

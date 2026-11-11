@@ -86,7 +86,8 @@ def test_array_keys_serialize_only_compacted_bytes(monkeypatch) -> None:
   assert serialized and all(data == tile.tobytes() for data in serialized)
 
 
-def test_uniform_constants_keep_compact_immutable_storage_and_bitwise_keys() -> None:
+@pytest.mark.parametrize("dtype", ["float64", "float32"])
+def test_uniform_constants_keep_compact_immutable_storage_and_bitwise_keys(dtype) -> None:
   from scaly.ir.expr import _uniform, zeros_like
 
   shape = (100_000, 100_000)
@@ -100,7 +101,7 @@ def test_uniform_constants_keep_compact_immutable_storage_and_bitwise_keys() -> 
   assert _uniform(0.0, (3,)) is not _uniform(-0.0, (3,))
   tiled = np.broadcast_to([1.0, -2.0], (4, 3, 2))
   assert sc.const(tiled) is sc.const(tiled.copy())
-  source = np.array([7.0])
+  source = np.array([7.0], dtype=dtype)
   constant = sc.const(np.broadcast_to(source, shape))
   source[0] = 9
   assert constant.value is not None and constant.value[99_999, 99_999] == 7

@@ -285,10 +285,10 @@ def test_dispatch_metrics_allow_scheduled_indices_before_a_mapped_call() -> None
   body = list(root.args[param_count:])
   loop_index = next(i for i, stmt in enumerate(body) if stmt.op == ProgramOp.FOR and stmt.args[-1].op == ProgramOp.CALL)
   loop = body[loop_index]
-  scheduled = ProgramNode(ProgramOp.ASSIGN, (const_int(0),), {"target": "v0", "declare": True}, const_int(0).dtype)
-  body[loop_index] = ProgramNode(loop.op, (loop.args[0], scheduled, *loop.args[1:]), {**loop.attrs, "body_len": 2}, loop.dtype)
-  changed_root = ProgramNode(root.op, (*root.args[:param_count], *body), root.attrs, root.dtype)
-  changed = ProgramNode(program.op, (*procs[:-1], changed_root, *program.args[proc_count:]), program.attrs, program.dtype)
+  scheduled = ProgramNode(ProgramOp.ASSIGN, (const_int(0),), {"target": "v0", "declare": True}, dtype=const_int(0).dtype)
+  body[loop_index] = ProgramNode(loop.op, (loop.args[0], scheduled, *loop.args[1:]), {**loop.attrs, "body_len": 2}, dtype=loop.dtype)
+  changed_root = ProgramNode(root.op, (*root.args[:param_count], *body), root.attrs, dtype=root.dtype)
+  changed = ProgramNode(program.op, (*procs[:-1], changed_root, *program.args[proc_count:]), program.attrs, dtype=program.dtype)
   assert _dispatch_metrics(mapped.instantiate(), changed) == (4, 0, 6)
 
 

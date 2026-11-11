@@ -42,7 +42,7 @@ def test_storage_escapes_keep_original_table(escape):
   proc = prog.args[0]
   out, table, loop = proc.args
   if escape == "alias":
-    extra = ProgramNode(ProgramOp.BUFFER, (), {**table.attrs, "name": "alias", "alias_of": "tile"}, table.dtype)
+    extra = ProgramNode(ProgramOp.BUFFER, (), {**table.attrs, "name": "alias", "alias_of": "tile"}, dtype=table.dtype)
   elif escape == "call":
     extra = p.call("other", [table])
   else:

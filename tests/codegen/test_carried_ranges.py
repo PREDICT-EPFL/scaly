@@ -62,7 +62,7 @@ def test_carried_recurrence_and_trip_count_match_numpy(tmp_path, dialect, lanes,
     exit_var=True,
   )
   raw = p.proc("recurrence", [flags, trip, out, count], [p.store(at(out), p.const_float(0)), loop, p.store(at(count), p.var("i"))])
-  raw = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 2, "lowering": "scalar", "scalarize_mode": "procedure"}, raw.dtype)
+  raw = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 2, "lowering": "scalar", "scalarize_mode": "procedure"}, dtype=raw.dtype)
 
   def observe(_name, stage):
     verify_program(stage)

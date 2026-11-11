@@ -54,7 +54,7 @@ def hoist_invariant(prog: ProgramNode) -> ProgramNode:
   for pr in rewritten:
     out.extend(inserted.get(pr.attrs["name"], ()))
     out.append(pr)
-  return prune_procedures(ProgramNode(ProgramOp.PROGRAM, tuple(out), {**prog.attrs, "proc_count": len(out)}, prog.dtype))
+  return prune_procedures(ProgramNode(ProgramOp.PROGRAM, tuple(out), {**prog.attrs, "proc_count": len(out)}, dtype=prog.dtype))
 
 
 def _hoist_proc(
@@ -92,13 +92,15 @@ def _hoist_proc(
     ]
     new_body.extend(bufs)
     new_body.append(_call(prologue, [*(c.args[k] for k in used), *bufs]))
-    new_body.append(ProgramNode(stmt.op, (rng, _call(hoisted, [*c.args[:n_in], *bufs, *c.args[n_in:]])), stmt.attrs, stmt.dtype))
+    new_body.append(ProgramNode(stmt.op, (rng, _call(hoisted, [*c.args[:n_in], *bufs, *c.args[n_in:]])), stmt.attrs, dtype=stmt.dtype))
   return proc if len(new_body) == len(body) else _rebuild_proc(proc, params, new_body)
 
 
 def _call(callee: ProgramNode, args: list[ProgramNode]) -> ProgramNode:
   n_in = int(callee.attrs["input_count"])
-  return ProgramNode(ProgramOp.CALL, tuple(args), {"callee": callee.attrs["name"], "n_in": n_in, "n_out": len(args) - n_in, "returns": ()})
+  return ProgramNode(
+    ProgramOp.CALL, tuple(args), {"callee": callee.attrs["name"], "n_in": n_in, "n_out": len(args) - n_in, "returns": ()}, dtype=callee.dtype
+  )
 
 
 def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: NameScope, pure: set[str]) -> _Split | None:
@@ -172,7 +174,8 @@ def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: NameScope,
   decls = {s.attrs["name"]: s for s in body if s.op == ProgramOp.BUFFER}
   exported = [decls[b] for b in sorted(exported_names)]
   shared = [
-    ProgramNode(b.op, (), {**buffer(b.attrs["name"], b.dtype, b.attrs["shape"]).attrs, "support": b.attrs.get("support")}, b.dtype) for b in exported
+    ProgramNode(b.op, (), {**buffer(b.attrs["name"], b.dtype, b.attrs["shape"]).attrs, "support": b.attrs.get("support")}, dtype=b.dtype)
+    for b in exported
   ]
   read = {b for i in hoist for b in refs[i][0]}
   used = tuple(k for k in invariant if params[k].attrs["name"] in read)
@@ -256,7 +259,7 @@ def _split_scalars(proc: ProgramNode, invariant: tuple[int, ...], names: NameSco
   for stmt in body:
     if stmt in hoisted:
       if stmt.attrs["target"] in fixed_loads:
-        rewritten.append(ProgramNode(stmt.op, (fixed_loads[stmt.attrs["target"]],), stmt.attrs, stmt.dtype))
+        rewritten.append(ProgramNode(stmt.op, (fixed_loads[stmt.attrs["target"]],), stmt.attrs, dtype=stmt.dtype))
     else:
       rewritten.append(rewrite(stmt, [pattern], rebuild=rebuild_program))
   variant = _proc(proc, names.procedure(f"{proc.attrs['name']}_hoisted_{tag}"), [*params[:n_in], shared], params[n_in:], rewritten)

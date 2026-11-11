@@ -140,7 +140,7 @@ def _combine_scatter_sums_proc(proc: ProgramNode) -> ProgramNode:
       continue
 
     destination = Pattern(
-      ProgramOp.VIEW, lambda n: n.attrs["buffer"] in leaves, lambda n: ProgramNode(n.op, n.args, {**n.attrs, "buffer": root}, n.dtype)
+      ProgramOp.VIEW, lambda n: n.attrs["buffer"] in leaves, lambda n: ProgramNode(n.op, n.args, {**n.attrs, "buffer": root}, dtype=n.dtype)
     )
     redirect = lambda stmt: rewrite(stmt, [destination], rebuild=rebuild_program, fixpoint=False)
 

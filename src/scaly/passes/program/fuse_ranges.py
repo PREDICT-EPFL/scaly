@@ -57,7 +57,7 @@ def _inline(call: ProgramNode, callee: ProgramNode) -> list[ProgramNode]:
   def view(node: ProgramNode) -> ProgramNode:
     name, offset = pointers[node.attrs["buffer"]]
     index = fold_program(p.add(offset, node.args[0]))
-    return ProgramNode(node.op, (index,), {**node.attrs, "buffer": name}, node.dtype)
+    return ProgramNode(node.op, (index,), {**node.attrs, "buffer": name}, dtype=node.dtype)
 
   patterns = [
     Pattern(ProgramOp.VAR, lambda n: n.attrs["name"] in variables, lambda n: variables[n.attrs["name"]]),
@@ -151,7 +151,7 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
       name, delta = aliases[name]
       offset += delta
     index = fold_program(p.add(node.args[0], p.const_int(offset)))
-    return ProgramNode(node.op, (index,), {**node.attrs, "buffer": name}, node.dtype)
+    return ProgramNode(node.op, (index,), {**node.attrs, "buffer": name}, dtype=node.dtype)
 
   def resolve_call(node: ProgramNode) -> ProgramNode:
     args = tuple(
@@ -582,9 +582,9 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
       assignments, scheduled_values = schedule_values([store.args[1] for store in stores], names)
       scheduled = [*assignments, *(p.store(store.args[0], value) for store, value in zip(stores, scheduled_values, strict=True))]
       rng = p.range_(coordinate, start, stop, kind=p.RangeKind.GLOBAL)
-      rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
+      rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
       loops.append(p.for_(rng, scheduled))
-  if buffer_refs(ProgramNode(ProgramOp.BLOCK, tuple(loops))).reads & {node.attrs["name"] for node in new_constants}:
+  if buffer_refs(p.block(*loops)).reads & {node.attrs["name"] for node in new_constants}:
     return proc
   replacement = loops
   result = [stmt for i, stmt in enumerate(body) if i not in region]
