@@ -273,6 +273,13 @@ def test_a_warm_source_digest_reads_only_metadata(package: Path, monkeypatch: py
   assert digest.source_digest() == first
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows file metadata")
+def test_a_windows_volume_without_change_times_gives_no_digest(package: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  assert digest.source_digest() is not None
+  monkeypatch.setattr(digest, "_basic_info", lambda *args: True)  # the zero-initialized ChangeTime is left unset
+  assert digest.source_digest() is None
+
+
 class _Flag(enum.IntFlag):
   ONE = 1
 

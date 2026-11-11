@@ -15,7 +15,7 @@ and the exemption for Python creating `__pycache__` unchanged.
 - [x] Read NTFS change times through ctypes only on Windows, using metadata handles.
 - [x] Prove Linux behaviour and that warm source lookups do not read file contents.
 - [x] Run all pre-merge checks through the detached shared suite runner.
-- [ ] Obtain one correctness review before the initial push so one CI run proves reviewed code.
+- [x] Obtain one correctness review before the initial push so one CI run proves reviewed code.
 - [ ] Remove the temporary plan, push once, open and link a ready pull request through REST.
 - [ ] Settle review delegates, address findings, and confirm only any fixes.
 - [ ] Get Windows CI evidence from one run. If the method cannot work, tell the
@@ -35,3 +35,9 @@ code written to `/tmp/scaly-395/pre-merge.exit`.
 The full runner exited 0: types, Ruff, 3679 passed and 55 skipped, benchmark smoke,
 documentation and private-name checks passed. Test collection passed with 3734
 node IDs, including the new test's required baseline entry.
+
+Review by Opus high found one actionable issue: a zero native ChangeTime must
+give no source digest. The two-line guard and a Windows regression are added.
+A mocked native-call reproduction failed without the guard and passes with it,
+including handle closure. The remaining review notes need the Windows CI run.
+The first review delegate is settled. A short delta check remains before push.

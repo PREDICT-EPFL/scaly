@@ -239,6 +239,8 @@ def _source_stat(path: str, stat: os.stat_result, *, follow_symlinks: bool = Tru
     info = _FileBasicInfo()
     if not _basic_info(handle, 0, ctypes.byref(info), ctypes.sizeof(info)):  # FileBasicInfo
       raise ctypes.WinError(ctypes.get_last_error())
+    if info.ChangeTime == 0:
+      raise OSError("the file system supplies no change time")
     changed = (info.ChangeTime - 116444736000000000) * 100  # 100 ns since 1601 to Unix nanoseconds
     return os.stat_result(
       stat,
