@@ -24,7 +24,7 @@ main's JIT verification job and adding the embedded job to the required dependen
 - [x] Write and execute the embedded guide section with write-docs.
 - [x] Incorporate merged #314 and drop the old inherited dtype commits by rebasing onto main.
 - [x] Trial on #368's updated head supplied by the coordinator.
-- [ ] Run focused checks, then the detached full pre-merge checks through the suite runner.
+- [x] Run focused checks, then the detached full pre-merge checks through the suite runner.
 - [ ] Obtain the claude-fable-5-2 high review and confirm fixes with a delta check if needed.
 - [ ] Open the PR on main and link it after the coordinator confirms #368 has merged.
 - [ ] Rebase onto main once all lower layers merge, retarget, run CI and queue.
@@ -69,6 +69,11 @@ Findings and evidence:
 - Review goes to claude-fable-5-2 at high effort, replacing Opus per the updated
   run-wide rules. No push, PR or review yet. The one-ULP failure is owned by a
   separate thread and is a known la015-only failure until its fix merges.
+- The typed trial's full run finished with 6224 passed, 5 skipped and only that
+  known one-ULP failure, in 392 s. It ran detached through ~/.scaly-suite/run.
+  Log and status: /tmp/scaly-207/typed-suite-20261111.{log,exit}.
+  The separate benchmark smoke and docs build passed. Ruff lint/format, ty,
+  collection and the private-name check passed. No source snapshots changed.
 - The symbol checker rejects malloc injected into the no-budget probe. Both Cortex-M
   probes leave only sinf/cosf undefined; the supported boolean diagnostic compiles
   without stdio or undefined symbols when SCALY_PRINTF is empty.
