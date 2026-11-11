@@ -104,7 +104,13 @@ def _inactive(e: Expr) -> Local:
 def _select_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
   _, dx, dy = tangents
   zero = _const(0, e)
-  return where(_seed_axis(e.args[0], e), zero if dx is None else dx, zero if dy is None else dy)
+  condition = _seed_axis(e.args[0], e)
+  result = where(condition, zero if dx is None else dx, zero if dy is None else dy)
+  masks = [None if t is None else cotangent_mask(t) for t in (dx, dy)]
+  if any(mask is not None for mask in masks):
+    activity = [Expr.const(t is not None, dtype=condition.type.dtype) if mask is None else mask for t, mask in zip((dx, dy), masks, strict=True)]
+    result = where(where(condition, *activity), result, zeros_like(result))
+  return result
 
 
 def _extremum_partial(e: Expr, position: int) -> Mask:
@@ -232,16 +238,20 @@ def tangent(expr: Expr, tangents: Sequence[Expr | None], nseed: int) -> Expr:
   row = ELEMENTWISE[ExprOp(expr.op)]
   assert row.partials is not None
   aligned = [None if t is None else _broadcast_tangent(t, arg, expr, nseed) for arg, t in zip(expr.args, tangents, strict=True)]
-  if row.jvp is not None:
+  if row.jvp is not None and (expr.op == ExprOp.SELECT or not any(t is not None and _mask_of(t) is not None for t in aligned)):
     return row.jvp(expr, aligned)
   total: Expr | None = None
   for partial, dx in zip(row.partials, aligned, strict=True):
     if dx is None:
       continue
     local = partial(expr)
+    if _mask_of(dx) is not None:
+      term = _masked(dx, lambda inner: _times_partial(local, inner, lambda partial: _seed_axis(partial, expr)))
+      total = term if total is None else accumulate(total, term)
+      continue
     negate = isinstance(local, int) and local < 0
     term = dx if negate else _times_partial(local, dx, lambda partial: _seed_axis(partial, expr))
-    total = (-term if negate else term) if total is None else total - term if negate else total + term
+    total = (-term if negate else term) if total is None else total - term if negate else accumulate(total, term)
   assert total is not None
   return total
 
@@ -318,13 +328,16 @@ def accumulate(total: Expr, cot: Expr) -> Expr:
 
 
 def _mask_of(cot: Expr) -> tuple[Expr, Expr] | None:
-  """``(condition, inner)`` when ``cot`` is ``where(condition, inner, 0)``."""
+  """The chosen condition and inner value of a select with a constant zero branch."""
   if ExprOp(cot.op) != ExprOp.SELECT:
     return None
-  condition, inner, other = cot.args
-  zero = other.args[0] if other.op == ExprOp.PACK else other
-  if zero.op == ExprOp.CONST and zero.value is not None and not np.any(zero.value) and inner.shape == cot.shape:
-    return condition, inner
+  condition, x, y = cot.args
+  for inner, other in ((x, y), (y, x)):
+    zero = other.args[0] if other.op == ExprOp.PACK else other
+    if zero.op == ExprOp.CONST and zero.value is not None and not np.any(zero.value) and inner.shape == cot.shape:
+      if inner is y:
+        condition = ~condition if condition.type.pattern is None else pack(~values(condition), condition.type.pattern, shape=condition.shape)
+      return condition, inner
   return None
 
 

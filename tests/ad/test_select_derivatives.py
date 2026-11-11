@@ -392,6 +392,172 @@ def test_a_broadcast_cotangent_keeps_the_output_shape() -> None:
   np.testing.assert_array_equal(derivatives(np.ones(3), np.array(-1.5)), np.zeros(3))
 
 
+@pytest.mark.parametrize("form", ["mapped", "called", "unrolled"])
+@pytest.mark.parametrize("squared", [False, True])
+def test_a_select_inside_a_map_guards_the_arguments_partial(form: str, squared: bool) -> None:
+  @sc.function(sc.arg("u", ()), outputs=sc.arg("y"), name="sd_inner_select")
+  def selected(u: sc.Expr) -> sc.Expr:
+    return sc.where(u > 0.0, u, 0.0)
+
+  @sc.function(sc.arg("x", 4), outputs=sc.group(*(sc.arg(k) for k in ("y", "g", "t", "h", "rr"))), name=f"sd_inner_{form}")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, ...]:
+    roots = x.sqrt()
+    y = (
+      sc.vmap(selected, 4)(roots)
+      if form == "mapped"
+      else sc.stack([selected(roots[i]) for i in range(4)])
+      if form == "called"
+      else sc.where(roots > 0.0, roots, 0.0)
+    )
+    cost = ((y - 2.0) ** 2).sum() if squared else y.sum()
+    grad = sc.gradient(cost, x)
+    return cost, grad, sc.jvp(cost, x, sc.const(np.ones(4))), sc.hessian(cost, x), sc.gradient(grad.sum(), x)
+
+  for point in (np.array([0.0, 4.0, -1.0, 9.0]), np.array([-2.0, 4.0, -1.0, 9.0])):
+    _, grad, tangent, hess, twice = (np.asarray(v) for v in derivatives(point))
+    expected = np.array([0.0, 0.0, 0.0, 1.0 / 3.0]) if squared else np.array([0.0, 0.25, 0.0, 1.0 / 6.0])
+    second = np.array([0.0, 1.0 / 8.0, 0.0, 1.0 / 27.0]) if squared else np.array([0.0, -1.0 / 32.0, 0.0, -1.0 / 108.0])
+    np.testing.assert_allclose(grad, expected, rtol=1e-14)
+    np.testing.assert_allclose(tangent, expected.sum(), rtol=1e-14)
+    np.testing.assert_allclose(hess, np.diag(second), rtol=1e-14)
+    np.testing.assert_allclose(twice, second, rtol=1e-14)
+    if np.all(point != 0):
+      np.testing.assert_allclose(grad, finite_difference(lambda v: np.asarray(derivatives(v)[0]), point).reshape(-1), rtol=1e-7, atol=1e-9)
+      np.testing.assert_allclose(hess, finite_difference(lambda v: np.asarray(derivatives(v)[1]), point), rtol=1e-7, atol=1e-9)
+
+
+@pytest.mark.parametrize("runtime", [False, True])
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("squared", [False, True])
+@pytest.mark.parametrize("form", ["inline", "called", "mapped"])
+def test_selected_zero_tangents_guard_downstream_singular_partials(runtime: bool, nested: bool, squared: bool, form: str) -> None:
+  seed_values = np.array([[1.0, 1.0, 1.0, 1.0], [0.0, -2.0, 3.0, 0.0]])
+
+  def body(x: sc.Expr) -> sc.Expr:
+    chosen = sc.where(x > 0.0, x, 0.0)
+    if nested:
+      chosen = sc.where(x < 8.0, chosen, 0.0)
+    root = chosen.sqrt()
+    return (root - 2.0) ** 2 if squared else root
+
+  stage = sc.function(sc.arg("u", 4 if form == "called" else ()), outputs=sc.arg("y"), name="sd_selected_root")(body)
+
+  @sc.function(sc.arg("x", 4), sc.arg("seeds", (2, 4)), outputs=sc.group(*(sc.arg(k) for k in ("y", "t", "g", "h"))), name="sd_selected_tangent")
+  def derivatives(x: sc.Expr, seeds: sc.Expr) -> tuple[sc.Expr, ...]:
+    y = body(x) if form == "inline" else stage(x) if form == "called" else sc.vmap(stage, 4)(x)
+    return y, sc.jvp_many(y, x, seeds if runtime else sc.const(seed_values)), sc.gradient(y.sum(), x), sc.hessian(y.sum(), x)
+
+  point = np.array([-1.0, 4.0, -2.0, 9.0])
+  y, tangents, grad, hess = (np.asarray(v) for v in derivatives(point, seed_values))
+  expected = np.array([0.0, 0.25, 0.0, 0.0 if nested else 1.0 / 6.0])
+  roots = np.array([0.0, 2.0, 0.0, 0.0 if nested else 3.0])
+  second = np.array([0.0, -1.0 / 32.0, 0.0, 0.0 if nested else -1.0 / 108.0])
+  if squared:
+    expected *= 2.0 * (roots - 2.0)
+    second = np.array([0.0, 1.0 / 8.0, 0.0, 0.0 if nested else 1.0 / 27.0])
+  np.testing.assert_array_equal(y, (roots - 2.0) ** 2 if squared else roots)
+  np.testing.assert_allclose(tangents, seed_values * expected, rtol=1e-14)
+  np.testing.assert_allclose(grad, expected, rtol=1e-14)
+  np.testing.assert_allclose(hess, np.diag(second), rtol=1e-14)
+  np.testing.assert_allclose(np.diag(grad), finite_difference(lambda v: np.asarray(derivatives(v, seed_values)[0]), point), rtol=1e-7, atol=1e-9)
+
+
+@pytest.mark.parametrize("stride", [0, 1, 2])
+def test_inner_mapped_masks_accumulate_shared_and_overlapping_inputs(stride: int) -> None:
+  @sc.function(sc.arg("u", 2), outputs=sc.arg("y"), name="sd_window_select")
+  def selected(u: sc.Expr) -> sc.Expr:
+    return sc.where(u > 0.0, u, 0.0)
+
+  size = 2 + 2 * stride
+  point = np.array([0.0, 4.0, -1.0, 9.0, 0.0, 16.0])[:size]
+  indices = np.array([it * stride + j for it in range(3) for j in range(2)])
+
+  @sc.function(sc.arg("x", size), outputs=sc.group(sc.arg("g"), sc.arg("t"), sc.arg("h")), name="sd_window_inner_masks")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    y = _mapped_call(selected, 3, [(x.sqrt(), 0, stride)]).sum()
+    return sc.gradient(y, x), sc.jvp(y, x, sc.const(np.ones(size))), sc.hessian(y, x)
+
+  counts = np.bincount(indices, minlength=size)
+  expected = np.zeros(size)
+  second = np.zeros(size)
+  active = point > 0.0
+  expected[active] = counts[active] * 0.5 / np.sqrt(point[active])
+  second[active] = -counts[active] * 0.25 / point[active] ** 1.5
+  grad, tangent, hess = (np.asarray(v) for v in derivatives(point))
+  np.testing.assert_allclose(grad, expected, rtol=1e-14)
+  np.testing.assert_allclose(tangent, expected.sum(), rtol=1e-14)
+  np.testing.assert_allclose(hess, np.diag(second), rtol=1e-14)
+
+
+@pytest.mark.parametrize("operation", ["mul", "div", "neg", "cast", "reshape", "sum", "other_branch", "merged", "nested_active"])
+def test_forward_mask_survives_operations_before_a_singular_partial(operation: str) -> None:
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("t"), sc.arg("g")), name=f"sd_forward_mask_{operation}")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    selected = sc.where(x > 0.0, x, 0.0)
+    if operation == "mul":
+      y = (selected * 2.0).sqrt().sum()
+    elif operation == "div":
+      y = (selected / 2.0).sqrt().sum()
+    elif operation == "neg":
+      y = (-(-selected)).sqrt().sum()
+    elif operation == "cast":
+      y = sc.cast(sc.cast(selected, "float32"), "float64").sqrt().sum()
+    elif operation == "reshape":
+      y = selected.reshape((2, 1)).sqrt().sum()
+    elif operation == "sum":
+      y = selected.reshape((2, 1)).sum(axis=1).sqrt().sum()
+    elif operation == "other_branch":
+      y = sc.where(x <= 0.0, 0.0, x).sqrt().sum()
+    elif operation == "nested_active":
+      y = sc.where(x > 0.0, sc.where(x > 1.0, x, 0.0), sc.where(x < -1.0, -x, 0.0)).sqrt().sum()
+    else:
+      y = (selected + sc.where(x > 1.0, x, 0.0)).sqrt().sum()
+    return sc.jvp(y, x, sc.const(np.ones(2))), sc.gradient(y, x)
+
+  tangent, grad = (np.asarray(v) for v in derivatives(np.array([-1.0, 4.0])))
+  factor = np.sqrt(2.0) if operation in {"mul", "merged"} else 1.0 / np.sqrt(2.0) if operation == "div" else 1.0
+  np.testing.assert_allclose(grad, [0.0, 0.25 * factor], rtol=1e-7)
+  np.testing.assert_allclose(tangent, grad.sum(), rtol=1e-7)
+
+
+def test_inner_mapped_masks_keep_each_inputs_activity_separate() -> None:
+  @sc.function(sc.arg("u", 2), sc.arg("v", 2), outputs=sc.arg("y"), name="sd_two_input_select")
+  def selected(u: sc.Expr, v: sc.Expr) -> sc.Expr:
+    return sc.where(u > 0.0, u, 2.0 * v)
+
+  @sc.function(sc.arg("x", 8), outputs=sc.group(sc.arg("g"), sc.arg("t"), sc.arg("h")), name="sd_two_input_masks")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    roots = x.sqrt()
+    y = _mapped_call(selected, 2, [(roots[:4], 0, 2), (roots[4:], 0, 2)]).sum()
+    return sc.gradient(y, x), sc.jvp(y, x, sc.const(np.ones(8))), sc.hessian(y, x)
+
+  grad, tangent, hess = (np.asarray(v) for v in derivatives(np.array([0.0, 4.0, -1.0, 9.0, 4.0, 0.0, 9.0, -1.0])))
+  expected = [0.0, 0.25, 0.0, 1.0 / 6.0, 0.5, 0.0, 1.0 / 3.0, 0.0]
+  np.testing.assert_allclose(grad, expected, rtol=1e-14)
+  np.testing.assert_allclose(tangent, sum(expected), rtol=1e-14)
+  np.testing.assert_allclose(hess, np.diag([0.0, -1.0 / 32.0, 0.0, -1.0 / 108.0, -1.0 / 16.0, 0.0, -1.0 / 54.0, 0.0]), rtol=1e-14)
+
+
+def test_inner_mapped_masks_use_stored_input_coordinates() -> None:
+  pattern = CanonicalPattern((2, 3), (0, 1), (0, 2))
+
+  @sc.function(sc.arg("u", sc.TensorType(pattern.shape, pattern=pattern)), outputs=sc.arg("y"), name="sd_stored_select")
+  def selected(u: sc.Expr) -> sc.Expr:
+    compact = sc.values(u)
+    return sc.pack(sc.where(compact > 0.0, compact, 0.0), pattern)
+
+  @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("g"), sc.arg("t"), sc.arg("h")), name="sd_inner_stored_mask")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    roots = sc.pack(x.sqrt().reshape((2, 2)), pattern)
+    y = sc.values(sc.vmap(selected, 2)(roots)).sum()
+    return sc.gradient(y, x), sc.jvp(y, x, sc.const(np.ones(4))), sc.hessian(y, x)
+
+  grad, tangent, hess = (np.asarray(v) for v in derivatives(np.array([0.0, 4.0, -1.0, 9.0])))
+  np.testing.assert_allclose(grad, [0.0, 0.25, 0.0, 1.0 / 6.0], rtol=1e-14)
+  np.testing.assert_allclose(tangent, grad.sum(), rtol=1e-14)
+  np.testing.assert_allclose(hess, np.diag([0.0, -1.0 / 32.0, 0.0, -1.0 / 108.0]), rtol=1e-14)
+
+
 def test_reverse_mode_refuses_an_integer_or_bool_output() -> None:
   x = sc.sym("x", 3)
   for value in (sc.cast(x, "int64")[0], (x > 0.0)[0]):

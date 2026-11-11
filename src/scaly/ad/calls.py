@@ -501,12 +501,13 @@ def _vmap_adj_function(
     # One concatenated result needs one dtype: float64 holds every float32 and integer cotangent exactly.
     common = grads[0].type.dtype if len({grad.type.dtype for grad in grads}) == 1 else dtypes.float64
     parts = [cast_expr(values(grad), common).vec() for grad in grads]
-    if masked:
-      for grad in grads:
+    conditions = [cotangent_mask(_sample_stored(grad, grad.type)) for grad in grads]
+    if masked or any(condition is not None for condition in conditions):
+      for grad, condition in zip(grads, conditions, strict=True):
         compact = _sample_stored(grad, grad.type)
-        condition = cotangent_mask(compact)
         ones = Expr.const(np.ones(grad.type.storage_shape, dtype=grad.type.dtype.numpy()), dtype=grad.type.dtype)
-        parts.append(cast_expr(ones if condition is None else where(condition, ones, zeros_like(compact)), common).vec())
+        flag = zeros_like(compact) if _is_zero_const(compact) else ones if condition is None else where(condition, ones, zeros_like(compact))
+        parts.append(cast_expr(flag, common).vec())
     adj = callee._inherit_lowering(simplify_cse_fixpoint(concat(parts)))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(adj, inp, dep_memo))
@@ -547,14 +548,15 @@ def _vmap_vjp(
     )
   mapped = _mapped_call(adj_fn, length, [*primal_specs, *seed_specs])
   adj_size = sum(callee.inputs[k].type.storage_size for k in active_formals)
-  result_size = adj_size * (2 if mask is not None else 1)
+  result_size = adj_fn.outputs[0].size
+  carries_masks = result_size > adj_size
   ret: list[tuple[Expr, Expr]] = []
   offset = 0
   for k in active_formals:
     arg, start, stride = vmap_expr.args[k], starts[k], strides[k]
     formal_size = callee.inputs[k].type.storage_size
     assembled = []
-    for part_offset in (offset,) if mask is None else (offset, adj_size + offset):
+    for part_offset in (offset, adj_size + offset) if carries_masks else (offset,):
       if formal_size == 0:
         vbar = zeros_like(arg)
       elif stride == 0:
@@ -575,7 +577,7 @@ def _vmap_vjp(
         vbar = _sum_exprs(pieces)
       assembled.append(vbar)
     value = cast_expr(assembled[0], arg.type.dtype)
-    vbar = value if mask is None else where(assembled[1] > 0.0, value, zeros_like(arg))
+    vbar = where(assembled[1] > 0.0, value, zeros_like(arg)) if carries_masks else value
     ret.append((arg, vbar))
     offset += formal_size
   return ret

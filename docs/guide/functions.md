@@ -283,12 +283,14 @@ gradient `[0.0, 0.25]` at `x = [0.0, 4.0]`.
 Custom reverse rules receive zero cotangents for entries the select does not
 choose and must return finite results there.
 
-!!! warning "A select inside a mapped function"
-    Reverse mode does not carry a condition from inside a mapped `Function`
-    back through operations on the map's arguments. Mapping a function that
-    returns `sc.where(u > 0.0, u, 0.0)` over `x.sqrt()` can therefore leave a
-    NaN gradient at `x = 0`. Apply `sc.where` outside the map to guard those
-    earlier operations.
+A select inside a mapped `Function` also guards operations on the map's
+arguments. Mapping a function that returns `sc.where(u > 0.0, u, 0.0)` over
+`x.sqrt()` gives gradient `[0.0, 0.25]` at `x = [0.0, 4.0]` after summing the
+mapped values.
+
+In forward mode, a selected zero tangent stays zero through later elementwise
+derivatives. For example, `sc.where(x > 0.0, x, 0.0).sqrt()` has derivative zero
+at `x = -1`, although the square root's partial derivative is infinite at zero.
 
 ### Supported array operations
 

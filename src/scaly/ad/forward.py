@@ -10,7 +10,7 @@ from ..ir.expr import Expr, ExprOp, _uniform, callees_of, concat, from_dense, ga
 from ..ir.types import TensorType, stored_indices
 from ..passes.expr import simplify_cse_fixpoint
 from .calls import _call_jvp_many, _cond_jvp_many, _is_zero_const, _vmap_jvp_many, read_args
-from .rules import ELEMENTWISE, Mask, reduction_partial, times_partial, tangent as _elementwise_tangent
+from .rules import ELEMENTWISE, Mask, _masked, carry_mask, reduction_partial, times_partial, tangent as _elementwise_tangent
 from .sparsity import _check_wrt, _prunable_support
 
 
@@ -115,7 +115,11 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
       else:
         assert all(arg.type.dtype.is_floating for arg in args)
         d = [t if t is not None else _zero_tangent(arg, nseed) for arg, t in zip(args, d, strict=True)]
-        tangent = _pushforward_rule(expr, d, nseed, callee)
+        if len(d) == 1:
+          (tangent,) = carry_mask(d[0], lambda t: (_pushforward_rule(expr, [t], nseed, callee),))
+          assert tangent is not None
+        else:
+          tangent = _pushforward_rule(expr, d, nseed, callee)
         if expr.op in {
           ExprOp.REDUCE,
           ExprOp.RESHAPE,
@@ -128,7 +132,7 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
         } and all(t.op == ExprOp.CONST for t in d):
           tangent = simplify_cse_fixpoint(tangent)
       if tangent is not None and tangent.shape != (nseed, *expr.shape):
-        tangent = tangent * _uniform(1, (1, *expr.shape), dtype=expr.type.dtype)
+        tangent = _masked(tangent, lambda t: t * _uniform(1, (1, *expr.shape), dtype=expr.type.dtype))
       if tangent is not None and tangent.type.pattern is not expr.type.pattern:
         if expr.type.pattern is None:
           tangent = to_dense(tangent)
