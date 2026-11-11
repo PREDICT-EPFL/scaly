@@ -17,7 +17,7 @@ context, local instructions and the implement/tracker/plan skills.
       negative axes, empty and singleton axes. Remove unbroadcast scatter.
 - [x] Update guide/API with write-docs, collection baseline and C snapshots if
       needed. Perturb new checks. Record snapshot counts, size and compile time.
-- [ ] Run focused checks with at most two workers. Run the complete pre-merge
+- [x] Run focused checks with at most two workers. Run the complete pre-merge
       hook detached through the suite queue on the intended review state.
 - [ ] Commit and submit the stack PR. Link it to this thread immediately.
 - [ ] Get one cross-review and one delta check. Fix findings and put the verdict
@@ -41,3 +41,7 @@ Project status is unavailable through the REST-only read policy; branch and
 issue comments record active ownership. The guide's new example and the
 architecture's expression example were executed. Full validation includes the
 existing README and example checks.
+
+The detached pre-merge hook passed at `/tmp/scaly66-suite-vxKqGW/premerge.log`.
+Full suite: 4,346 passed, 55 skipped. Benchmark smoke, docs build, ty, Ruff
+and private-name checks all passed. The worktree is ready for review.
