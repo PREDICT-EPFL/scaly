@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ...ad.rules import _mask_of
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
@@ -157,6 +158,8 @@ def _lower_sampled_product(ctx: LowerCtx, node: Expr) -> None:
   acc_name = ctx.names.allocate(f"acc_{name}")
   acc = p.var(acc_name, node.type.dtype)
   value = p.mul(p.load(p.view(ctx.raw_buf_of(a), [pos])), ctx.read_stored(b, plan.right_slots, j))
+  value = _guard_sampled_term(ctx, a, pos, value)
+  value = _guard_sampled_term(ctx, b, ctx.index_at(ctx.physical_slots(b, plan.right_slots), j, shared=True), value)
   dot = ctx.nest_body(right, ctx.nest_body(present, [p.assign(acc_name, p.add(acc, value))]))
   writes = ctx.physical_slots(node, np.arange(node.type.storage_size))
   body = [
@@ -165,6 +168,27 @@ def _lower_sampled_product(ctx: LowerCtx, node: Expr) -> None:
     p.store(p.view(out, [ctx.index_at(writes, entry, shared=True)]), acc),
   ]
   ctx.emit(rows, [*fill, *ctx.nest_body(outputs, body), *clear])
+
+
+def _guard_sampled_term(ctx: LowerCtx, operand: Expr, slot: ProgramNode, term: ProgramNode) -> ProgramNode:
+  mask = _mask_of(operand)
+  if mask is None:
+    return term
+  entries = stored_indices(operand.type)
+  logical = entries[np.argsort(ctx.physical_slots(operand, np.arange(len(entries))))]
+  # Guard the multiply itself: selecting a zero operand still evaluates 0 * inf.
+  while mask is not None:
+    condition, inner = mask
+    reads = stored_slots(condition, project_entries(logical, condition.shape, operand.shape))
+    reads = ctx.physical_slots(condition, reads)
+    index = ctx.index_at(reads, slot, shared=True)
+    keep = p.load(p.view(ctx.raw_buf_of(condition), [index]))
+    if np.any(reads < 0):
+      present = ProgramNode(ProgramOp.LE, (p.const_int(0), index), dtype=dtypes.bool_)
+      keep = ProgramNode(ProgramOp.SELECT, (present, keep, constant(False, dtypes.bool_)), dtype=dtypes.bool_)
+    term = ProgramNode(ProgramOp.SELECT, (keep, term, p.const_float(0, dtype=operand.type.dtype)), dtype=operand.type.dtype)
+    mask = _mask_of(inner)
+  return term
 
 
 def stored_slots(expr: Expr, logical: np.ndarray) -> np.ndarray:

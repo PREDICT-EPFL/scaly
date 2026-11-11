@@ -6,13 +6,109 @@ from scipy import sparse
 
 import scaly as sc
 from scaly.ad.forward import jvp_many
+from scaly.ad.derivatives import finite_difference
 from scaly.ad.reverse import vjp
 from scaly.function.model import as_concrete
-from scaly.ir.expr import ExprOp, matmul
+from scaly.ir.expr import ExprOp, matmul, substitute
 from scaly.ir.program import ProgramOp, walk_program
 from scaly.ir.types import CanonicalPattern
 from scaly.passes.lowering import lower_function
 from scaly.passes.lowering.plans import SampledProductPlan
+
+
+@pytest.mark.parametrize("left", [False, True])
+@pytest.mark.parametrize("coordinate_mask", [False, True])
+@pytest.mark.parametrize("lowering", ["scalar", "block"])
+def test_masked_sparse_product_singular_partials(left, coordinate_mask, lowering):
+  pattern = CanonicalPattern((2, 2), (0, 0, 1, 1), (0, 1, 0, 1))
+  coefficients = np.array([[-2.0, 2.0], [3.0, -3.0]])
+  weights = np.array([[1.0, 2.0], [3.0, 5.0]])
+
+  @sc.function(sc.arg("v", 4), sc.arg("c", 4 if coordinate_mask else ()), name=f"masked_product_{left}_{coordinate_mask}_{lowering}")
+  def loss(v, c):
+    x = sc.pack(v, pattern).sqrt()
+    b = sc.const(sparse.coo_array(coefficients))
+    product = x @ b if left else b @ x
+    condition = sc.pack(c > 0, pattern) if coordinate_mask else c > 0
+    selected = sc.where(condition, product, sc.pack(sc.const(np.zeros(4)), pattern))
+    return (sc.values(selected) * sc.const(weights.ravel())).sum().with_lowering(lowering)
+
+  grad = sc.gradient(loss, wrt="v")
+  inactive = np.full(4, -1.0) if coordinate_mask else np.asarray(-1.0)
+  np.testing.assert_array_equal(grad(np.zeros(4), inactive), np.zeros(4))
+  point = np.array([0.4, 0.7, 1.1, 1.6])
+  conditions = [inactive, np.ones(4) if coordinate_mask else np.asarray(1.0)]
+  if coordinate_mask:
+    conditions.append(np.array([1.0, -1.0, -1.0, 1.0]))
+
+  def reference(v, c):
+    x = np.sqrt(v.reshape(2, 2))
+    product = x @ coefficients if left else coefficients @ x
+    condition = np.asarray(c).reshape(2, 2) if coordinate_mask else c
+    return (np.where(condition > 0, product, 0) * weights).sum()
+
+  hess = sc.hessian(loss, wrt="v")
+
+  @sc.function(sc.arg("v", 4), sc.arg("c", 4 if coordinate_mask else ()), name=f"masked_product_reverse_twice_{left}_{coordinate_mask}_{lowering}")
+  def twice(v, c):
+    output = as_concrete(loss).outputs[0]
+    inputs = as_concrete(loss).inputs
+    inner = vjp((output,), (inputs[0],), (sc.const(1.0),))[0]
+    result = vjp((inner.sum(),), (inputs[0],), (sc.const(1.0),))[0]
+    return substitute(result, dict(zip(inputs, (v, c), strict=True)))
+
+  for c in conditions:
+    np.testing.assert_allclose(grad(point, c), finite_difference(lambda v: reference(v, c), point).ravel(), atol=1e-8)
+    selected_weights = np.where((c.reshape(2, 2) if coordinate_mask else c) > 0, weights, 0)
+    factors = selected_weights @ coefficients.T if left else coefficients.T @ selected_weights
+    expected_hess = finite_difference(lambda v: factors.ravel() * 0.5 / np.sqrt(v), point)
+    np.testing.assert_allclose(hess(point, c), expected_hess, atol=1e-8)
+    np.testing.assert_allclose(twice(point, c), expected_hess.sum(axis=0), atol=1e-8)
+
+
+@pytest.mark.parametrize("left", [False, True])
+@pytest.mark.parametrize("lowering", ["scalar", "block"])
+def test_masked_sparse_product_guards_infinite_coefficients_per_term(left, lowering):
+  pattern = CanonicalPattern((2, 2), (0, 0, 1, 1), (0, 1, 0, 1))
+  coefficients = np.array([[-2.0, 2.0, np.inf], [3.0, -3.0, -np.inf]])
+  if not left:
+    coefficients = coefficients.T
+  coefficient_pattern = CanonicalPattern(coefficients.shape, *map(tuple, np.nonzero(coefficients)))
+  output = pattern.matmul(coefficient_pattern) if left else coefficient_pattern.matmul(pattern)
+
+  @sc.function(sc.arg("v", 4), sc.arg("c", output.nnz), name=f"masked_product_inf_{left}_{lowering}")
+  def loss(v, c):
+    x = sc.pack(v, pattern).sqrt()
+    b = sc.const(sparse.coo_array(coefficients))
+    product = x @ b if left else b @ x
+    selected = sc.where(sc.pack(c > 0, output), product, sc.pack(sc.const(np.zeros(output.nnz)), output))
+    weights = np.tile([1.0, 2.0, 1.0], (2, 1))
+    return (sc.values(selected) * sc.const((weights if left else weights.T).ravel())).sum().with_lowering(lowering)
+
+  mask = np.tile([1.0, 1.0, -1.0], (2, 1))
+  if not left:
+    mask = mask.T
+  point = np.array([0.4, 0.7, 1.1, 1.6])
+  expected = np.tile([-2.0 + 2 * 2, 3.0 - 2 * 3], (2, 1))
+  if not left:
+    expected = expected.T
+  grad = sc.gradient(loss, wrt="v")
+  np.testing.assert_allclose(grad(point, mask.ravel()), expected.ravel() * 0.5 / np.sqrt(point), atol=1e-12)
+  np.testing.assert_array_equal(grad(np.zeros(4), -np.ones(output.nnz)), np.zeros(4))
+
+
+@pytest.mark.parametrize("left", [False, True])
+def test_sparse_product_coordinate_mask_isolates_singular_inputs(left):
+  pattern = CanonicalPattern((2, 2), (0, 1), (0, 1))
+
+  @sc.function(sc.arg("v", 2), sc.arg("c", 2), name=f"masked_product_diagonal_{left}")
+  def loss(v, c):
+    x = sc.pack(v, pattern).sqrt()
+    identity = sc.const(sparse.eye_array(2))
+    product = x @ identity if left else identity @ x
+    return sc.where(sc.pack(c > 0, pattern), product, sc.pack(sc.const(np.zeros(2)), pattern)).sum().block()
+
+  np.testing.assert_array_equal(sc.gradient(loss, wrt="v")(np.array([1.0, 0.0]), np.array([1.0, -1.0])), [0.5, 0.0])
 
 
 @pytest.mark.parametrize("case", ["rectangular", "banded", "empty_product", "empty_operand", "empty_dimension"])
@@ -84,7 +180,8 @@ def test_sparse_product_forward_and_reverse(case, layout):
   assert abar.nnz == pa.nnz and bbar.nnz == pb.nnz
 
 
-def test_sampled_sparse_adjoint_does_not_materialize_the_unsampled_product(monkeypatch):
+@pytest.mark.parametrize("masked", [False, True])
+def test_sampled_sparse_adjoint_does_not_materialize_the_unsampled_product(monkeypatch, masked):
   n = 97
   pa = CanonicalPattern((n, n), tuple(range(n)), tuple(range(n)))
   pb = CanonicalPattern((n, 2), tuple(np.repeat(np.arange(n), 2)), (0, 1) * n)
@@ -101,10 +198,15 @@ def test_sampled_sparse_adjoint_does_not_materialize_the_unsampled_product(monke
     sc.arg("a", sc.TensorType(pa.shape, pattern=pa)),
     sc.arg("b", sc.TensorType(pb.shape, pattern=pb)),
     sc.arg("cot", sc.TensorType(pc.shape, pattern=pc)),
+    sc.arg("condition", pc.nnz),
     name="sampled_sparse_adjoint",
   )
-  def fn(a, b, cot):
-    return sc.values(vjp((a @ b,), (a,), (cot,))[0]).block()
+  def fn(a, b, cot, condition):
+    if masked:
+      cot = sc.where(sc.pack(condition > 0, pc), cot, sc.pack(sc.const(np.zeros(pc.nnz)), pc))
+    adjoint = vjp((a @ b,), (a,), (cot,))[0]
+    assert adjoint.type.pattern is pa
+    return sc.values(adjoint).block()
 
   observed = {}
   lower_function(fn, observe=observed.__setitem__)
@@ -114,17 +216,23 @@ def test_sampled_sparse_adjoint_does_not_materialize_the_unsampled_product(monke
   a = sparse.coo_array((np.ones(n), (pa.rows, pa.cols)), shape=pa.shape)
   b = sparse.coo_array((np.arange(1.0, 2 * n + 1), (pb.rows, pb.cols)), shape=pb.shape)
   cot = sparse.coo_array((np.arange(pc.nnz, dtype=float), (pc.rows, pc.cols)), shape=pc.shape)
-  np.testing.assert_allclose(fn(a, b, cot), (cot @ b.T).diagonal())
+  condition = np.where(np.arange(pc.nnz) % 3 == 0, -1.0, 1.0)
+  expected_cot = cot.copy()
+  if masked:
+    expected_cot.data *= condition > 0
+  np.testing.assert_allclose(fn(a, b, cot, condition), (expected_cot @ b.T).diagonal())
 
 
 @pytest.mark.parametrize("n", [32, 64])
-def test_weighted_gram_with_a_dense_column_has_stored_size_reverse_and_second_order_work(n, monkeypatch):
+@pytest.mark.parametrize("masked", [False, True])
+def test_weighted_gram_with_a_dense_column_has_stored_size_reverse_and_second_order_work(n, masked, monkeypatch):
   rows = np.tile(np.arange(2 * n), 3)
   cols = np.concatenate((np.arange(2 * n) // 2, np.minimum(np.arange(2 * n) // 2 + 1, n - 1), np.full(2 * n, n - 1)))
   g = sparse.coo_array((np.ones(len(rows)), (rows, cols)), shape=(2 * n, n))
   g.sum_duplicates()
   pg = CanonicalPattern(g.shape, tuple(map(int, g.row)), tuple(map(int, g.col)))
   pw = CanonicalPattern((2 * n, 2 * n), tuple(range(2 * n)), tuple(range(2 * n)))
+  pc = CanonicalPattern((n, 2 * n), pg.cols, pg.rows).matmul(pw).matmul(pg)
   matmul = CanonicalPattern.matmul
 
   def guarded(a, b):
@@ -134,11 +242,12 @@ def test_weighted_gram_with_a_dense_column_has_stored_size_reverse_and_second_or
 
   monkeypatch.setattr(CanonicalPattern, "matmul", guarded)
 
-  @sc.function(sc.arg("v", pg.nnz), sc.arg("w", 2 * n), sc.arg("seeds", (3, 2 * n)), name=f"sparse_dense_column_ad_{n}")
-  def fn(v, w, seeds):
+  @sc.function(sc.arg("v", pg.nnz), sc.arg("w", 2 * n), sc.arg("seeds", (3, 2 * n)), sc.arg("condition", pc.nnz), name=f"sparse_dense_column_ad_{n}")
+  def fn(v, w, seeds, condition):
     matrix = sc.pack(v, pg)
     c = matrix.T @ sc.pack(w, pw) @ matrix
-    loss = sc.values(c).sin().sum()
+    selected = sc.where(sc.pack(condition > 0, pc), c.sin(), sc.pack(sc.const(np.zeros(pc.nnz)), pc)) if masked else c.sin()
+    loss = sc.values(selected).sum()
     grad = vjp((loss,), (w,), (sc.const(1.0),))[0]
     return grad, jvp_many(grad, w, seeds)
 
@@ -153,7 +262,7 @@ def test_weighted_gram_with_a_dense_column_has_stored_size_reverse_and_second_or
         plan = SampledProductPlan.build(a, b, node.type.pattern)
         sampled_work += (plan.right_stops - plan.right_starts).sum()
         assert sum(v.size for v in vars(plan).values()) <= 6 * (a.nnz + b.nnz + node.type.pattern.nnz)
-  assert sampled_work <= 160 * n
+  assert sampled_work <= (320 if masked else 160) * n
   observed = {}
   lower_function(fn, observe=observed.__setitem__)
   for program in (observed["lowered"], observed["pass:pack_workspace"]):
@@ -161,13 +270,17 @@ def test_weighted_gram_with_a_dense_column_has_stored_size_reverse_and_second_or
     assert max(sizes, default=0) <= 36 * n
   v, w = np.linspace(0.2, 0.7, pg.nnz), np.linspace(0.4, 1.2, 2 * n)
   seeds = np.random.default_rng(47).normal(size=(3, 2 * n))
+  condition = np.where(np.arange(pc.nnz) % 3 == 0, -1.0, 1.0)
+  selected = np.ones(pc.shape)
+  if masked:
+    selected[pc.rows, pc.cols] = condition > 0
   matrix = sparse.coo_array((v, (pg.rows, pg.cols)), shape=pg.shape).toarray()
 
   def reference(w):
     c = matrix.T @ (w[:, None] * matrix)
-    return np.einsum("ij,jk,ik->i", matrix, np.cos(c), matrix)
+    return np.einsum("ij,jk,ik->i", matrix, np.cos(c) * selected, matrix)
 
-  grad, tangent = fn(v, w, seeds)
+  grad, tangent = fn(v, w, seeds, condition)
   np.testing.assert_allclose(grad, reference(w), atol=1e-11)
   eps = 1e-5
   for direction, actual in zip(seeds, tangent, strict=True):

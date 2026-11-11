@@ -6,12 +6,14 @@ The roadmap's decision 1, masked partials under #30, and sparse items #46 and #4
 fix the design. Masks through called Functions belong to #339.
 
 - [x] Read the run plan, rules, issue, prerequisite, architecture and compiler context.
-- [ ] Add failing regression gates for scalar and coordinate masks on either operand,
+- [x] Add failing regression gates for scalar and coordinate masks on either operand,
   singular partials, infinite coefficients, cancellation, negative coefficients and
   both derivative orders, with NumPy finite differences.
-- [ ] Preserve mask activity independently of coefficients and guard individual
+- [x] Preserve mask activity independently of coefficients and guard individual
   inactive products, keeping sampled patterns and bounded workspace.
-- [ ] Drop the mask deliberately and record failing gates. Restore the fix.
+- [x] Drop the mask deliberately and record failing gates. Restore the fix.
+  All 14 masked numerical gates fail without adjoint activity propagation.
+  Four unmasked value/gradient/Hessian renderings and headers match the base byte for byte.
 - [ ] Run focused checks, unmasked C comparisons and the full pre-merge hook through
   the detached suite runner. Preserve all snapshot bytes.
 - [ ] Push once for review, open and link the PR, obtain Opus cross-review, fix findings
