@@ -297,3 +297,15 @@ def test_disjoint_runtime_axis_indices():
   expected[:, :3] += 1
   expected[:, 4:7] += 2
   np.testing.assert_array_equal(fn(np.arange(16.0).reshape(2, 8)), expected)
+
+
+def test_unchanged_carry_needs_no_step_copy():
+  @sc.function(sc.arg("carry", 8))
+  def step(carry):
+    return carry
+
+  fn = _loop(step, 8)
+  np.testing.assert_array_equal(fn(np.arange(8.0)), np.arange(8.0))
+  proc = next(proc for proc in lower_function(fn).args if proc.attrs.get("inout_carries"))
+  assert proc.attrs["param_count"] == 1
+  assert not any(node.op == ProgramOp.STORE for stmt in proc.args[1:] for node in walk_program(stmt))

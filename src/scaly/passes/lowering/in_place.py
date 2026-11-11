@@ -23,8 +23,6 @@ def index_batches(nodes: tuple[Expr, ...], length: int, step: Expr | None) -> di
       args = [values[arg.id].reshape((length, *(1,) * (rank - len(arg.shape)), *arg.shape)) for arg in node.args]
       with np.errstate(all="ignore"):
         values[node.id] = np.asarray(ELEMENTWISE[node.op].numpy(*args)).astype(node.type.dtype.numpy())
-    elif node.op == ExprOp.CAST and node.args[0].id in values:
-      values[node.id] = values[node.args[0].id].astype(node.type.dtype.numpy())
     elif node.op == ExprOp.RESHAPE and node.args[0].id in values:
       values[node.id] = values[node.args[0].id].reshape((length, *node.shape))
   return values
@@ -102,7 +100,7 @@ def carry_reuse(fun: ConcreteFunction, n_carry: int, length: int, index: bool, e
     while current.op == ExprOp.SCATTER and current.attrs["mode"] != "fill" and current.type.pattern is None:
       chain.append(current)
       current = current.args[0]
-    if current is not fun.inputs[k] or not chain:
+    if current is not fun.inputs[k]:
       continue
     chain.reverse()
     versions = {current}
@@ -168,7 +166,7 @@ def same_index_sources(fun: ConcreteFunction, scatter: Expr) -> set[Expr]:
       found = True
       selected.add(node)
       return True
-    if node.op not in ELEMENTWISE and node.op != ExprOp.CAST:
+    if node.op not in ELEMENTWISE:
       return False
     selected.add(node)
     return all(visit(arg) for arg in node.args)
@@ -176,19 +174,16 @@ def same_index_sources(fun: ConcreteFunction, scatter: Expr) -> set[Expr]:
   return selected if visit(source) and found else set()
 
 
-def fused_value(ctx, node: Expr, scatter: Expr, position, address):
+def fused_value(ctx, node: Expr, scatter: Expr, address, coords):
   """Render the proved elementwise update, loading its gather at the destination address."""
   from ...ir import program as p
-  from ...ir.program import ProgramNode, ProgramOp
+  from ...ir.program import ProgramNode
 
   if node.op == ExprOp.GATHER:
     return p.load(p.view(ctx.buf_of(scatter.args[0]), [address]))
   if node.op == ExprOp.CONST:
-    from .ctx import _flat_coordinates
-
-    coords = _flat_coordinates(position, scatter.args[2].shape)
     return ctx.read(
       node, [coord if dim != 1 else p.const_int(0) for coord, dim in zip(coords[len(coords) - len(node.shape) :], node.shape, strict=True)]
     )
-  op = ProgramOp.CAST if node.op == ExprOp.CAST else ELEMENTWISE[ExprOp(node.op)].program
-  return ProgramNode(op, tuple(fused_value(ctx, arg, scatter, position, address) for arg in node.args), dtype=node.type.dtype)
+  op = ELEMENTWISE[ExprOp(node.op)].program
+  return ProgramNode(op, tuple(fused_value(ctx, arg, scatter, address, coords) for arg in node.args), dtype=node.type.dtype)

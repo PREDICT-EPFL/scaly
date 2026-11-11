@@ -5002,6 +5002,7 @@ tests/passes/lowering/test_in_place.py::test_same_index_matrix_broadcast
 tests/passes/lowering/test_in_place.py::test_same_runtime_index
 tests/passes/lowering/test_in_place.py::test_scatter_keeps_a_live_private_base
 tests/passes/lowering/test_in_place.py::test_scatter_reuses_a_dead_private_base
+tests/passes/lowering/test_in_place.py::test_unchanged_carry_needs_no_step_copy
 tests/passes/lowering/test_in_place.py::test_unknown_runtime_index_refuses_disjointness
 tests/passes/lowering/test_in_place.py::test_update_source_alias_refuses[direct]
 tests/passes/lowering/test_in_place.py::test_update_source_alias_refuses[reshape]

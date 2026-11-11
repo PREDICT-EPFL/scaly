@@ -7,7 +7,7 @@ from ...ir.expr import _index_values, Expr, ExprOp
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.types import dtypes
 from ..arith import constant
-from .ctx import LowerCtx, lowers, _size_of
+from .ctx import LowerCtx, lowers, _size_of, _flat_coordinates
 from .plans import lower_movement
 from .in_place import fused_value, scatter_reuse
 
@@ -111,7 +111,9 @@ def _lower_scatter(ctx: LowerCtx, node: Expr) -> None:
     if fill:
       dst = ProgramNode(ProgramOp.SELECT, (valid, dst, p.const_int(node.size)), dtype=dtypes.int64)
     target = p.view(work, [dst])
-    value = fused_value(ctx, src, node, i, dst) if node.id in ctx.fused_scatter else p.load(p.view(ctx.buf_of(src), [i]))
+    value = (
+      fused_value(ctx, src, node, dst, _flat_coordinates(i, src.shape)) if node.id in ctx.fused_scatter else p.load(p.view(ctx.buf_of(src), [i]))
+    )
     combine = node.attrs["combine"]
     if combine == "add":
       value = p.add(p.load(target), value)
