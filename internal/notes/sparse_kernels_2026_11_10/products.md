@@ -155,5 +155,7 @@ Automatic merges preserve SELECT's masked partials and accumulation in `ad/rever
 All three CI type-check variants pass, including Python 3.14 and Windows, without changes to
 numerical assertions. Both Ruff checks pass. The first focused group passed 147 cases, including
 dense C snapshots; the call-support, derivative-sparsity, SELECT, boundary, plan and import group
-passed 281. Snapshot files are byte-identical to main. Full validation and a short check of these
-resolutions follow before pushing the rebased branch.
+passed 281. Snapshot files are byte-identical to main. The short claude-opus-5-5 check at low
+effort approved all three resolutions without findings, relying on those validation runs.
+The detached full pre-merge hook exited zero with 3,995 passed and 56 solver skips, followed by
+successful smoke, documentation and private-name checks. The full collection has 4,051 tests.
