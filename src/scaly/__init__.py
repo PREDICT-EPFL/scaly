@@ -16,6 +16,7 @@ from .function.api import (
   sparse_jacobian,
   sparse_lagrangian_hessian,
 )
+from .ir.einsum import einsum
 from .ir.text import render_expr_assembly, render_program_assembly
 from .ir.expr import (
   COMMON_OPS,
@@ -87,6 +88,7 @@ const = Expr.const
 
 
 __all__ = [
+  "einsum",
   "SCALY_SOLVER_STATS_VERSION",
   "ScalySolveStatus",
   "Bounded",
