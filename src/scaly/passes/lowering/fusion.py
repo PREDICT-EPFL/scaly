@@ -43,9 +43,7 @@ def _reads(node: Expr) -> list[tuple[Expr, int]]:
   return [(a, _BUFFER) for a in node.args]
 
 
-def plan_fusion(
-  fun: ConcreteFunction, invariant: frozenset[frozenset[int]], *, scalar: bool
-) -> tuple[frozenset[int], dict[int, tuple[Expr, ...]]]:
+def plan_fusion(fun: ConcreteFunction, invariant: frozenset[frozenset[int]], *, scalar: bool) -> tuple[frozenset[int], dict[int, tuple[Expr, ...]]]:
   """The nodes lowering evaluates at their consumers' coordinates rather than storing, and the sums
   of scatters, by the id of the sum each one writes.
 
@@ -83,7 +81,8 @@ def plan_fusion(
         shares = ExprOp(consumer.op) in ALIASES and consumer.id not in outputs
         edges.append((consumer.id, _BUFFER if shares else kind, True))
     terminal[node.id] = edges
-    if node.id not in outputs and node.type.pattern is None and ExprOp(node.op) in MOVEMENT and all(k != _BUFFER for _, k, _ in edges):
+    dense = all(e.type.pattern is None for e in (node, *node.args))
+    if node.id not in outputs and dense and ExprOp(node.op) in MOVEMENT and all(k != _BUFFER for _, k, _ in edges):
       deferred.add(node.id)
   position = {x.id: 1 << k for k, x in enumerate(fun.inputs)}
   depends: dict[int, int] = {}

@@ -1,6 +1,6 @@
 /* Scaly build recipe
  * CPU baseline: generic
- * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False, frame_budget=65536
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
  * Math library: scalar libm
  * gcc -O3 -fno-math-errno -c dynamics_jac_znext_z.c
  * clang -O3 -fno-math-errno -c dynamics_jac_znext_z.c
@@ -78,49 +78,48 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, i
   if (!arg[0]) return SCALY_ERR_NULL_INPUT;
   if (!arg[1]) return SCALY_ERR_NULL_INPUT;
   if (!res[0]) return SCALY_ERR_NULL_RESULT;
-  static const double k0[8] = {1, 0, 0, 1, 0.050000000000000003, 0, 0, 0.050000000000000003};
-  static const double k1[8] = {0, 0, 0, 0, 1, 0, 0, 1};
-  const double* t5 = arg[0] + 2;
   double s0[4];
   double s1[16];
+  static const double k2[8] = {0, 0, 0, 0, 1, 0, 0, 1};
   double s2[1];
-  double s3[1];
-  for (long long i_t6 = 0; i_t6 < 2; ++i_t6) {
-    s0[i_t6] = (2.0 * t5[i_t6]);
+  static const double k7[8] = {1, 0, 0, 1, 0.050000000000000003, 0, 0, 0.050000000000000003};
+  for (long long i_t0 = 0; i_t0 < 2; ++i_t0) {
+    s0[i_t0] = (2.0 * arg[0][(2 + i_t0)]);
   }
-  for (long long zero_t8_start = 0; zero_t8_start <= 4 - SCALY_WIDTH_4_4_4_4; zero_t8_start += SCALY_WIDTH_4_4_4_4) {
-    lanes_1(zero_t8_start, SCALY_WIDTH_4_4_4_4, s1);
+  for (long long zero_t1_start = 0; zero_t1_start <= 4 - SCALY_WIDTH_4_4_4_4; zero_t1_start += SCALY_WIDTH_4_4_4_4) {
+    lanes_1(zero_t1_start, SCALY_WIDTH_4_4_4_4, s1);
   }
 #if (4 % SCALY_WIDTH_4_4_4_4) != 0
   lanes_1(4 - 4 % SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, s1);
 #endif
-  for (long long support_t8 = 0; support_t8 < 2; ++support_t8) {
-    int64_t v0 = (2 + support_t8);
-    int64_t v1 = (4 + (support_t8 * 3));
-    s1[v0] = (s1[v0] + (s0[(v1 % 2)] * k1[v1]));
+  for (long long support_t1 = 0; support_t1 < 2; ++support_t1) {
+    int64_t v0 = (2 + support_t1);
+    int64_t v1 = (4 + (support_t1 * 3));
+    s1[v0] = (s1[v0] + (s0[(v1 % 2)] * k2[v1]));
   }
-  for (long long i_t9_start = 0; i_t9_start <= 4 - SCALY_WIDTH_4_4_4_4; i_t9_start += SCALY_WIDTH_4_4_4_4) {
-    lanes_2(i_t9_start, SCALY_WIDTH_4_4_4_4, s0, s1);
+  for (long long i_t3_start = 0; i_t3_start <= 4 - SCALY_WIDTH_4_4_4_4; i_t3_start += SCALY_WIDTH_4_4_4_4) {
+    lanes_2(i_t3_start, SCALY_WIDTH_4_4_4_4, s0, s1);
   }
 #if (4 % SCALY_WIDTH_4_4_4_4) != 0
   lanes_2(4 - 4 % SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, s0, s1);
 #endif
-  double acc_t13 = 0.0;
-  for (long long i_t13 = 0; i_t13 < 2; ++i_t13) {
-    double v2 = t5[i_t13];
-    acc_t13 = (acc_t13 + (v2 * v2));
+  double acc_t4 = 0.0;
+  for (long long i_t4 = 0; i_t4 < 2; ++i_t4) {
+    double v2 = arg[0][(2 + i_t4)];
+    acc_t4 = (acc_t4 + (v2 * v2));
   }
-  s2[0] = acc_t13;
-  s3[0] = (0.10000000000000001 * s2[0]);
-  for (long long j_t19_0_0 = 0; j_t19_0_0 < 4; ++j_t19_0_0) {
-    for (long long j_t19_0 = 0; j_t19_0 < 2; ++j_t19_0) {
-      s1[((j_t19_0_0 * 4) + j_t19_0)] = k0[((j_t19_0_0 * 2) + j_t19_0)];
+  s1[0] = acc_t4;
+  s2[0] = (0.10000000000000001 * s1[0]);
+  for (long long j_t6_0_0 = 0; j_t6_0_0 < 4; ++j_t6_0_0) {
+    for (long long j_t6_0 = 0; j_t6_0 < 2; ++j_t6_0) {
+      s1[((j_t6_0_0 * 4) + j_t6_0)] = k7[((j_t6_0_0 * 2) + j_t6_0)];
     }
   }
-  for (long long j_t19_1_0 = 0; j_t19_1_0 < 4; ++j_t19_1_0) {
-    for (long long j_t19_1 = 0; j_t19_1 < 2; ++j_t19_1) {
-      double v3 = k1[((j_t19_1_0 * 2) + j_t19_1)];
-      s1[((j_t19_1_0 * 4) + (2 + j_t19_1))] = (v3 - (0.050000000000000003 * ((s0[j_t19_1_0] * t5[j_t19_1]) + (s3[0] * v3))));
+  for (long long j_t6_1_0 = 0; j_t6_1_0 < 4; ++j_t6_1_0) {
+    for (long long j_t6_1 = 0; j_t6_1 < 2; ++j_t6_1) {
+      int64_t v3 = (2 + j_t6_1);
+      double v4 = k2[((j_t6_1_0 * 2) + j_t6_1)];
+      s1[((j_t6_1_0 * 4) + v3)] = (v4 - (0.050000000000000003 * ((s0[j_t6_1_0] * arg[0][v3]) + (s2[0] * v4))));
     }
   }
   for (long long i_jac_znext_z_0 = 0; i_jac_znext_z_0 < 4; ++i_jac_znext_z_0) {

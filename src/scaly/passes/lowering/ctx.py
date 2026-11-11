@@ -25,7 +25,7 @@ from ...utils.names import NameScope
 from ..affine import affine_index_map
 from ..arith import constant
 from ...ad.rules import ELEMENTWISE
-from .fusion import ALIASES, MOVEMENT, plan_fusion
+from .fusion import ALIASES, plan_fusion
 from ..arith import fold_program
 from ..program.fold_arith import _fold_index as _fold_bounded
 from ..expr import cse_many, simplify
@@ -273,6 +273,8 @@ class LowerCtx:
     self.deferred: frozenset[int] = frozenset()
     self.sums: dict[int, tuple[Expr, ...]] = {}
     self._reads: dict[tuple[int, bool, tuple[ProgramNode, ...]], ProgramNode] = {}
+    # Each index ``index_at`` built, with the table and the variable it indexes.
+    self._indexed: dict[ProgramNode, tuple[np.ndarray, ProgramNode]] = {}
     # Nodes evaluated in place that read through a deferred transpose.
     self.permutes: set[int] = set()
 
@@ -532,7 +534,14 @@ class LowerCtx:
     residual is materialized, and a residual of one element is a constant, so a fully affine index
     emits no table at all. An index with no affine structure keeps the whole table, indexed by
     ``k``, which is what every gather used to emit. An empty index is any constant: its loop runs
-    zero times."""
+    zero times. A result that loads a table remembers ``idx`` and ``k``, so a movement op read at it
+    composes its own map with ``idx`` into one table."""
+    out = self._index_at(idx, k, shared=shared)
+    if any(n.op == ProgramOp.LOAD for n in walk_program(out)):
+      self._indexed[out] = (idx, k)
+    return out
+
+  def _index_at(self, idx: np.ndarray, k: ProgramNode, *, shared: bool = False) -> ProgramNode:
     if idx.size == 0:
       return p.const_int(0)
     if k.op == ProgramOp.CONST_INT:
@@ -620,23 +629,6 @@ class LowerCtx:
     """``compute`` at the row-major position ``flat``."""
     return self._finish(self._step((expr, True, (flat,))))
 
-  def _positions(self, expr: Expr) -> tuple[Expr, np.ndarray]:
-    """The value under a chain of deferred movement ops, and the flat position in it of each element
-    of ``expr``, so a gather through the chain reads one composed index table."""
-    positions = np.arange(expr.size, dtype=np.int64)
-    while expr.id in self.deferred and expr.id not in self.value_buffers and (op := ExprOp(expr.op)) in MOVEMENT and op != ExprOp.CONST:
-      src = expr.args[0]
-      if op == ExprOp.TRANSPOSE:
-        step = np.arange(src.size, dtype=np.int64).reshape(src.shape).transpose(expr.attrs["axes"]).reshape(-1)
-      elif op == ExprOp.SLICE:
-        step = np.arange(src.size, dtype=np.int64).reshape(src.shape)[expr.attrs["index"]].reshape(-1)
-      elif op == ExprOp.GATHER:
-        step = expr.attrs["indices"].reshape(-1)
-      else:
-        step = np.arange(src.size, dtype=np.int64)
-      positions, expr = step[positions], src
-    return expr, positions
-
   def _finish(self, step: _Step) -> ProgramNode:
     if isinstance(step, ProgramNode):
       return step
@@ -699,9 +691,11 @@ class LowerCtx:
       return [(src, True, (position,))], _only
     if op == ExprOp.SLICE and flat and (offset := _contiguous_slice_offset(expr.attrs["index"], src.shape, expr.shape)) is not None:
       return [(src, True, (_shift(position, offset),))], _only
-    if op == ExprOp.GATHER:
-      base, positions = self._positions(src)
-      return [(base, True, (self.index_at(positions[expr.attrs["indices"].reshape(-1)], position),))], _only
+    if op == ExprOp.GATHER or op in (ExprOp.TRANSPOSE, ExprOp.SLICE) and flat and position in self._indexed:
+      table = _source_positions(expr)
+      if (known := self._indexed.get(position)) is not None and known[0].max() < len(table):
+        return [(src, True, (self.index_at(table[known[0]], known[1]),))], _only
+      return [(src, True, (self.index_at(table, position),))], _only
     coords = _flat_coordinates(at[0], expr.shape) if flat else at
     if op == ExprOp.TRANSPOSE:
       axes = tuple(int(a) for a in expr.attrs["axes"])
@@ -820,6 +814,17 @@ def _flat(shape: tuple[int, ...], coords: Sequence[ProgramNode]) -> ProgramNode:
   if out is None:
     return p.const_int(offset)
   return p.add(p.const_int(offset), out) if offset else out
+
+
+def _source_positions(expr: Expr) -> np.ndarray:
+  """The flat position in its source of each element of a transpose, a slice or a gather."""
+  src = expr.args[0]
+  if ExprOp(expr.op) == ExprOp.GATHER:
+    return expr.attrs["indices"].reshape(-1)
+  positions = np.arange(src.size, dtype=np.int64).reshape(src.shape)
+  if ExprOp(expr.op) == ExprOp.TRANSPOSE:
+    return positions.transpose(expr.attrs["axes"]).reshape(-1)
+  return positions[expr.attrs["index"]].reshape(-1)
 
 
 _Read = tuple[Expr, bool, tuple[ProgramNode, ...]]
