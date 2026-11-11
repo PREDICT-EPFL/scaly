@@ -9,7 +9,7 @@ and `~/.scaly-suite/RULES.md` govern validation and merging. #369 owns sparse-sp
 - [x] Add SELECT storage/support regions and preserve #30 masks on stored-coordinate derivatives.
 - [x] Prove region and mask gates fail under perturbation. Keep dense C snapshots byte-identical.
 - [x] Run pre-merge through the detached suite runner and commit the candidate.
-- [ ] Push once and open a draft on #367.
+- [x] Push once and open a draft on #367: PR #406.
 - [ ] Obtain cross-review, address findings and confirm any fixes.
 - [ ] After #367 merges, rebase only this task's commits onto main, retarget, rerun the full suite,
       push once and queue once when green. Report the guide correction to #382's owner.
@@ -26,5 +26,7 @@ its buffer bound. No public docs were edited.
 
 The detached pre-merge run uses `/tmp/scaly-359-premerge.log` and `.exit`. Its full suite passed
 with 3,894 tests and 55 skips. Benchmark smoke, docs build and all remaining hooks passed. The runner exited zero.
-#367 has rebased upstream since this branch started. Keep the original approved ancestor in the
-user's `rebase --onto` command, so only this task's commits move when #367 lands.
+#367 rebased upstream since this branch started. This branch now includes its notes-only update,
+and source and tests are byte-identical to the reviewed candidate. Use the updated ancestor in
+the coordinator's latest `rebase --onto` instruction when #367 lands. Hold the next push until
+the review fixes are together. Opus and Sol reviews of the original candidate are running.
