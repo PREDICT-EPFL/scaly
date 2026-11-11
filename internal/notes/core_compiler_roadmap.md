@@ -676,7 +676,11 @@ C spelling of that workspace in the header (a caller `malloc` or a union) with a
 allocates outputs in the leaf dtype. The CasADi layer and the solver wrappers (`codegen/solver.py`
 and each plugin's `render_wrapper`) stay float64 and raise otherwise. `docs/dev/versioning.md`
 states the rule as the stable signature. This removes [#61]'s guard and is the float32 parity gate:
-every op test passes in float32, plus one float32 C snapshot.
+every op test passes in float32, plus one float32 C snapshot. *Replaced in the compiler run,
+2026-11-10: "enables spills of the non-float64 buffers left on the stack" for every function, by
+spills of every dtype only in a byte workspace. A float64 or float32 workspace holds only its own
+dtype, so the signature depends on the leaves alone and never on a spill decision or the frame
+budget. Large temporaries of another dtype in a uniform function stay on the stack.*
 
 ## Tensor core and the loop compiler
 
@@ -1410,8 +1414,10 @@ not devrush's code, and rewrite each one against main's API.
 
 Choices this roadmap leaves open on purpose. Each names the item that settles it.
 
-- **The C spelling of a mixed-dtype workspace** ([#56]): a caller `malloc`, a union, or a byte array
-  accessed through `memcpy`, decided under `-fstrict-aliasing` tests.
+- **The C spelling of a mixed-dtype workspace** ([#56]): *settled 2026-11-10: caller storage without
+  a declared type (`malloc`, or C++ byte storage) read through plain typed pointers, with sibling
+  callee windows laid end to end so no byte changes type during a call; it changes no kernel code
+  and leaves `memcpy` accessors open as a later, caller-compatible change.*
 - **Whether reverse mode should keep call boundaries** ([#73]). The design keeps them and lets
   lowering inline; the item lands only if the benchmark problems do not slow down after [#71].
 - **Per-step Jacobian compression in loop derivatives** (after [#32]): devrush's idea, with

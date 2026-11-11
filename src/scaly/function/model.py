@@ -171,7 +171,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
       if tree is None or isinstance(decl, _PatternHole):
         pattern = value.type.pattern if isinstance(value, Expr) else None
         if sparse.issparse(value):
-          pattern, value = bind_sparse(value)
+          pattern, value = bind_sparse(value, (TensorType(()).dtype if decl is None else decl.dtype).numpy())
           canonical.append(len(prepared))
         prepared.append(value)
         return TensorType(shape, pattern=pattern) if decl is None else TensorType(shape, decl.dtype, decl.diff, pattern)

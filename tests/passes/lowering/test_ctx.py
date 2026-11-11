@@ -21,19 +21,6 @@ def test_duplicate_rule_rejected_without_partial_registration(monkeypatch) -> No
   assert ExprOp.INPUT not in ctx._RULES
 
 
-@pytest.mark.parametrize("dtype", ["float32"])
-@pytest.mark.parametrize("side", ["input", "output"])
-def test_non_float64_leaves_refused(dtype, side) -> None:
-  from scaly.function.concrete import ConcreteFunction
-  from scaly.ir.expr import Expr
-
-  x = Expr.sym("x", (), dtype=dtype if side == "input" else "float64")
-  y = Expr.const(1, dtype=dtype) if side == "output" else Expr.const(1.0)
-  fn = ConcreteFunction._from_exprs("typed_boundary", [x], [y], ["x"], ["y"])
-  with pytest.raises(ctx.LoweringError, match=rf"{side}.*{dtype}.*float64"):
-    ctx.lower_function(fn)
-
-
 def test_non_float64_callee_leaves_are_typed_parameters() -> None:
   from scaly.function.concrete import ConcreteFunction
   from scaly.ir.expr import Expr

@@ -7,11 +7,23 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .abi import abi_status_defines, buffer_idents, c_api_signature, c_ident, sparse_layout_tables, wrapper_param_idents
+from .abi import (
+  ENTRY_C_TYPES,
+  abi_status_defines,
+  buffer_idents,
+  c_api_signature,
+  c_ident,
+  leaf_c_type,
+  sparse_layout_tables,
+  workspace_c_type,
+  wrapper_param_idents,
+)
 from .casadi import CASADI_QUERIES, casadi_declarations, casadi_defines
 from .solver import solver_stats_symbols, solver_options_c_defs, solver_options_declarations
 from ..function.concrete import ConcreteFunction
 from ..ir.layout import DenseLayout, LeafLayout, SparseLayout
+from ..ir.types import DType
+from ..passes.lowering import workspace_dtype
 from ..solvers.stats import stats_c_defs
 from ..utils.names import NameScope
 
@@ -73,9 +85,9 @@ struct alignas(16) ColumnMajorBuffer {
 #endif"""
 
 
-def _buffer_alias(ident: str, shape: tuple[int, ...], layout: LeafLayout = None) -> str:
+def _buffer_alias(ident: str, dtype: DType, shape: tuple[int, ...], layout: LeafLayout = None) -> str:
   dims = "".join(f", {d}" for d in shape)
-  return f"using {ident}_t = {'ColumnMajorBuffer' if isinstance(layout, DenseLayout) else 'Buffer'}<double{dims}>;"
+  return f"using {ident}_t = {'ColumnMajorBuffer' if isinstance(layout, DenseLayout) else 'Buffer'}<{leaf_c_type(dtype)}{dims}>;"
 
 
 def _std_array(name: str, values: tuple[int, ...], size: str) -> str:
@@ -121,12 +133,15 @@ def render_cpp_header(
   )
   arg_init = ", ".join(f"{p}.ptr()" for p in input_params) or "nullptr"
   res_init = ", ".join(f"{p}.ptr()" for p in output_params) or "nullptr"
+  pointee = ENTRY_C_TYPES[workspace_dtype(fun)]
+  integers = any(leaf.type.dtype.is_integer for leaf in (*fun.inputs, *fun.outputs))
   lines = [
     "#pragma once",
     "",
     "#include <array>",
     "#include <cassert>",
     "#include <cstddef>",
+    *(["#include <cstdint>"] if integers else []),
     *(["#include <cstdint>", "", *stats_c_defs(), *solver_options_c_defs()] if backends else []),
     "",
     *abi_status_defines(guarded=True),
@@ -143,7 +158,7 @@ def render_cpp_header(
     "",
     f"namespace {symbol} {{",
     f"// The pointer ABI for {fun.name}; the same C symbols the C header declares.",
-    'extern "C" ' + c_api_signature(symbol) + ";",
+    'extern "C" ' + c_api_signature(fun) + ";",
     *(decl if decl.startswith("#") else 'extern "C" ' + decl for decl in solver_options_declarations(fun)),
     *(f'extern "C" int {s}_stats(scaly_solver_stats* out);' for s in solver_stats_symbols(fun)),
     *(f'extern "C" {decl}' for decl in (casadi_declarations(symbol) if casadi else [])),
@@ -153,9 +168,11 @@ def render_cpp_header(
       if any(isinstance(layout, SparseLayout) for layout in (*fun.input_tree.layouts, *fun.output_tree.layouts))
       else []
     ),
-    *(_buffer_alias(i, e.type.storage_shape, layout) for i, e, layout in zip(inputs, fun.inputs, fun.input_tree.layouts, strict=True)),
-    *(_buffer_alias(o, e.type.storage_shape, layout) for o, e, layout in zip(outputs, fun.outputs, fun.output_tree.layouts, strict=True)),
-    f"using workspace_t = Buffer<double, {symbol}_SZ_W>;",
+    *(_buffer_alias(i, e.type.dtype, e.type.storage_shape, layout) for i, e, layout in zip(inputs, fun.inputs, fun.input_tree.layouts, strict=True)),
+    *(
+      _buffer_alias(o, e.type.dtype, e.type.storage_shape, layout) for o, e, layout in zip(outputs, fun.outputs, fun.output_tree.layouts, strict=True)
+    ),
+    f"using workspace_t = Buffer<{workspace_c_type(fun)}, {symbol}_SZ_W>;",
     f"constexpr int sz_arg = {symbol}_SZ_ARG;",
     f"constexpr int sz_res = {symbol}_SZ_RES;",
     f"constexpr int sz_iw = {symbol}_SZ_IW;",
@@ -167,8 +184,8 @@ def render_cpp_header(
     call_params = [*params, *(("const scaly_solver_option* const* solver_options",) if runtime else ())]
     lines += [
       f"inline int call({', '.join(call_params)}) {{",
-      f"  const double* arg[sz_arg > 0 ? sz_arg : 1] = {{{arg_init}}};",
-      f"  double* res[sz_res > 0 ? sz_res : 1] = {{{res_init}}};",
+      f"  const {pointee}* arg[sz_arg > 0 ? sz_arg : 1] = {{{arg_init}}};",
+      f"  {pointee}* res[sz_res > 0 ? sz_res : 1] = {{{res_init}}};",
       f"  return {symbol}{suffix}(arg, res, nullptr, sz_w ? {workspace}.ptr() : nullptr, 0{', solver_options' if runtime else ''});",
       "}",
     ]

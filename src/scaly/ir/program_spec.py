@@ -47,11 +47,19 @@ def verify_program(root: ProgramNode, spec: "Spec | None" = None) -> None:
       _declare_name(node.attrs["target"], declared)
     if node.op in (ProgramOp.PROGRAM, ProgramOp.PROC, ProgramOp.BLOCK, ProgramOp.FOR):
       pending.extend((arg, can_break, declared) for arg in node.args)
-  for proc in root.args if root.op == ProgramOp.PROGRAM else (root,):
+  procs = root.args if root.op == ProgramOp.PROGRAM else (root,)
+  params = {pr.attrs["name"]: pr.args[: int(pr.attrs.get("param_count", 0))] for pr in procs if pr.op == ProgramOp.PROC}
+  for proc in procs:
     buffers = {n.attrs["name"]: n for n in walk_program(proc) if n.op == ProgramOp.BUFFER}
     for node in walk_program(proc):
       if node.op == ProgramOp.VIEW and (buf := buffers.get(node.attrs["buffer"])) is not None and node.dtype != buf.dtype:
         raise VerifyError(f"verify_program: view of {buf.attrs['name']!r} has dtype {node.dtype}, buffer has dtype {buf.dtype}")
+      if node.op == ProgramOp.CALL and (formals := params.get(node.attrs.get("callee"))) is not None:
+        for arg, formal in zip(node.args, formals, strict=False):
+          if arg.dtype != formal.dtype:
+            raise VerifyError(
+              f"verify_program: call to {node.attrs['callee']!r} passes {arg.dtype} for its {formal.dtype} parameter {formal.attrs['name']!r}"
+            )
 
 
 def _declare_name(name: str, declared: set[str]) -> None:

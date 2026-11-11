@@ -35,7 +35,7 @@ _RESERVED = (
   | set(
     """
   arg res iw w mem solver_options double2 NULL NAN INFINITY HUGE_VAL HUGE_VALF HUGE_VALL
-  size_t ptrdiff_t int64_t uint64_t memcpy memmove memset memcmp malloc calloc realloc free abort exit
+  size_t ptrdiff_t int8_t int16_t int32_t int64_t uint8_t uint16_t uint32_t uint64_t memcpy memmove memset memcmp malloc calloc realloc free abort exit
   printf fprintf sprintf snprintf vprintf vfprintf vsprintf vsnprintf scanf fscanf sscanf getchar
   putchar puts fputs fgets fread fwrite fopen fclose fflush fseek ftell rewind fgetpos fsetpos feof
   ferror clearerr perror remove rename tmpfile tmpnam setbuf setvbuf ungetc getc putc stdin stdout stderr
@@ -43,7 +43,7 @@ _RESERVED = (
   strlen strcpy strncpy strcat strncat strcmp strncmp strchr strrchr strstr strspn strcspn strpbrk
   strtok strerror strcoll strxfrm abs labs llabs div ldiv lldiv atof atoi atol atoll strtod strtof
   strtold strtol strtoll strtoul strtoull rand srand qsort bsearch getenv atexit quick_exit _Exit
-  aligned_alloc max_align_t offsetof scaly_solver_option scaly_solver_stats scaly_minimum scaly_maximum scaly_minimumf scaly_maximumf
+  aligned_alloc max_align_t offsetof scaly_solver_option scaly_solver_stats scaly_minimum scaly_maximum scaly_minimumf scaly_maximumf scaly_floordiv scaly_floormod
 """.split()
   )
 )

@@ -38,9 +38,15 @@ Generated code has three compatibility concerns.
 
 ### Exported C symbols
 
-The stable interface is the universal pointer signature of the exported entry
-`<name>` and, for solver modules, the `<name>_stats` accessor, together with the derived-output
-names `{kind}_{of}_{wrt}` such as `f_spjac_y_x`. A patch release changes none of these. A minor
+The stable interface is the pointer signature of the exported entry `<name>`
+and, for solver modules, the `<name>_stats` accessor, together with the derived-output
+names `{kind}_{of}_{wrt}` such as `f_spjac_y_x`. The signature follows the
+data types of the inputs and outputs by one rule: `const double** arg, double** res, double* w`
+when every input and output is `float64`, `const float** arg, float** res,
+float* w` when every one is `float32`, and `const void** arg, void** res,
+void* w` otherwise, with `SZ_W` counted in bytes and `w` aligned to 8 bytes.
+Each input and output buffer holds values of its own C type, and `iw` and `mem`
+never change. A patch release changes none of these. A minor
 release may rename, reorder or remove them, and the release notes list the change. The typed C
 structs, the C++ `Buffer` aliases and the CasADi query functions are sugar over the pointer
 signature and follow the same rule. The `static` `_raw` bodies

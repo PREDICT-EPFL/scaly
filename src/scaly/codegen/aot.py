@@ -24,7 +24,17 @@ from typing import TYPE_CHECKING, Protocol
 from scaly.codegen.external import LibraryBuild, export_libraries, prepare_library
 from scaly.function.extern import CLibrary
 from scaly.codegen.toolchain import find_c_compiler, BuildRecipe, CPU_LEVELS, CDialect, CpuLevel, LaneCount, VectorLibm
-from scaly.codegen.abi import abi_status_defines, buffer_idents, c_api_signature, c_ident, sparse_layout_tables, wrapper_param_idents
+from scaly.codegen.abi import (
+  ENTRY_C_TYPES,
+  abi_status_defines,
+  buffer_idents,
+  c_api_signature,
+  c_ident,
+  leaf_c_type,
+  sparse_layout_tables,
+  workspace_c_type,
+  wrapper_param_idents,
+)
 from scaly.codegen.c import (
   extern_declarations,
   _c_reserved_names,
@@ -57,7 +67,7 @@ from scaly.ir.expr import callees_of
 from scaly.ir.layout import DenseLayout, SparseLayout
 from scaly.function.concrete import ConcreteFunction
 from scaly.function.model import Function, as_concrete
-from scaly.passes.lowering import lower_function, main_proc
+from scaly.passes.lowering import lower_function, main_proc, workspace_dtype
 from scaly.passes.program import ProgramObserver
 from scaly.solvers.graph import external_oracles, is_solver_function, solver_backends_used, solver_callees
 from scaly.solvers.paths import backend_compile_flags
@@ -183,7 +193,7 @@ def _lower(
   *,
   recipe: BuildRecipe = BuildRecipe(),
 ) -> _RenderCtx:
-  """Lower ``fun`` once. ``workspace_size`` is the doubles of scratch it needs in ``w[]`` — the
+  """Lower ``fun`` once. ``workspace_size`` is the scratch it needs in ``w[]``, in ``w``'s units — the
   packed ``sz_w`` from ``passes.pack_workspace``, which also accounts for a solver wrapper passing
   its ``w`` straight to the oracle."""
   backends = solver_backends_used(fun)
@@ -236,22 +246,23 @@ def _typed_buffers(fun: ConcreteFunction, symbol: str) -> list[str]:
   inputs, outputs = buffer_idents(fun)
   input_params, output_params, workspace = wrapper_param_idents(symbol, inputs, outputs, type_prefix=f"{symbol}_")
   for ident, param, expr in zip(inputs, input_params, fun.inputs, strict=True):
-    lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{max(expr.type.storage_size, 1)}]; }} {symbol}_{ident}_t;")
+    lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) {leaf_c_type(expr.type.dtype)} data[{max(expr.type.storage_size, 1)}]; }} {symbol}_{ident}_t;")
     params.append(f"const {symbol}_{ident}_t* {param}")
     arg_values.append(f"{param}->data")
   for ident, param, expr in zip(outputs, output_params, fun.outputs, strict=True):
-    lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{max(expr.type.storage_size, 1)}]; }} {symbol}_{ident}_t;")
+    lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) {leaf_c_type(expr.type.dtype)} data[{max(expr.type.storage_size, 1)}]; }} {symbol}_{ident}_t;")
     params.append(f"{symbol}_{ident}_t* {param}")
     res_values.append(f"{param}->data")
   params.append(f"{symbol}_workspace_t* {workspace}")
-  lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{symbol}_SZ_W > 0 ? {symbol}_SZ_W : 1]; }} {symbol}_workspace_t;")
+  lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) {workspace_c_type(fun)} data[{symbol}_SZ_W > 0 ? {symbol}_SZ_W : 1]; }} {symbol}_workspace_t;")
+  pointee = ENTRY_C_TYPES[workspace_dtype(fun)]
   for runtime in (False, True) if solver_backends_used(fun) else (False,):
     suffix = "_with_options" if runtime else ""
     call_params = [*params, *(("const scaly_solver_option* const* solver_options",) if runtime else ())]
     lines += [
       f"static inline int {symbol}_call{suffix}({', '.join(call_params)}) {{",
-      f"  const double* arg[{symbol}_SZ_ARG > 0 ? {symbol}_SZ_ARG : 1] = {{{', '.join(arg_values) or 'NULL'}}};",
-      f"  double* res[{symbol}_SZ_RES > 0 ? {symbol}_SZ_RES : 1] = {{{', '.join(res_values) or 'NULL'}}};",
+      f"  const {pointee}* arg[{symbol}_SZ_ARG > 0 ? {symbol}_SZ_ARG : 1] = {{{', '.join(arg_values) or 'NULL'}}};",
+      f"  {pointee}* res[{symbol}_SZ_RES > 0 ? {symbol}_SZ_RES : 1] = {{{', '.join(res_values) or 'NULL'}}};",
       f"  return {symbol}{suffix}(arg, res, NULL, {workspace} ? {workspace}->data : NULL, 0{', solver_options' if runtime else ''});",
       "}",
     ]
@@ -330,10 +341,13 @@ def _render_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, 
   if lang == "cpp":
     return render_cpp_header(fun, backends, sz_w, frame_bytes, casadi=casadi, sparsities=header_sparsities(fun, casadi=casadi))
   symbol = c_ident(fun.name)
+  leaf_dtypes = {leaf.type.dtype for leaf in (*fun.inputs, *fun.outputs)}
   lines = [
     "#pragma once",
     "",
+    *(["#include <stdbool.h>"] if any(dtype.is_bool for dtype in leaf_dtypes) else []),
     "#include <stddef.h>",
+    *(["#include <stdint.h>"] if any(dtype.is_integer for dtype in leaf_dtypes) else []),
     *(["#include <stdint.h>", "", *stats_c_defs(), *solver_options_c_defs()] if backends else []),
     "",
     *abi_status_defines(guarded=True),
@@ -351,7 +365,7 @@ def _render_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, 
     "#ifdef __cplusplus",
     'extern "C" {',
     "#endif",
-    c_api_signature(symbol) + ";",
+    c_api_signature(fun) + ";",
     *solver_options_declarations(fun),
     *(f"int {solver_symbol}_stats(scaly_solver_stats* out);" for solver_symbol in solver_stats_symbols(fun)),
     *(casadi_declarations(symbol) if casadi else []),
@@ -460,7 +474,7 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
   symbol = c_ident(fun.name)
   lines += ["", *render_solver_defaults(fun)]
   lines += [
-    c_api_signature(symbol) + " {",
+    c_api_signature(fun) + " {",
     f"  const scaly_solver_option* options[] = {{ {', '.join(f'{c_ident(fn.name)}_default_options()' for fn in solvers)} }};",
     f"  return {symbol}_with_options(arg, res, iw, w, mem, options);",
     "}",
@@ -620,7 +634,8 @@ def workspace_size(
   cpu: CpuLevel = "generic",
   frame_budget: int = 65536,
 ) -> int:
-  """Doubles of scratch ``fun`` needs in ``w[]``, the value its header's ``SZ_W`` quotes.
+  """Entries of scratch ``fun`` needs in ``w[]``, the value its header's ``SZ_W`` quotes: doubles
+  when every leaf is float64, floats when every leaf is float32, and bytes otherwise.
   ``CModule.workspace_size`` is the same number without a second lowering, so prefer it when the
   module is already in hand."""
   fun = as_concrete(fun)

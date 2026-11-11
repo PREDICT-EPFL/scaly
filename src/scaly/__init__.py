@@ -1,6 +1,6 @@
 """The curated public surface: re-exports only, no definitions of its own (``docs/dev/codebase.md``)."""
 
-from .codegen.abi import C_API_SIGNATURE, c_api_signature
+from .codegen.abi import c_api_signature
 from .ad import jvp, jvp_many, vjp
 from .function.sugar import vmap, broadcast, window, scan, while_loop
 from .function.api import (
@@ -97,7 +97,6 @@ __all__ = [
   "SCALY_SOLVER_STATS_VERSION",
   "ScalySolveStatus",
   "Bounded",
-  "C_API_SIGNATURE",
   "CLibrary",
   "extern",
   "DiscreteOCP",

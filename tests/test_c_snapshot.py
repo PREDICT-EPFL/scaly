@@ -1,7 +1,7 @@
 """Generated-C snapshots: the gate that says a refactor did not change what scaly emits.
 
 A refactor of the IR, the passes or the renderer must leave the generated C identical, so this
-pins it byte for byte. Each corpus entry covers one lowering path — a forward function, a dense
+pins it byte for byte. Each corpus entry covers one lowering path — a forward function in float64 and in float32, a dense
 Jacobian, a compact sparse Jacobian, a VMAP workload, a wide function using most of the math surface, a workspace spill, and a solver-bearing graph — and every run re-renders and diffs
 against the recorded source and header. A diff means something semantic moved with the code. Byte
 equality also keeps the JIT cache key stable: it hashes the source, and the header pins the ABI
@@ -31,10 +31,11 @@ N_STAGES = 3
 WEIGHTS = (np.arange(40 * 40, dtype=np.float64).reshape(40, 40) % 7 - 3.0) / 11.0
 
 
-def _dynamics() -> sc.Function:
+def _dynamics(dtype: str = "float64") -> sc.Function:
   """Elementwise math, slicing, a reduction and a concat."""
+  z, u = (sc.TensorType((n,), dtype=sc.dtypes.from_name(dtype)) for n in (4, 2))
 
-  @sc.function(sc.group(sc.arg("z", 4), sc.arg("u", 2)), outputs=sc.arg("znext"), name="dynamics")
+  @sc.function(sc.group(sc.arg("z", z), sc.arg("u", u)), outputs=sc.arg("znext"), name="dynamics" if dtype == "float64" else f"dynamics_{dtype}")
   def dynamics(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, u = inputs
     pos, vel = z[:2], z[2:]
@@ -109,6 +110,7 @@ def _qp_host() -> sc.Function:
 
 CORPUS = {
   "forward": _dynamics,
+  "float32": lambda: _dynamics("float32"),
   "jac": lambda: sc.jacobian(_dynamics(), "znext", "z"),
   "vmap": _shooting,
   "vmap_multi": _multi_output_vmap,

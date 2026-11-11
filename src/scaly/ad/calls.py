@@ -447,13 +447,15 @@ def _vmap_adj_function(
     mask = Expr(ExprOp.INPUT, type=TensorType(lam.type.storage_shape, lam.type.dtype), name=mask_name) if masked else None
     seed = lam if mask is None else _masked_seed(lam, cast_expr(mask, dtypes.bool_))
     grads = body_cotangents(callee, output_index, active_formals, seed, pullback)
-    parts = [values(grad).vec() for grad in grads]
+    # One concatenated result needs one dtype: float64 holds every float32 and integer cotangent exactly.
+    common = grads[0].type.dtype if len({grad.type.dtype for grad in grads}) == 1 else dtypes.float64
+    parts = [cast_expr(values(grad), common).vec() for grad in grads]
     if masked:
       for grad in grads:
         compact = _sample_stored(grad, grad.type)
         condition = cotangent_mask(compact)
         ones = Expr.const(np.ones(grad.type.storage_shape, dtype=grad.type.dtype.numpy()), dtype=grad.type.dtype)
-        parts.append((ones if condition is None else where(condition, ones, zeros_like(compact))).vec())
+        parts.append(cast_expr(ones if condition is None else where(condition, ones, zeros_like(compact)), common).vec())
     adj = callee._inherit_lowering(simplify_cse_fixpoint(concat(parts)))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(adj, inp, dep_memo))
@@ -507,7 +509,7 @@ def _vmap_vjp(
       elif stride == 0:
         indices = np.asarray([it * result_size + part_offset + j for it in range(length) for j in range(formal_size)], dtype=np.int64)
         segments = gather(mapped, indices).reshape((length, formal_size))
-        vbar = Expr.const(np.ones(length, dtype=arg.type.dtype.numpy()), dtype=arg.type.dtype) @ segments
+        vbar = Expr.const(np.ones(length, dtype=mapped.type.dtype.numpy()), dtype=mapped.type.dtype) @ segments
         if start != 0 or formal_size != arg.size:
           vbar = scatter(vbar, start + np.arange(formal_size, dtype=np.int64), arg.shape)
       else:
@@ -521,7 +523,8 @@ def _vmap_vjp(
             pieces.append(scatter(gather(mapped, indices), destinations, arg.shape))
         vbar = _sum_exprs(pieces)
       assembled.append(vbar)
-    vbar = assembled[0] if mask is None else where(assembled[1] > 0.0, assembled[0], zeros_like(arg))
+    value = cast_expr(assembled[0], arg.type.dtype)
+    vbar = value if mask is None else where(assembled[1] > 0.0, value, zeros_like(arg))
     ret.append((arg, vbar))
     offset += formal_size
   return ret
