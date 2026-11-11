@@ -1013,6 +1013,8 @@ def _merge(ranges: list[ProgramNode], body: list[ProgramNode]) -> tuple[list[Pro
       da is not None
       and db is not None
       and outer.attrs["kind"] == inner.attrs["kind"]
+      and not outer.attrs.get("carried")
+      and not inner.attrs.get("carried")
       and all(r.args[0].op == ProgramOp.CONST_INT and r.args[0].attrs["value"] == 0 and r.args[2].attrs["value"] == 1 for r in (outer, inner))
       and (accesses := _accesses([*ranges[k + 2 :], *body], frozenset((outer.attrs["name"], inner.attrs["name"])))) is not None
       and all(c.get(outer.attrs["name"], 0) == c.get(inner.attrs["name"], 0) * db for c in accesses)

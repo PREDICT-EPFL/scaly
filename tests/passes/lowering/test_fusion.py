@@ -1,0 +1,257 @@
+"""Fusion decided at lowering: each rule against NumPy, with the work and storage it must leave."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+
+import numpy as np
+import pytest
+
+import scaly as sc
+from scaly.codegen.toolchain import find_c_compiler
+from scaly.function.sugar import _mapped_call
+from scaly.ir import program as p
+from scaly.ir.expr import Expr
+from scaly.ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
+from scaly.passes.lowering import ctx, lower_function, main_proc
+from scaly.passes.lowering.schedule import emit_reduction
+from scaly.passes.program._common import trip_count
+from scaly.utils.names import NameScope
+
+needs_cc = pytest.mark.skipif(find_c_compiler() is None, reason="no C compiler available for JIT numeric check")
+
+
+def _function(name: str, shapes: tuple[tuple[int, ...], ...], body: Callable[..., Expr]) -> sc.Function:
+  @sc.function(sc.group(*(sc.arg(f"x{k}", s) for k, s in enumerate(shapes))), outputs=sc.arg("y"), name=name)
+  def fn(inputs):
+    return body(*inputs)
+
+  return fn
+
+
+def _lowered(fn: sc.Function) -> ProgramNode:
+  seen: dict[str, ProgramNode] = {}
+  lower_function(fn, observe=seen.__setitem__)
+  return main_proc(seen["lowered"])
+
+
+def _privates(proc: ProgramNode) -> list[ProgramNode]:
+  return [s for s in proc.args if s.op == ProgramOp.BUFFER and s.attrs["address_space"] == "private" and "values" not in s.attrs]
+
+
+def _work(proc: ProgramNode, op: ProgramOp) -> int:
+  """How many times ``op`` runs, counting each occurrence once per trip of its enclosing loops."""
+  total = 0
+  stack = [(stmt, 1) for stmt in proc.args]
+  while stack:
+    node, trips = stack.pop()
+    if node.op == ProgramOp.FOR:
+      count = trip_count(node.args[0])
+      assert count is not None
+      stack.extend((arg, trips * count) for arg in node.args[1:])
+      continue
+    total += trips * sum(n.op == op for n in walk_program(node))
+  return total
+
+
+def _check(fn: sc.Function, shapes: tuple[tuple[int, ...], ...], reference: Callable[..., np.ndarray]) -> None:
+  rng = np.random.default_rng(69)
+  values = tuple(rng.uniform(-1.0, 1.0, s) for s in shapes)
+  np.testing.assert_allclose(fn(values), reference(*values), rtol=1e-13, atol=1e-14)
+
+
+_MOVEMENT = {
+  "transpose": (((3, 4), (4, 3)), lambda a, b: a.T * b, lambda a, b: a.T * b),
+  "reshape_transpose": (
+    ((2, 3, 4), (4, 6)),
+    lambda a, b: a.transpose((2, 0, 1)).reshape((4, 6)) - b,
+    lambda a, b: a.transpose(2, 0, 1).reshape(4, 6) - b,
+  ),
+  "strided_slice": (((6, 4), (3, 2)), lambda a, b: a[::2, 1:3] * b, lambda a, b: a[::2, 1:3] * b),
+  "contiguous_slice": (((5, 2), (4, 2)), lambda a, b: a[1:] + b, lambda a, b: a[1:] + b),
+  "gather_transpose": (
+    ((3, 4), (5,)),
+    lambda a, b: sc.gather(a.T.reshape((12,)), np.array([0, 5, 7, 11, 2])) * b,
+    lambda a, b: a.T.reshape(12)[[0, 5, 7, 11, 2]] * b,
+  ),
+}
+
+
+@needs_cc
+@pytest.mark.parametrize("case", sorted(_MOVEMENT))
+def test_movement_is_an_index_remap(case: str) -> None:
+  """A transpose, reshape, slice or gather under an elementwise operation is read in place: the
+  lowered procedure holds no temporary, and the values match NumPy."""
+  shapes, body, reference = _MOVEMENT[case]
+  fn = _function(f"remap_{case}", shapes, lambda *xs: body(*xs).sin())
+  assert not _privates(_lowered(fn))
+  _check(fn, shapes, lambda *xs: np.sin(reference(*xs)))
+
+
+@needs_cc
+def test_single_consumer_chain_is_one_loop() -> None:
+  fn = _function("chain", ((16,), (16,)), lambda x, y: ((x.sin() + y) * y).exp())
+  proc = _lowered(fn)
+  assert not _privates(proc)
+  assert sum(s.op == ProgramOp.FOR for s in proc.args) == 1
+  assert _work(proc, ProgramOp.SIN) == 16
+  _check(fn, ((16,), (16,)), lambda x, y: np.exp((np.sin(x) + y) * y))
+
+
+@needs_cc
+def test_value_read_by_two_consumers_is_stored_once() -> None:
+  fn = _function("shared", ((16,),), lambda x: x.sin().exp() + x.sin().cos())
+  proc = _lowered(fn)
+  assert _work(proc, ProgramOp.SIN) == 16
+  assert len(_privates(proc)) == 1
+  _check(fn, ((16,),), lambda x: np.exp(np.sin(x)) + np.cos(np.sin(x)))
+
+
+@needs_cc
+@pytest.mark.parametrize("consumer", ["broadcast", "matmul_operand"])
+def test_value_read_several_times_per_element_is_stored(consumer: str) -> None:
+  """A broadcast operand or a matrix product operand is read more than once per element, so it is
+  computed once into storage rather than at each read."""
+  if consumer == "broadcast":
+    fn = _function("reread_broadcast", ((4,), (3, 4)), lambda x, y: x.sin() * y)
+    reference = lambda x, y: np.sin(x) * y
+  else:
+    fn = _function("reread_matmul", ((4,), (3, 4)), lambda x, y: y @ x.sin())
+    reference = lambda x, y: y @ np.sin(x)
+  proc = _lowered(fn)
+  assert _work(proc, ProgramOp.SIN) == 4
+  _check(fn, ((4,), (3, 4)), reference)
+
+
+@needs_cc
+def test_matmul_operand_read_once_is_inlined() -> None:
+  """A product reads each entry of a matrix operand once when the other operand is a vector."""
+  fn = _function("once_matmul", ((3, 4), (4,)), lambda a, x: a.sin() @ x)
+  proc = _lowered(fn)
+  assert not _privates(proc)
+  assert _work(proc, ProgramOp.SIN) == 12
+  _check(fn, ((3, 4), (4,)), lambda a, x: np.sin(a) @ x)
+
+
+@needs_cc
+@pytest.mark.parametrize("expensive", [False, True])
+def test_a_libm_call_is_not_duplicated_by_two_reads(expensive: bool) -> None:
+  op = (lambda v: v.sin()) if expensive else (lambda v: v * 3.0)
+  fn = _function(f"twice_{expensive}", ((8,),), lambda x: op(x) * op(x))
+  proc = _lowered(fn)
+  if expensive:
+    assert _work(proc, ProgramOp.SIN) == 8
+    assert len(_privates(proc)) == 1
+  else:
+    assert not _privates(proc)
+  _check(fn, ((8,),), (lambda x: np.sin(x) ** 2) if expensive else (lambda x: (3 * x) ** 2))
+
+
+@needs_cc
+def test_reduction_evaluates_its_operand_in_the_reduction_loop() -> None:
+  fn = _function("reduce_fused", ((5, 6),), lambda x: x.sin().sum(axis=1))
+  proc = _lowered(fn)
+  assert not _privates(proc)
+  assert _work(proc, ProgramOp.SIN) == 30
+  _check(fn, ((5, 6),), lambda x: np.sin(x).sum(axis=1))
+
+
+@needs_cc
+def test_broadcast_inputs_of_a_map_keep_their_work_apart() -> None:
+  """In a mapped function, work on the arguments a map broadcasts stays a statement of its own, so
+  ``hoist_invariant`` lifts it out of the map instead of repeating it on each trip."""
+  stage = _function("hoist_apart_stage", ((3,), (9,)), lambda x, w: w.reshape((3, 3)).exp() @ x)
+
+  @sc.function(sc.group(sc.arg("z", 12), sc.arg("w", 9)), outputs=sc.arg("y", 12), name="hoist_apart")
+  def fn(inputs):
+    z, w = inputs
+    return _mapped_call(stage, 4, [(z, 0, 3), (w, 0, 0)])
+
+  procs = lower_function(fn).args
+  hoisted = [pr for pr in procs if "hoist" in pr.attrs["name"] and pr is not procs[-1]]
+  assert any(ProgramOp.EXP in {n.op for n in walk_program(pr)} for pr in hoisted)
+  rng = np.random.default_rng(3)
+  z, w = rng.uniform(-1, 1, 12), rng.uniform(-1, 1, 9)
+  np.testing.assert_allclose(fn((z, w)), (np.exp(w.reshape(3, 3)) @ z.reshape(4, 3).T).T.reshape(-1), rtol=1e-13)
+
+
+@needs_cc
+@pytest.mark.parametrize("overlap", [False, True])
+def test_sum_of_scatters_accumulates_into_one_buffer(overlap: bool) -> None:
+  second = [2, 2, 3, 5] if overlap else [1, 3, 5, 7]
+
+  @sc.function(sc.arg("x", 4), outputs=sc.arg("y"), name=f"scatter_sum_{overlap}")
+  def fn(x):
+    return sc.scatter(x.sin(), [0, 2, 4, 6], 8) + sc.scatter(2 * x, second, 8) + sc.scatter(-x, [6, 7, 0, 2], 8)
+
+  proc = _lowered(fn)
+  zero_fills = [s for s in proc.args if s.op == ProgramOp.FOR and s.args[1].op == ProgramOp.STORE and s.args[1].args[1].op == ProgramOp.CONST_FLOAT]
+  # A repeated index that an earlier scatter also writes ends the left-associated sum, for the order of its terms.
+  assert len(zero_fills) == (3 if overlap else 1)
+  data = np.array([0.3, -1.2, 2.5, 0.7])
+  expected = np.zeros(8)
+  for ids, values in (([0, 2, 4, 6], np.sin(data)), (second, 2 * data), ([6, 7, 0, 2], -data)):
+    term = np.zeros(8)
+    np.add.at(term, ids, values)
+    expected += term
+  np.testing.assert_allclose(fn(data), expected, rtol=1e-14)
+
+
+@needs_cc
+def test_scatter_of_a_mapped_transpose_reads_by_affine_indices() -> None:
+  """A scatter whose source is a transposed mapped result splits its flat loop at the divisors of
+  the transpose's coordinates, so every index is affine and no quotient remains."""
+  stage = _function("delinearize_stage", ((2,),), lambda x: sc.stack([x.sin(), x * x]).reshape((4,)))
+
+  @sc.function(sc.arg("z", 6), outputs=sc.arg("y"), name="delinearize")
+  def fn(z):
+    mapped = _mapped_call(stage, 3, [(z, 0, 2)]).reshape((3, 2, 2)).transpose((1, 0, 2)).reshape((12,))
+    return sc.scatter(mapped, np.arange(12), 12) + sc.scatter(z * 0.5, np.arange(0, 12, 2), 12)
+
+  proc = _lowered(fn)
+  divides = [n for n in walk_program(proc) if n.op in (ProgramOp.DIV, ProgramOp.MOD)]
+  assert not divides
+  z = np.linspace(-1, 1, 6)
+  stages = np.stack([np.concatenate([np.sin(z[2 * i : 2 * i + 2]), z[2 * i : 2 * i + 2] ** 2]) for i in range(3)]).reshape(3, 2, 2)
+  expected = stages.transpose(1, 0, 2).reshape(12)
+  expected[::2] += 0.5 * z
+  np.testing.assert_allclose(fn(z), expected, rtol=1e-14)
+
+
+def _bare_ctx() -> ctx.LowerCtx:
+  lctx = object.__new__(ctx.LowerCtx)
+  lctx.names = NameScope()
+  lctx.statements = []
+  return lctx
+
+
+def _carried(name: str, stop: int) -> ProgramNode:
+  rng = p.range_(name, 0, stop)
+  return ProgramNode(rng.op, rng.args, {**rng.attrs, "carried": True}, dtype=rng.dtype)
+
+
+def test_a_carried_range_is_never_merged_split_or_reordered() -> None:
+  """Lowering never merges, delinearizes, splits into lanes or moves a reduction across a carried
+  range, which runs its trips in order."""
+  out = p.buffer("out", p.dtypes.float64, (8, 4))
+  x = p.buffer("x", p.dtypes.float64, (32,))
+  i, j = p.var("i"), p.var("j")
+  lctx = _bare_ctx()
+  # Contiguous across both loops, which would merge if neither were carried.
+  (loop,) = lctx.nest_body(
+    [_carried("i", 8), p.range_("j", 0, 4)],
+    [p.store(p.view(out, [p.add(p.mul(i, p.const_int(4)), j)]), p.load(p.view(x, [p.add(p.mul(i, p.const_int(4)), j)])))],
+  )
+  assert loop.args[0].attrs.get("carried") and loop.args[1].op == ProgramOp.FOR
+  ranges, _ = lctx.delinearize(
+    [_carried("i", 8)],
+    [p.store(p.view(out, [i]), p.load(p.view(x, [p.add(p.mul(p.div(i, p.const_int(2)), p.const_int(4)), p.mod(i, p.const_int(2)))])))],
+  )
+  assert [r.attrs["name"] for r in ranges] == ["i"]
+  lctx = _bare_ctx()
+  k = p.var("k")
+  emit_reduction(
+    lctx, [_carried("i", 8)], [p.range_("k", 0, 4, kind=RangeKind.REDUCE)], p.view(out, [i]), p.load(p.view(x, [p.add(p.mul(k, p.const_int(8)), i)]))
+  )
+  (stmt,) = lctx.statements
+  assert stmt.args[0].attrs.get("carried") and trip_count(stmt.args[0]) == 8
