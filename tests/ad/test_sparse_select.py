@@ -107,7 +107,26 @@ def test_sparse_select_union_broadcast_and_derivatives(batch, condition_shape):
 
 @pytest.mark.parametrize(
   "movement",
-  ["identity", "transpose", "reshape", "slice", "vector", "gather", "scatter", "stack", "concat", "sum", "matvec", "rmatvec", "matmat", "rmatmat"],
+  [
+    "identity",
+    "transpose",
+    "reshape",
+    "slice",
+    "vector",
+    "gather",
+    "scatter",
+    "stack",
+    "concat",
+    "sum",
+    "sum_rows",
+    "sum_cols",
+    "sum_rows_keepdims",
+    "sum_cols_keepdims",
+    "matvec",
+    "rmatvec",
+    "matmat",
+    "rmatmat",
+  ],
 )
 def test_sparse_select_mask_reaches_singular_partial_through_movement(movement):
   pattern = CanonicalPattern((4, 5), (0, 0, 1, 2, 3, 3), (0, 4, 1, 3, 0, 2))
@@ -127,6 +146,10 @@ def test_sparse_select_mask_reaches_singular_partial_through_movement(movement):
       "stack": lambda: sc.stack((x, 2 * x)),
       "concat": lambda: sc.concat((x, 2 * x), axis=1),
       "sum": lambda: x.sum(),
+      "sum_rows": lambda: x.sum(axis=0),
+      "sum_cols": lambda: x.sum(axis=1),
+      "sum_rows_keepdims": lambda: x.sum(axis=0, keepdims=True),
+      "sum_cols_keepdims": lambda: x.sum(axis=1, keepdims=True),
       "matvec": lambda: x @ sc.const(np.ones(5)),
       "rmatvec": lambda: sc.const(np.ones(4)) @ x,
       "matmat": lambda: x @ sc.const(np.ones((5, 2))),
