@@ -239,7 +239,8 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
   reuse = set(chains)
   for j in node.attrs["in_place"]:
     if j not in reuse:
-      raise LoweringError(f"cannot prove in_place carry {callee.input_names[j]!r} of {callee.name!r}")
+      reason = " because its trajectory is used" if j in traj else ""
+      raise LoweringError(f"cannot prove in_place carry {callee.input_names[j]!r} of {callee.name!r}{reason}")
   if reuse:
     symbol = ctx.program_names.procedure(f"{callee.name}_inplace")
     variant = normalized._replace(name=symbol)

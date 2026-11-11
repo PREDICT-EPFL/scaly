@@ -1352,7 +1352,9 @@ functional; writing into the old buffer is a lowering decision, by three rules, 
    proof applies: every index is evaluated at every step with one batched NumPy interpreter over the
    elementwise table, and the entries read must be disjoint from those later links write.
 
-The batched proof uses integer constants preserved by C lowering and exact integer and boolean operations with checked bounds, replacing unrestricted NumPy evaluation because floating NumPy and C math can choose different indices.
+*Replaced in #36: unrestricted NumPy evaluation becomes exact bounded integer and boolean
+evaluation with C-preserved constants, because floating NumPy and C math can choose different
+indices.*
 
 The entries an op reads are not its derivative pattern. Devrush's proof took `floor` and `ceil`,
 whose derivative is zero, for ops that read nothing, and a body writing `floor` of the entries it

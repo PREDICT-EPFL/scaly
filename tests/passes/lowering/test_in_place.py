@@ -53,6 +53,8 @@ def test_same_runtime_index():
   expected[4] = 7
   np.testing.assert_array_equal(run(np.arange(8.0) + 0.5, np.array(4.0)), expected)
   assert _inout(run)
+  proc = next(proc for proc in lower_function(run).args if proc.attrs.get("inout_carries"))
+  assert not any(node.op == ProgramOp.BUFFER and node.attrs.get("address_space") == "private" for node in walk_program(proc))
 
 
 def test_disjoint_later_read():
@@ -213,7 +215,6 @@ def test_inout_parameter_and_call_contract():
   from scaly.ir.spec import VerifyError
   from scaly.passes.program._common import buffer_refs
   from scaly.passes.program.scalarize import _scalarize_proc, scalarize_program
-  from scaly.passes.program.hoist_invariant import hoist_invariant
 
   carry = p.buffer("carry", sc.dtypes.float64, (4,), intent="inout")
   proc = p.proc("update", [carry], [p.store(p.view(carry, [p.const_int(0)]), p.const_float(2))])
@@ -226,8 +227,6 @@ def test_inout_parameter_and_call_contract():
   refs = buffer_refs(call)
   assert refs.call_inputs == refs.call_outputs == frozenset({"actual"})
   assert scalarize_program(program).args[0] is proc
-  mapped = p.program([proc, p.proc("caller", [actual], [p.for_(p.range_("i", 0, 3), [call])])])
-  assert hoist_invariant(mapped).args == mapped.args
   with pytest.raises(NotImplementedError, match="inout"):
     _scalarize_proc(proc, {"update": proc})
   wrong = ProgramNode(call.op, call.args, {**call.attrs, "inout": ()})
@@ -387,3 +386,97 @@ def test_integer_constant_rounding_cannot_prove_disjointness():
     expected = reference(initial)
   np.testing.assert_array_equal(automatic(initial), expected)
   assert not _inout(automatic)
+
+
+def test_print_alias_reads_the_entering_carry():
+  @sc.function(sc.arg("carry", 3))
+  def step(carry):
+    printed = sc.print("c={}", carry)
+    first = sc.scatter(carry, [0], sc.gather(printed, [2]), combine="set")
+    return sc.scatter(first, [1], sc.gather(printed, [0]), combine="set")
+
+  @sc.function(sc.arg("initial", 3))
+  def automatic(initial):
+    return sc.scan(step, initial, length=1)[0]
+
+  np.testing.assert_array_equal(automatic(np.array([1.0, 2.0, 3.0])), [3, 1, 3])
+  assert not _inout(automatic)
+  with pytest.raises(NotImplementedError, match="carry"):
+    lower_function(_loop(step, 3, length=1))
+
+
+def test_print_alias_stacks_the_entering_carry():
+  @sc.function(sc.arg("carry", 3))
+  def step(carry):
+    printed = sc.print("{}", carry)
+    return sc.scatter(carry, [0], sc.gather(printed, [1]), combine="set"), printed
+
+  @sc.function(sc.arg("initial", 3))
+  def automatic(initial):
+    return sc.scan(step, initial, length=1)
+
+  final, (stacked,) = automatic(np.array([1.0, 2.0, 3.0]))
+  np.testing.assert_array_equal(final, [2, 2, 3])
+  np.testing.assert_array_equal(stacked, [[1, 2, 3]])
+  assert not _inout(automatic)
+
+
+def test_inout_carry_is_not_hoisted():
+  @sc.function(sc.arg("carry", 4), sc.arg("x", 2))
+  def accumulate(carry, x):
+    return sc.scatter(carry, [0, 1], sc.gather(carry, [0, 1]) + x, combine="set")
+
+  @sc.function(sc.arg("initial", 4), sc.arg("xs", (3, 2)))
+  def run(initial, xs):
+    return sc.scan(accumulate, initial, (xs,), length=3, in_place=(0,))[0]
+
+  initial, xs = np.arange(4.0), np.arange(6.0).reshape(3, 2)
+  expected = initial.copy()
+  expected[:2] += xs.sum(axis=0)
+  np.testing.assert_array_equal(run(initial, xs), expected)
+  assert _inout(run)
+
+
+def test_disjointness_keeps_steps_separate():
+  @sc.function(sc.arg("carry", 3), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
+  def step(carry, j):
+    index = j % 2
+    first = sc.scatter(carry, index, sc.gather(carry, index) + 1, combine="set")
+    return sc.scatter(first, [2], sc.gather(carry, 1 - index).reshape((1,)), combine="set")
+
+  fn = _loop(step, 3, length=6, index=True)
+  expected = np.arange(3.0)
+  for j in range(6):
+    old = expected.copy()
+    expected[j % 2] += 1
+    expected[2] = old[1 - j % 2]
+  np.testing.assert_array_equal(fn(np.arange(3.0)), expected)
+  assert _inout(fn)
+
+
+def test_unknown_carry_name_has_context():
+  @sc.function(sc.arg("carry", 3))
+  def step(carry):
+    return carry
+
+  with pytest.raises(ValueError, match="in_place names unknown carry 'missing'"):
+    sc.scan(step, sc.sym("initial", 3), length=1, in_place=("missing",))
+
+
+def test_trajectory_explains_strict_refusal():
+  from scaly.function.concrete import ConcreteFunction
+  from scaly.function.model import as_concrete
+  from scaly.function.sugar import _loop_node
+
+  @sc.function(sc.arg("carry", 3))
+  def step(carry):
+    return sc.scatter(carry, [0], [2.0], combine="set")
+
+  initial = sc.sym("initial", 3)
+  attrs = {"n_carry": 1, "length": 2, "starts": (), "strides": (), "index": False, "reverse": False, "in_place": (0,)}
+  callee = as_concrete(step)
+  final = _loop_node(callee, None, (initial,), attrs, 0)
+  trajectory = _loop_node(callee, None, (initial,), attrs, 2)
+  run = ConcreteFunction._from_exprs("strict_trajectory", [initial], [final, trajectory], ["initial"], ["final", "trajectory"])
+  with pytest.raises(NotImplementedError, match="carry.*trajectory is used"):
+    lower_function(run)

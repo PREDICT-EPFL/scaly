@@ -93,7 +93,7 @@ def _reads(node: Expr, operand: Expr, batches: dict[int, np.ndarray], length: in
   return None
 
 
-_ALIASES = {ExprOp.RESHAPE, ExprOp.STOP_GRADIENT, ExprOp.SLICE, ExprOp.PACK, ExprOp.VALUES}
+_ALIASES = {ExprOp.RESHAPE, ExprOp.STOP_GRADIENT, ExprOp.SLICE, ExprOp.PACK, ExprOp.VALUES, ExprOp.PRINT}
 
 
 def _aliases(nodes: tuple[Expr, ...], versions: set[Expr]) -> set[Expr]:
@@ -119,12 +119,17 @@ def _safe_link(
   writes = _indices(link, batches, length)
   if writes is None:
     return False
+  size = link.args[0].size
+  if size and length > np.iinfo(np.int64).max // size:
+    return False
+  offsets = np.arange(length, dtype=np.int64)[:, None] * size
+  written = (writes + offsets).reshape(-1)
   for node in later:
     for operand in node.args:
       if operand not in versions:
         continue
       reads = _reads(node, operand, batches, length)
-      if reads is None or np.any(np.any(reads[:, :, None] == writes[:, None, :], axis=(1, 2))):
+      if reads is None or np.isin((reads + offsets).reshape(-1), written).any():
         return False
   return True
 

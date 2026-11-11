@@ -455,6 +455,10 @@ def _loop(
   if cond is not None:
     cond = Function._from_instance(cond) if isinstance(cond, ConcreteFunction) else cond
     cond = cond._bind(callee.input_tree.unflatten(callee.input_tree.types), what)
+  carry_names = {name: k for k, name in enumerate(callee.input_names[:n_carry])}
+  for name in in_place:
+    if isinstance(name, str) and name not in carry_names:
+      raise ValueError(f"{what}: in_place names unknown carry {name!r}")
   attrs = {
     "n_carry": n_carry,
     "length": length,
@@ -462,7 +466,7 @@ def _loop(
     "strides": tuple(stride for _, stride in layouts[skip:]),
     "index": bool(index),
     "reverse": bool(reverse),
-    "in_place": tuple(callee.input_names.index(k) if isinstance(k, str) else k for k in in_place),
+    "in_place": tuple(carry_names[k] if isinstance(k, str) else k for k in in_place),
   }
   args = (*leaves, *outers, *trips)
   parts = callee.output_tree.parts if isinstance(callee.output_tree, _G) else (callee.output_tree,)

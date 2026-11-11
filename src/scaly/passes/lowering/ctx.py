@@ -167,7 +167,9 @@ def _lower_to_proc(
 ) -> ProgramNode:
   lowering = fun._effective_lowering
   symbol = symbols[fun] if symbol is None else symbol
-  fun = _normalize_function(fun, residuals=fun in residuals)
+  # A reuse proof names nodes in the already normalized function.
+  if inout_carries is None:
+    fun = _normalize_function(fun, residuals=fun in residuals)
   if observe_expr is not None:
     observe_expr("normalized", fun)
   ctx = LowerCtx(fun, callees, names, symbols, residuals, observe_expr)

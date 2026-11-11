@@ -4985,9 +4985,11 @@ tests/passes/lowering/test_in_place.py::test_alias_created_before_update_is_read
 tests/passes/lowering/test_in_place.py::test_batched_integer_indices_remain_provable
 tests/passes/lowering/test_in_place.py::test_disjoint_later_read
 tests/passes/lowering/test_in_place.py::test_disjoint_runtime_axis_indices
+tests/passes/lowering/test_in_place.py::test_disjointness_keeps_steps_separate
 tests/passes/lowering/test_in_place.py::test_float_index_cannot_prove_disjointness
 tests/passes/lowering/test_in_place.py::test_floor_reads_old_entries
 tests/passes/lowering/test_in_place.py::test_floor_regression_numpy_result
+tests/passes/lowering/test_in_place.py::test_inout_carry_is_not_hoisted
 tests/passes/lowering/test_in_place.py::test_inout_parameter_and_call_contract
 tests/passes/lowering/test_in_place.py::test_inplace_helper_name_does_not_collide_with_user_function
 tests/passes/lowering/test_in_place.py::test_integer_constant_rounding_cannot_prove_disjointness
@@ -4999,6 +5001,8 @@ tests/passes/lowering/test_in_place.py::test_lengths_and_reverse_preserve_input[
 tests/passes/lowering/test_in_place.py::test_lengths_and_reverse_preserve_input[True-1]
 tests/passes/lowering/test_in_place.py::test_lengths_and_reverse_preserve_input[True-5]
 tests/passes/lowering/test_in_place.py::test_overlapping_later_gather_refuses
+tests/passes/lowering/test_in_place.py::test_print_alias_reads_the_entering_carry
+tests/passes/lowering/test_in_place.py::test_print_alias_stacks_the_entering_carry
 tests/passes/lowering/test_in_place.py::test_repeated_same_indices_materialize_before_writing
 tests/passes/lowering/test_in_place.py::test_returning_old_carry_refuses
 tests/passes/lowering/test_in_place.py::test_reused_buffer_drops_old_zero_support
@@ -5006,7 +5010,9 @@ tests/passes/lowering/test_in_place.py::test_same_index_matrix_broadcast
 tests/passes/lowering/test_in_place.py::test_same_runtime_index
 tests/passes/lowering/test_in_place.py::test_scatter_keeps_a_live_private_base
 tests/passes/lowering/test_in_place.py::test_scatter_reuses_a_dead_private_base
+tests/passes/lowering/test_in_place.py::test_trajectory_explains_strict_refusal
 tests/passes/lowering/test_in_place.py::test_unchanged_carry_needs_no_step_copy
+tests/passes/lowering/test_in_place.py::test_unknown_carry_name_has_context
 tests/passes/lowering/test_in_place.py::test_unknown_runtime_index_refuses_disjointness
 tests/passes/lowering/test_in_place.py::test_update_source_alias_refuses[direct]
 tests/passes/lowering/test_in_place.py::test_update_source_alias_refuses[reshape]
