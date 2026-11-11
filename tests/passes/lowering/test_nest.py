@@ -284,3 +284,15 @@ def test_inner_bounds_can_forbid_a_merge() -> None:
   (stmt,) = lctx.statements
   assert not _unbound(stmt)
   assert [int(r.args[1].attrs["value"]) for r in _loops(stmt)[:2]] == [2, 3]
+
+
+def test_single_seed_jvp_keeps_reduction_outermost():
+  @sc.function(sc.arg("a", (3, 4)), sc.arg("b", (4, 5)), sc.arg("da", (3, 4)), outputs=sc.arg("t"))
+  def f(a, b, da):
+    return sc.jvp(a @ b, a, da).block()
+
+  proc = _lowered(f)
+  product = next(
+    nest for nest in _nests(proc) if any(n.op == ProgramOp.FOR and n.args[0].attrs["kind"] == RangeKind.REDUCE for n in walk_program(nest))
+  )
+  assert _loops(product)[0].attrs["kind"] == RangeKind.REDUCE

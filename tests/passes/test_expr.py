@@ -186,3 +186,25 @@ def test_simplify_preserves_conflicting_hint_precedence() -> None:
   annihilated = sc.simplify(x.block() * 0.0)
   assert annihilated.op == sc.ExprOp.CONST
   assert annihilated.lowering == "block"
+
+
+@pytest.mark.parametrize("shape", [(2, 3, 4), (2, 1, 3, 4), (0, 3, 4)])
+@pytest.mark.parametrize("left", [False, True])
+def test_vector_folds(shape, left):
+  from scaly.ir.expr import ExprOp
+  from scaly.passes.expr import simplify
+
+  x = sc.sym("x", shape)
+  axes = (*range(len(shape) - 2), len(shape) - 1, len(shape) - 2)
+  vector = sc.sym("v", (shape[-1] if left else shape[-2],))
+  folded = simplify(vector @ x.transpose(axes) if left else x.transpose(axes) @ vector)
+  if folded.size:
+    assert folded.op == ExprOp.MATMUL
+    assert all(arg.op != ExprOp.TRANSPOSE for arg in folded.args)
+
+  @sc.function(sc.arg("x", shape), outputs=sc.arg("out"))
+  def f(x):
+    return sc.const(np.ones(shape[-2])) @ x if left else x @ sc.const(np.ones(shape[-1]))
+
+  data = np.arange(np.prod(shape), dtype=float).reshape(shape)
+  np.testing.assert_array_equal(f(data), data.sum(-2 if left else -1))

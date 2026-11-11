@@ -303,3 +303,11 @@ def test_solver_call_contract_accepts_descriptor_function() -> None:
 
   descriptor = SolverDescriptor("valid_verify_solver", "test", 2, 0, 0, (("p", (2,)),), (("x", (2,)),), (), 1)
   verify_expr(as_concrete(descriptor_function(descriptor)).outputs)
+
+
+def test_verifier_checks_batched_result_shape():
+  a, b = sc.sym("a", (2, 2, 3)), sc.sym("b", (1, 3, 4))
+  sc.verify_expr(sc.matmul(a, b))
+  malformed = sc.Expr(sc.ExprOp.MATMUL, (a, b), sc.TensorType((2, 2, 5)))
+  with pytest.raises(sc.VerifyError, match="MATMUL shape mismatch"):
+    sc.verify_expr(malformed)

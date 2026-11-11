@@ -1261,10 +1261,11 @@ def _normalize_index(index: Any, shape: tuple[int, ...]) -> tuple[Any, ...]:
 
 
 def matmul(x: Expr, y: Expr) -> Expr:
-  """Multiply arrays with NumPy vector promotion and broadcast batch axes.
+  """Matrix product with NumPy's ``matmul`` rules.
 
-  The last two axes form each matrix product. A vector's added matrix axis is removed
-  from the result. Batched products require dense operands.
+  The last two axes of each operand multiply as matrices and leading axes broadcast.
+  A vector on the left acts as one row and a vector on the right as one column,
+  and that axis is removed from the result.
   """
   if not x.type.dtype.is_floating or not y.type.dtype.is_floating:
     raise TypeError(f"@ takes floating operands, got {x.type.dtype} and {y.type.dtype}; convert with sc.cast")

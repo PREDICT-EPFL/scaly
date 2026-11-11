@@ -35,3 +35,9 @@ All pre-merge checks passed through the detached suite runner: 4,581 passed, 55 
 A previous run began within the source-digest clock slack after an edit, making JIT index checks decline their keys; the isolated JIT index tests passed on retry. The restacked full run passed those checks too.
 
 Next: first push and draft PR, one independent cross-review and its delta check, remove this plan, ready/queue the PR. Keep #65's rules and reduction work untouched. Link the stack with gh stack so #68 can extend it.
+
+## Cross-review fixes
+
+Opus requested two fixes: restore known-zero support for batched products, and count emitted batch loops rather than unit axes when scheduling. Both reproductions failed before the fixes and pass afterwards. Support now broadcasts only known entries and uses a sparse block-diagonal Boolean product; singleton batch dimensions no longer take row loops outside the reduction. Focused checks passed 1,730 tests, with 180 support/forward/schedule tests also passing.
+
+Tests have moved into their owning AD, IR, rewrite and lowering files, sharing shape cases in tests/matmul_cases.py. The guide/API prose was tightened. #407 owns the non-blocking cost of enumerating every output/contraction pair in batched Jacobian masks. Full suite and the one delta check remain before the final consolidated push; remove this plan after the delta check.

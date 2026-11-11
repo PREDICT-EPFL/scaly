@@ -219,8 +219,14 @@ def _broadcast_support(node: Expr, shape: tuple[int, ...], support: Support) -> 
   return _make_support(broadcast_entries(support_indices(support), node.shape, shape)[0])
 
 
-def _pattern(support: frozenset[int] | _SupportSet, shape: tuple[int, int]) -> CanonicalPattern:
-  return CanonicalPattern(shape, tuple(i // shape[1] for i in support), tuple(i % shape[1] for i in support))
+def _pattern(entries: np.ndarray, shape: tuple[int, int], batches: int) -> CanonicalPattern:
+  """Place each batch's support in one diagonal block."""
+  rows, cols = shape
+  return CanonicalPattern(
+    (batches * rows, batches * cols),
+    tuple(map(int, entries // cols)),
+    tuple(map(int, entries // (rows * cols) * cols + entries % cols)),
+  )
 
 
 def _combine(a: Support, b: Support, *, intersection: bool) -> Support:
@@ -355,26 +361,35 @@ def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> 
     return _make_support(np.concatenate(chunks))
   if op == "matmul":
     x, y = node.args
-    if x.shape[-1] == 0:
+    if not node.size or x.shape[-1] == 0:
       return frozenset()
     a, b = support_of(x), support_of(y)
     if a is None and b is None:
       return None
-    if max(len(x.shape), len(y.shape)) > 2:
-      return None
-    xshape = (1, x.shape[0]) if len(x.shape) == 1 else (x.shape[0], x.shape[1])
-    yshape = (y.shape[0], 1) if len(y.shape) == 1 else (y.shape[0], y.shape[1])
-    if a is None or b is None:
-      known = b if a is None else a
-      assert known is not None
-      entries = support_indices(known)
-      rows = np.arange(xshape[0]) if a is None else np.unique(entries // xshape[1])
-      cols = np.unique(entries % yshape[1]) if a is None else np.arange(yshape[1])
-      if len(rows) == xshape[0] and len(cols) == yshape[1]:
+    if a is not None and not a or b is not None and not b:
+      return frozenset()
+    m, k = (1, x.shape[0]) if len(x.shape) == 1 else x.shape[-2:]
+    n = 1 if len(y.shape) == 1 else y.shape[-1]
+    batch = node.shape[: len(node.shape) - (len(x.shape) > 1) - (len(y.shape) > 1)]
+    batches = node.size // (m * n)
+    ae = None if a is None else broadcast_entries(support_indices(a), (*x.shape[:-2], m, k), (*batch, m, k))[0]
+    be = None if b is None else broadcast_entries(support_indices(b), (*y.shape[:-2], k, n), (*batch, k, n))[0]
+    if ae is None or be is None:
+      if ae is not None:
+        rows = np.unique(ae // k)
+        full = len(rows) == batches * m
+        entries = (rows[:, None] * n + np.arange(n)).reshape(-1) if not full else None
+      else:
+        assert be is not None
+        cols = np.unique(be // (k * n) * n + be % n)
+        full = len(cols) == batches * n
+        entries = (cols[:, None] // n * (m * n) + np.arange(m) * n + cols[:, None] % n).reshape(-1) if not full else None
+      if full:
         return frozenset(range(node.size)) if node.size <= 1024 else None
-      return _make_support((rows[:, None] * yshape[1] + cols).reshape(-1))
-    result = _pattern(a, xshape).matmul(_pattern(b, yshape))
-    return _make_support(np.asarray(result.rows, dtype=np.int64) * result.shape[1] + np.asarray(result.cols, dtype=np.int64))
+      assert entries is not None
+      return _make_support(entries)
+    result = _pattern(ae, (m, k), batches).matmul(_pattern(be, (k, n), batches))
+    return _make_support(np.asarray(result.rows, dtype=np.int64) * n + np.asarray(result.cols, dtype=np.int64) % n)
   return None
 
 

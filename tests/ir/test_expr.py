@@ -387,3 +387,18 @@ def test_reduction_rejects_boolean_and_list_axes(axis, method) -> None:
 def test_reduction_keepdims_is_keyword_only(method) -> None:
   with pytest.raises(TypeError):
     getattr(sc.sym("keepdims_keyword", (2, 3)), method)(1, True)
+
+
+def test_sparse_batch_error():
+  from scaly.ir.types import CanonicalPattern, TensorType
+
+  pattern = CanonicalPattern((2, 3), (0, 1), (1, 2))
+  x = sc.Expr(sc.ExprOp.INPUT, type=TensorType((4, 2, 3), pattern=pattern), name="x")
+  with pytest.raises(NotImplementedError, match="#403"):
+    x @ sc.sym("y", (3, 2))
+
+
+@pytest.mark.parametrize("shapes", [((), (2, 3)), ((2, 3), ()), ((2, 3), (4, 2)), ((2, 2, 3), (3, 3, 2))])
+def test_invalid_shapes(shapes):
+  with pytest.raises(ValueError):
+    sc.matmul(sc.sym("a", shapes[0]), sc.sym("b", shapes[1]))
