@@ -11,9 +11,9 @@ roadmap, #395 and #321. Keep Linux/macOS rules, bytecode checking, clock slack,
 and the exemption for Python creating `__pycache__` unchanged.
 
 - [x] Read the brief, skills, run rules, project context and current implementation.
-- [ ] Enable Windows regression tests for restored modification times and directory swaps.
-- [ ] Read NTFS change times through ctypes only on Windows, using metadata handles.
-- [ ] Prove Linux behaviour and that warm source lookups do not read file contents.
+- [x] Enable Windows regression tests for restored modification times and directory swaps.
+- [x] Read NTFS change times through ctypes only on Windows, using metadata handles.
+- [x] Prove Linux behaviour and that warm source lookups do not read file contents.
 - [ ] Run all pre-merge checks through the detached shared suite runner.
 - [ ] Commit, push once, open and link a draft pull request, obtain one correctness review.
 - [ ] Settle review delegates, address findings, and confirm only any fixes.
@@ -24,3 +24,10 @@ and the exemption for Python creating `__pycache__` unchanged.
 
 There is no usable Windows machine. Do not bypass thebeauty's SSH host-key failure.
 No direct main push, tags, releases or deployment workflows.
+
+Local evidence: 49 focused digest and index tests passed. Windows and Python 3.14
+type checks passed. Replacing change time with modification time makes all three
+change-time regressions fail. Clearing the content memo makes the warm-read test
+fail. Both perturbations were process-local and are absent from the files.
+Full checks are detached under `/tmp/scaly-395/pre-merge.log`, with their exit
+code written to `/tmp/scaly-395/pre-merge.exit`.

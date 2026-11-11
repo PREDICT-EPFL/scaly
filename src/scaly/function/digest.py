@@ -201,6 +201,60 @@ _READ_WHOLE = 1 << 20
 _CONTENTS: dict[tuple[str, int, int, int], bytes] = {}
 
 
+if sys.platform == "win32":
+  import ctypes
+  from ctypes import wintypes
+
+  class _FileBasicInfo(ctypes.Structure):
+    _fields_ = [
+      ("CreationTime", ctypes.c_int64),
+      ("LastAccessTime", ctypes.c_int64),
+      ("LastWriteTime", ctypes.c_int64),
+      ("ChangeTime", ctypes.c_int64),
+      ("FileAttributes", wintypes.DWORD),
+    ]
+
+  _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+  _create_file = _kernel32.CreateFileW
+  _create_file.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+  _create_file.restype = wintypes.HANDLE
+  _basic_info = _kernel32.GetFileInformationByHandleEx
+  _basic_info.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.POINTER(_FileBasicInfo), wintypes.DWORD]
+  _basic_info.restype = wintypes.BOOL
+  _close_handle = _kernel32.CloseHandle
+  _close_handle.argtypes = [wintypes.HANDLE]
+  _close_handle.restype = wintypes.BOOL
+
+
+def _source_stat(path: str, stat: os.stat_result, *, follow_symlinks: bool = True) -> os.stat_result:
+  if sys.platform != "win32":
+    return stat
+  # FILE_READ_ATTRIBUTES, all sharing modes, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS
+  # (directories too), and FILE_FLAG_OPEN_REPARSE_POINT when checking a link itself.
+  flags = 0x02000000 | (0 if follow_symlinks else 0x00200000)
+  handle = _create_file(path, 0x80, 7, None, 3, flags, None)
+  if handle == wintypes.HANDLE(-1).value:
+    raise ctypes.WinError(ctypes.get_last_error())
+  try:
+    info = _FileBasicInfo()
+    if not _basic_info(handle, 0, ctypes.byref(info), ctypes.sizeof(info)):  # FileBasicInfo
+      raise ctypes.WinError(ctypes.get_last_error())
+    changed = (info.ChangeTime - 116444736000000000) * 100  # 100 ns since 1601 to Unix nanoseconds
+    return os.stat_result(
+      stat,
+      {
+        "st_atime": stat.st_atime,
+        "st_atime_ns": stat.st_atime_ns,
+        "st_mtime": stat.st_mtime,
+        "st_mtime_ns": stat.st_mtime_ns,
+        "st_ctime": changed / 1e9,
+        "st_ctime_ns": changed,
+      },
+    )
+  finally:
+    _close_handle(handle)
+
+
 @functools.cache
 def _packages() -> tuple[tuple[str, tuple[str, ...]], ...]:
   """Scaly and every installed solver plugin, the packages whose code renders a Function, with their directories."""
@@ -239,17 +293,16 @@ def _scan(root: str, digest: Any, mark: int) -> bool:
     # change time alone moves when it is renamed into place. Python creating `__pycache__` for a
     # module imported for the first time moves both times to one instant, no later than the cache's
     # own: that change is not a swap. A file deleted before bytecode is next written there passes.
-    # Windows keeps a creation time in place of a change time, and a rename there leaves no trace.
-    if os.path.islink(directory) and moved(os.lstat(directory)):
+    if os.path.islink(directory) and moved(_source_stat(directory, os.lstat(directory), follow_symlinks=False)):
       return True
-    stat = os.stat(directory)
+    stat = _source_stat(directory, os.stat(directory))
     if not moved(stat):
       return False
     try:
       cache = os.stat(os.path.join(directory, "__pycache__"))
     except FileNotFoundError:
       return True
-    renamed = sys.platform != "win32" and stat.st_ctime_ns != stat.st_mtime_ns
+    renamed = stat.st_ctime_ns != stat.st_mtime_ns
     return renamed or cache.st_mtime_ns < stat.st_mtime_ns
 
   try:
@@ -263,12 +316,12 @@ def _scan(root: str, digest: Any, mark: int) -> bool:
         for entry in entries:
           if entry.name.startswith(".") or entry.name == "__pycache__":
             continue
-          if entry.is_symlink() and moved(entry.stat(follow_symlinks=False)):
+          if entry.is_symlink() and moved(_source_stat(entry.path, entry.stat(follow_symlinks=False), follow_symlinks=False)):
             return False  # a link pointed elsewhere
           if entry.is_dir():
             stack.append((entry.path, f"{prefix}{entry.name}/"))
           else:
-            files.append((prefix + entry.name, entry.path, entry.stat()))
+            files.append((prefix + entry.name, entry.path, _source_stat(entry.path, entry.stat())))
     for name, path, stat in sorted(files):
       if moved(stat):
         return False

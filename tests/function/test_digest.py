@@ -27,9 +27,6 @@ from scaly.function.model import as_concrete
 from scaly.ir.expr import Expr, ExprOp
 from scaly.ir.types import CanonicalPattern, DType, dtypes
 
-# Windows keeps a file's creation time where other systems keep the time of its last change.
-no_change_time = pytest.mark.skipif(sys.platform == "win32", reason="Windows has no change time in os.stat")
-
 
 def _fn(scale: float = 2.0, name: str = "index_fn") -> ConcreteFunction:
   @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name=name)
@@ -177,7 +174,6 @@ def test_the_source_digest_reads_the_files_contents(package: Path, monkeypatch: 
   assert digest.source_digest() not in (None, first)
 
 
-@no_change_time
 def test_a_source_replaced_with_its_modification_time_kept_gives_no_digest(package: Path) -> None:
   assert digest.source_digest() is not None
   module = package / "module.py"
@@ -193,7 +189,6 @@ def test_a_source_edited_just_before_scaly_loaded_gives_no_digest(package: Path,
   assert digest.source_digest() is None
 
 
-@no_change_time
 def test_stale_bytecode_python_would_load_gives_no_digest(package: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   module = package / "module.py"
   py_compile.compile(str(module), invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
@@ -251,7 +246,6 @@ def test_a_link_pointed_elsewhere_under_a_live_process_gives_no_digest(package: 
   assert digest.source_digest() is None
 
 
-@no_change_time
 def test_a_directory_swapped_under_a_live_process_gives_no_digest(package: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   other = tmp_path / "other"
   other.mkdir()
@@ -264,6 +258,19 @@ def test_a_directory_swapped_under_a_live_process_gives_no_digest(package: Path,
   _bytecode_written(package)
   _bytecode_written(package / "sub")
   assert digest.source_digest() is None
+
+
+def test_a_warm_source_digest_reads_only_metadata(package: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  py_compile.compile(str(package / "module.py"), invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+  _loaded(monkeypatch)
+  first = digest.source_digest()
+  assert first is not None
+
+  def no_read(*args: Any, **kwargs: Any) -> Any:
+    pytest.fail("a warm source lookup read a file")
+
+  monkeypatch.setattr("builtins.open", no_read)
+  assert digest.source_digest() == first
 
 
 class _Flag(enum.IntFlag):
