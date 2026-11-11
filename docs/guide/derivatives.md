@@ -438,6 +438,11 @@ or mapped function. A solve independent of the differentiated input does not
 block its derivative. See [solver sensitivities](solvers.md#nesting-a-solver-in-a-graph)
 for the limits of dependency analysis.
 
+Forward and reverse mode can differ when a selected zero reaches a singular
+operation. For example, `sqrt(maximum(x, 0))` at `x = -1` gives a NaN tangent
+and a zero gradient. Placing the selection around `sqrt`, as in
+`sc.where(x > 0, x.sqrt(), 0)`, guards its singular derivative in both modes.
+
 Derivatives of `reduce_min` and `reduce_max` on sparse inputs currently
 materialize masks and tie counts over the full logical shape. Their temporary
 storage can therefore grow with the dense size, even for diagonal inputs.
