@@ -121,8 +121,9 @@ n    d   stored G  stored result  multiply-add pairs  float operations  table en
 128  32  8192      8064           270336              540672            40832          214514        8192             0.074
 ```
 
-Per-entry seeds, sparse derivative leaves, sparse selection and traversal fusion remain #225,
-#48, #359 and #69. Publishing the sparse names remains #307.
+Per-entry seeds, sparse derivative leaves and traversal fusion remain #225, #48 and #69.
+Sparse SELECT landed separately in #406; its interaction with sampled adjoints is tracked in
+#420. Publishing the sparse names remains #307.
 
 The repaired reverse cases use the same scalar C recipe and compile command above. The Gram
 case has 2n rows and n columns, with two local entries and one shared dense column per row.
@@ -168,3 +169,21 @@ along with 268 focused product, reduction, SELECT, call-support and snapshot cas
 match that main baseline. The second full hook exited zero with 4,681 passed and 56 solver
 skips, then smoke, docs and the private-name check passed. Collection matches all 4,737 IDs.
 A pre-push merge check against the newer main succeeded, so no further rebase was needed.
+
+The merge queue accepted #369 at 05:46 UTC, then removed it at 06:14 after main advanced.
+Replaying onto `6b36854f` keeps #355's external-function dispatch and #406's sparse SELECT
+rules. The conflicts combine lowering imports and keep the independent SELECT and sampled
+MATMUL branches in `stored_pattern`. The range diff shows no change to the sampled kernels.
+All three type variants and both Ruff checks pass, with 226 focused sparse-product, SELECT,
+external-function, verifier and snapshot cases. Dense C snapshots still match main.
+The detached full hook exited zero: 4,775 passed, 56 solver skips, then benchmark smoke,
+documentation and private-name checks passed. Collection matches all 4,831 baseline IDs.
+A fresh merge check against origin/main is clean. The requested short Opus rebase check could
+not start because the Claude API returned a rate-limit error; no new reviewer approval is
+claimed. The prior feature, sampled-fix and first-rebase approvals remain recorded above.
+
+The integration probe found that SELECT masks do not survive a two-sparse product's sampled
+adjoint: an inactive branch through `sqrt(0)` gives NaN gradients. Sparse SELECT was outside
+#47's scope. Follow-up #420 contains the reproduction, requires correct per-coordinate masks
+and guarded coefficients, and has `source:agent`, `kind:bug` and `area:compiler`. It depends on
+#47 and is recorded on the section issue. Main's mixed-product mask rules are preserved.
