@@ -103,7 +103,7 @@ def _sparse_namespace(name: str, sp: SparsityPattern, names: NameScope) -> list[
 
 
 def render_cpp_header(
-  fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, *, casadi: bool, sparsities: tuple[SparsityPattern | None, ...]
+  fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, frame_bytes: int, *, casadi: bool, sparsities: tuple[SparsityPattern | None, ...]
 ) -> str:
   """The ``.hpp`` for ``fun``. The kernel symbols are declared ``extern "C"`` inside the function's
   namespace, since a namespace and a function cannot share the global name. C linkage keeps the
@@ -136,6 +136,7 @@ def render_cpp_header(
     f"#define {symbol}_SZ_RES {len(fun.outputs)}",
     f"#define {symbol}_SZ_IW 0",
     f"#define {symbol}_SZ_W {sz_w}",
+    f"#define {symbol}_FRAME_BYTES {frame_bytes}",
     "",
     BUFFER_TEMPLATE,
     *(["", COLUMN_MAJOR_BUFFER_TEMPLATE] if column_major else []),
@@ -188,6 +189,7 @@ def render_cpp_header(
     ),
     header=True,
   )
+  names.occupied.add(f"{symbol}_FRAME_BYTES")
   for name, sp in zip(fun.output_names, sparsities, strict=True):
     if sp is not None:
       lines += ["", *_sparse_namespace(name, sp, names)]

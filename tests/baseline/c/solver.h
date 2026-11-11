@@ -1,6 +1,6 @@
 /* Scaly build recipe
  * CPU baseline: generic
- * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False, frame_budget=65536
  * Math library: scalar libm
  * gcc -O3 -fno-math-errno -c qp_host.c
  * clang -O3 -fno-math-errno -c qp_host.c
@@ -83,6 +83,7 @@ typedef struct { const char* name; int kind; int64_t integer; double number; con
 #define qp_host_SZ_RES 1
 #define qp_host_SZ_IW 0
 #define qp_host_SZ_W 0
+#define qp_host_FRAME_BYTES 4144
 
 // The pointer ABI for qp_host.
 #ifdef __cplusplus

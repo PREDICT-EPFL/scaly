@@ -48,7 +48,12 @@ SHIPPED_PIPELINE = PASS_PIPELINE
 
 
 def optimize_program(
-  prog: ProgramNode, observe: ProgramObserver | None = None, *, reciprocal: bool = False, lanes: Literal["auto"] | Literal[1, 2, 4, 8] = 1
+  prog: ProgramNode,
+  observe: ProgramObserver | None = None,
+  *,
+  reciprocal: bool = False,
+  lanes: Literal["auto"] | Literal[1, 2, 4, 8] = 1,
+  frame_budget: int = 65536,
 ) -> ProgramNode:
   """Run the Program IR optimization pipeline in its declared order."""
   verify_program(prog)
@@ -65,7 +70,9 @@ def optimize_program(
         prog = widen_ranges(prog, lanes=lanes)
         if observe is not None:
           observe("pass:widen_ranges", prog)
-    prog = fn(prog)
+      prog = pack_workspace(prog, frame_budget=frame_budget)
+    else:
+      prog = fn(prog)
     if observe is not None:
       observe(f"pass:{name}", prog)
   return prog

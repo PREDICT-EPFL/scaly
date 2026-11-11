@@ -424,8 +424,8 @@ a greedy interval assignment like linear-scan register allocation[^linscan].
 A view such as a slice keeps the buffer it points into live until the view's
 last use.
 
-A slot of 1024 or more elements moves to the caller's workspace `w`, and
-smaller ones stay local arrays:
+With the default frame budget, these slots stay local arrays. With
+`frame_budget=8192`, the largest slot moves to the caller's workspace `w`:
 
 ```c
 double* s0 = w + 0;
@@ -433,8 +433,10 @@ double s1[1];
 double s2[1];
 ```
 
-The header reports `#define f_SZ_W 1600`, where 3200 would be needed without
-sharing. A procedure's requirement is its own slots plus the largest
+For that budget, the header reports `#define f_SZ_W 1600`, where 3200 would be needed without
+sharing. It also reports `#define f_FRAME_BYTES 4112`, the estimated stack frame in bytes. The estimate
+counts local buffers, repeated inlined callees and a fixed scalar-spill allowance.
+A procedure's workspace requirement is its own slots plus the largest
 requirement among the procedures it calls, which reuse the space after the
 caller's own slots. [Working memory](../guide/codegen.md#working-memory) in the
 guide shows how to read the number.

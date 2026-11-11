@@ -1,6 +1,6 @@
 /* Scaly build recipe
  * CPU baseline: generic
- * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False, frame_budget=65536
  * Math library: scalar libm
  * gcc -O3 -fno-math-errno -c wide.c
  * clang -O3 -fno-math-errno -c wide.c
@@ -40,6 +40,7 @@
 #define wide_SZ_RES 2
 #define wide_SZ_IW 0
 #define wide_SZ_W 0
+#define wide_FRAME_BYTES 5056
 
 // The pointer ABI for wide.
 #ifdef __cplusplus

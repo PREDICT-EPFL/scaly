@@ -1,6 +1,6 @@
 /* Scaly build recipe
  * CPU baseline: generic
- * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False, frame_budget=65536
  * Math library: scalar libm
  * gcc -O3 -fno-math-errno -c workspace.c
  * clang -O3 -fno-math-errno -c workspace.c
@@ -59,13 +59,13 @@ extern "C" {
 static inline __attribute__((always_inline)) void lanes_1(long long i, long long n, double* s0, const double* x) {
   lanes_8_8_8_8_vec l;
   if (n == SCALY_WIDTH_8_8_8_8) l = *(const lanes_8_8_8_8_vec_mem*)(&x[i]);
-  else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = x[((i + k) < 2047 ? (i + k) : 2047)];
+  else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = x[((i + k) < 16383 ? (i + k) : 16383)];
   lanes_8_8_8_8_vec_st(&s0[(i) + 0], lanes_8_8_8_8_vec_sin(l), n);
 }
 static inline __attribute__((always_inline)) void lanes_2(long long i, long long n, double* acc_sum, const double* s0) {
   lanes_8_8_8_8_vec l;
   if (n == SCALY_WIDTH_8_8_8_8) l = *(const lanes_8_8_8_8_vec_mem*)(&s0[i]);
-  else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = s0[((i + k) < 2047 ? (i + k) : 2047)];
+  else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = s0[((i + k) < 16383 ? (i + k) : 16383)];
   for (long long k = 0; k < n; ++k) acc_sum[0] = (acc_sum[0] + l[k]);
 }
 int workspace(const double** arg, double** res, int* iw, double* w, int mem) {
@@ -77,22 +77,22 @@ int workspace(const double** arg, double** res, int* iw, double* w, int mem) {
   if (!res[0]) return SCALY_ERR_NULL_RESULT;
   if (!res[1]) return SCALY_ERR_NULL_RESULT;
   double* s0 = w + 0;
-  for (long long i_t0_start = 0; i_t0_start <= 2048 - SCALY_WIDTH_8_8_8_8; i_t0_start += SCALY_WIDTH_8_8_8_8) {
+  for (long long i_t0_start = 0; i_t0_start <= 16384 - SCALY_WIDTH_8_8_8_8; i_t0_start += SCALY_WIDTH_8_8_8_8) {
     lanes_1(i_t0_start, SCALY_WIDTH_8_8_8_8, s0, arg[0]);
   }
-#if (2048 % SCALY_WIDTH_8_8_8_8) != 0
-  lanes_1(2048 - 2048 % SCALY_WIDTH_8_8_8_8, 2048 % SCALY_WIDTH_8_8_8_8, s0, arg[0]);
+#if (16384 % SCALY_WIDTH_8_8_8_8) != 0
+  lanes_1(16384 - 16384 % SCALY_WIDTH_8_8_8_8, 16384 % SCALY_WIDTH_8_8_8_8, s0, arg[0]);
 #endif
   double acc_sum = 0.0;
-  for (long long i_sum_start = 0; i_sum_start <= 2048 - SCALY_WIDTH_8_8_8_8; i_sum_start += SCALY_WIDTH_8_8_8_8) {
+  for (long long i_sum_start = 0; i_sum_start <= 16384 - SCALY_WIDTH_8_8_8_8; i_sum_start += SCALY_WIDTH_8_8_8_8) {
     lanes_2(i_sum_start, SCALY_WIDTH_8_8_8_8, &acc_sum, s0);
   }
-#if (2048 % SCALY_WIDTH_8_8_8_8) != 0
-  lanes_2(2048 - 2048 % SCALY_WIDTH_8_8_8_8, 2048 % SCALY_WIDTH_8_8_8_8, &acc_sum, s0);
+#if (16384 % SCALY_WIDTH_8_8_8_8) != 0
+  lanes_2(16384 - 16384 % SCALY_WIDTH_8_8_8_8, 16384 % SCALY_WIDTH_8_8_8_8, &acc_sum, s0);
 #endif
   res[0][0] = acc_sum;
   double acc_sumsqr = 0.0;
-  for (long long i_sumsqr = 0; i_sumsqr < 2048; ++i_sumsqr) {
+  for (long long i_sumsqr = 0; i_sumsqr < 16384; ++i_sumsqr) {
     double v0 = s0[i_sumsqr];
     acc_sumsqr = (acc_sumsqr + (v0 * v0));
   }

@@ -301,7 +301,13 @@ def _host_recipe(compiler: tuple[str, ...]) -> BuildRecipe:
 def _render_native(fun: ConcreteFunction, compiler: tuple[str, ...]) -> CModule:
   recipe = _host_recipe(compiler)
   return render_c_module(
-    fun, cpu=recipe.cpu, lanes=recipe.lanes, dialect=recipe.dialect, vector_libm=recipe.vector_libm, reciprocal=recipe.reciprocal
+    fun,
+    cpu=recipe.cpu,
+    lanes=recipe.lanes,
+    dialect=recipe.dialect,
+    vector_libm=recipe.vector_libm,
+    reciprocal=recipe.reciprocal,
+    frame_budget=recipe.frame_budget,
   )
 
 

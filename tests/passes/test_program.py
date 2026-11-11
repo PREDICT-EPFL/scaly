@@ -26,7 +26,7 @@ from scaly.passes.program._common import prune_procedures
 from scaly.utils.names import NameScope
 from scaly.ir import program as p
 from scaly.ir.program_spec import verify_program
-from scaly.passes.program.pack_workspace import pack_workspace, WORKSPACE_SPILL_THRESHOLD
+from scaly.passes.program.pack_workspace import pack_workspace
 from scaly.passes.program.unroll_unit_loops import unroll_unit_loops
 from scaly.ir.program import (
   ProgramNode,
@@ -65,8 +65,8 @@ def _classify(body: list) -> tuple[list, list, list]:
   return compute, aliases, loops
 
 
-def _sz_w(fn: sc.Function) -> int:
-  return int(main_proc(lower_function(fn)).attrs.get("sz_w", 0))
+def _sz_w(fn: sc.Function, **options) -> int:
+  return int(main_proc(lower_function(fn, **options)).attrs.get("sz_w", 0))
 
 
 # --- fusion ---------------------------------------------------------------------
@@ -385,8 +385,7 @@ def test_no_spill_when_temps_small() -> None:
 
 
 def test_packing_reuses_slots_and_spills() -> None:
-  """Two disjoint-lifetime 1600-element matmul temps share ONE spilled slot, so sz_w is 1600
-  (not 3200) — proving both lifetime slot-reuse and the >= 1024 spill-to-w[] threshold."""
+  """Disjoint products share one slot, which spills under a small frame budget."""
 
   @sc.function(sc.group(sc.arg("A", (40, 40)), sc.arg("B", (40, 40))), outputs=sc.arg("out0"), name="spill")
   def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
@@ -395,8 +394,8 @@ def test_packing_reuses_slots_and_spills() -> None:
     d = (B @ A).sum()  # D (1600) is born after C is dead -> reuses C's slot
     return c + d
 
-  assert 1600 >= WORKSPACE_SPILL_THRESHOLD
-  assert _sz_w(f) == 1600
+  assert _sz_w(f) == 0
+  assert _sz_w(f, frame_budget=8192) == 1600
 
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler for the numeric workspace collision check")
@@ -503,16 +502,16 @@ def test_spilled_function_matches_numpy(isolated_cache) -> None:
   """End-to-end: a function whose temporaries spill to w[] still computes correctly (the JIT
   allocates w from the rendered sz_w and passes it through)."""
 
-  @sc.function(sc.group(sc.arg("A", (40, 40)), sc.arg("B", (40, 40))), outputs=sc.arg("out0"), name="spill_num")
+  @sc.function(sc.group(sc.arg("A", (100, 100)), sc.arg("B", (100, 100))), outputs=sc.arg("out0"), name="spill_num")
   def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     A, B = inputs
     return ((A @ B) + (B @ A)).sum()
 
-  assert _sz_w(f) >= WORKSPACE_SPILL_THRESHOLD  # the (40,40) matmul temp spills
+  assert _sz_w(f) >= 10000
   render_c_source(f, lanes=1)  # loud coverage gate
   f.recompile()
   rng = np.random.default_rng(0)
-  a, b = rng.standard_normal((40, 40)), rng.standard_normal((40, 40))
+  a, b = rng.standard_normal((100, 100)), rng.standard_normal((100, 100))
   got = f((a, b))
   ref = ((a @ b) + (b @ a)).sum()
   np.testing.assert_allclose(np.asarray(got).reshape(-1), np.asarray(ref).reshape(-1), rtol=1e-9, atol=1e-10)
