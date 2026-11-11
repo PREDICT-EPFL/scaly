@@ -171,23 +171,35 @@ def _lower_sampled_product(ctx: LowerCtx, node: Expr) -> None:
 
 
 def _guard_sampled_term(ctx: LowerCtx, operand: Expr, slot: ProgramNode, term: ProgramNode) -> ProgramNode:
-  mask = _mask_of(operand)
-  if mask is None:
-    return term
   entries = stored_indices(operand.type)
   logical = entries[np.argsort(ctx.physical_slots(operand, np.arange(len(entries))))]
   # Guard the multiply itself: selecting a zero operand still evaluates 0 * inf.
-  while mask is not None:
-    condition, inner = mask
-    reads = stored_slots(condition, project_entries(logical, condition.shape, operand.shape))
-    reads = ctx.physical_slots(condition, reads)
-    index = ctx.index_at(reads, slot, shared=True)
-    keep = p.load(p.view(ctx.raw_buf_of(condition), [index]))
-    if np.any(reads < 0):
-      present = ProgramNode(ProgramOp.LE, (p.const_int(0), index), dtype=dtypes.bool_)
-      keep = ProgramNode(ProgramOp.SELECT, (present, keep, constant(False, dtypes.bool_)), dtype=dtypes.bool_)
-    term = ProgramNode(ProgramOp.SELECT, (keep, term, p.const_float(0, dtype=operand.type.dtype)), dtype=operand.type.dtype)
-    mask = _mask_of(inner)
+  current = operand
+  while True:
+    if current.op == ExprOp.PACK:
+      logical = np.searchsorted(stored_indices(current.type), logical)
+    elif current.op == ExprOp.VALUES:
+      logical = stored_indices(current.args[0].type)[logical]
+    elif current.op == ExprOp.SLICE:
+      logical = slice_indices(current.args[0].shape, current.attrs["index"], logical)
+    elif current.op == ExprOp.TRANSPOSE:
+      logical = transpose_entries(logical, current.shape, tuple(map(int, np.argsort(current.attrs["axes"]))))
+    elif current.op != ExprOp.RESHAPE:
+      mask = _mask_of(current)
+      if mask is None:
+        break
+      condition, inner = mask
+      reads = stored_slots(condition, project_entries(logical, condition.shape, current.shape))
+      reads = ctx.physical_slots(condition, reads)
+      index = ctx.index_at(reads, slot, shared=True)
+      keep = p.load(p.view(ctx.raw_buf_of(condition), [index]))
+      if np.any(reads < 0):
+        present = ProgramNode(ProgramOp.LE, (p.const_int(0), index), dtype=dtypes.bool_)
+        keep = ProgramNode(ProgramOp.SELECT, (present, keep, constant(False, dtypes.bool_)), dtype=dtypes.bool_)
+      term = ProgramNode(ProgramOp.SELECT, (keep, term, p.const_float(0, dtype=operand.type.dtype)), dtype=operand.type.dtype)
+      current = inner
+      continue
+    current = current.args[0]
   return term
 
 

@@ -68,7 +68,8 @@ def test_masked_sparse_product_singular_partials(left, coordinate_mask, lowering
 
 @pytest.mark.parametrize("left", [False, True])
 @pytest.mark.parametrize("lowering", ["scalar", "block"])
-def test_masked_sparse_product_guards_infinite_coefficients_per_term(left, lowering):
+@pytest.mark.parametrize("nonlinear", [False, True])
+def test_masked_sparse_product_guards_infinite_coefficients_per_term(left, lowering, nonlinear):
   pattern = CanonicalPattern((2, 2), (0, 0, 1, 1), (0, 1, 0, 1))
   coefficients = np.array([[-2.0, 2.0, np.inf], [3.0, -3.0, -np.inf]])
   if not left:
@@ -76,12 +77,13 @@ def test_masked_sparse_product_guards_infinite_coefficients_per_term(left, lower
   coefficient_pattern = CanonicalPattern(coefficients.shape, *map(tuple, np.nonzero(coefficients)))
   output = pattern.matmul(coefficient_pattern) if left else coefficient_pattern.matmul(pattern)
 
-  @sc.function(sc.arg("v", 4), sc.arg("c", output.nnz), name=f"masked_product_inf_{left}_{lowering}")
+  @sc.function(sc.arg("v", 4), sc.arg("c", output.nnz), name=f"masked_product_inf_{left}_{lowering}_{nonlinear}")
   def loss(v, c):
     x = sc.pack(v, pattern).sqrt()
     b = sc.const(sparse.coo_array(coefficients))
     product = x @ b if left else b @ x
-    selected = sc.where(sc.pack(c > 0, output), product, sc.pack(sc.const(np.zeros(output.nnz)), output))
+    branch = product.sin() if nonlinear else product
+    selected = sc.where(sc.pack(c > 0, output), branch, sc.pack(sc.const(np.zeros(output.nnz)), output))
     weights = np.tile([1.0, 2.0, 1.0], (2, 1))
     return (sc.values(selected) * sc.const((weights if left else weights.T).ravel())).sum().with_lowering(lowering)
 
@@ -89,15 +91,34 @@ def test_masked_sparse_product_guards_infinite_coefficients_per_term(left, lower
   if not left:
     mask = mask.T
   point = np.array([0.4, 0.7, 1.1, 1.6])
-  expected = np.tile([-2.0 + 2 * 2, 3.0 - 2 * 3], (2, 1))
-  if not left:
-    expected = expected.T
+
+  def reference_grad(v):
+    x = np.sqrt(v.reshape(2, 2))
+    active_coefficients = coefficients[:, :2] if left else coefficients[:2, :]
+    product = x @ active_coefficients if left else active_coefficients @ x
+    weights = np.tile([1.0, 2.0], (2, 1))
+    weights = weights if left else weights.T
+    partial = weights * np.cos(product) if nonlinear else weights
+    factors = partial @ active_coefficients.T if left else active_coefficients.T @ partial
+    return factors.ravel() * 0.5 / np.sqrt(v)
+
   grad = sc.gradient(loss, wrt="v")
-  np.testing.assert_allclose(grad(point, mask.ravel()), expected.ravel() * 0.5 / np.sqrt(point), atol=1e-12)
+  np.testing.assert_allclose(grad(point, mask.ravel()), reference_grad(point), atol=1e-12)
   np.testing.assert_array_equal(grad(np.zeros(4), -np.ones(output.nnz)), np.zeros(4))
   hess = sc.hessian(loss, wrt="v")
-  np.testing.assert_allclose(hess(point, mask.ravel()), np.diag(-0.25 * expected.ravel() / point**1.5), atol=1e-12)
+  expected_hess = finite_difference(reference_grad, point)
+  np.testing.assert_allclose(hess(point, mask.ravel()), expected_hess, atol=1e-8)
   np.testing.assert_array_equal(hess(np.zeros(4), -np.ones(output.nnz)), np.zeros((4, 4)))
+
+  concrete = as_concrete(loss)
+  first = vjp(concrete.outputs, (concrete.inputs[0],), (sc.const(1.0),))[0]
+  second = vjp((first.sum(),), (concrete.inputs[0],), (sc.const(1.0),))[0]
+
+  @sc.function(sc.arg("v", 4), sc.arg("c", output.nnz), name=f"masked_product_inf_twice_{left}_{lowering}_{nonlinear}")
+  def twice(v, c):
+    return substitute(second, dict(zip(concrete.inputs, (v, c), strict=True)))
+
+  np.testing.assert_allclose(twice(point, mask.ravel()), expected_hess.sum(axis=0), atol=1e-8)
 
 
 @pytest.mark.parametrize("left", [False, True])

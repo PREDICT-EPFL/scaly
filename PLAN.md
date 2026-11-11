@@ -12,8 +12,11 @@ fix the design. Masks through called Functions belong to #339.
 - [x] Preserve mask activity independently of coefficients and guard individual
   inactive products, keeping sampled patterns and bounded workspace.
 - [x] Drop the mask deliberately and record failing gates. Restore the fix.
-  All 14 masked numerical gates fail without adjoint activity propagation.
+  All 18 masked numerical gates fail without adjoint activity propagation.
   Four unmasked value/gradient/Hessian renderings and headers match the base byte for byte.
+  The nonlinear infinity regression covers seed-axis views in forward-over-reverse,
+  and reverse-over-reverse too. The focused suite passes 189 tests. Collection passes
+  with 5,271 tests after refreshing its required baseline.
 - [ ] Run focused checks, unmasked C comparisons and the full pre-merge hook through
   the detached suite runner. Preserve all snapshot bytes.
 - [ ] Push once for review, open and link the PR, obtain Opus cross-review, fix findings
