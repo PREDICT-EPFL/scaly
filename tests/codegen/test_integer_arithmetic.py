@@ -6,14 +6,31 @@ from typing import Literal
 
 import numpy as np
 import pytest
+from scipy import sparse
 
 import scaly as sc
 from scaly.codegen import CModule, render_c_module
 from scaly.codegen.c import _includes, _render_raw_callee
 from scaly.ir import program as p
+from scaly.ir.types import CanonicalPattern
 from scaly.passes.arith import constant
 from scaly.passes.lowering import ctx, lower_function, main_proc
 from tests.compilers import c_compiler, named_compiler
+
+
+@pytest.mark.parametrize("dialect", ["gnu", "c"])
+def test_hoisted_sparse_indices_keep_float64_c_spelling(dialect) -> None:
+  n = 100
+  q = sparse.diags_array([-np.ones(n - 1), 4 * np.ones(n), -np.ones(n - 1)], offsets=[-1, 0, 1], format="csc")
+  coo = q.tocoo()
+  pattern = CanonicalPattern(q.shape, tuple(map(int, coo.row)), tuple(map(int, coo.col)))
+
+  @sc.function(sc.arg("q", sc.TensorType(q.shape, pattern=pattern), layout="csc"), sc.arg("x", n), name="banded")
+  def loss(q, x):
+    return x @ (q @ x)
+
+  source = render_c_module(sc.sparse_hessian(loss, wrt="x"), dialect=dialect).source
+  assert "uint64_t" not in source
 
 
 @pytest.mark.parametrize("dtype", ["int64", "int32"])

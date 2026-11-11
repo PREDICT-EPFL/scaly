@@ -438,6 +438,7 @@ class LowerCtx:
     if shared and key in self._shared_indices:
       return self._shared_indices[key]
     buf = p.const_buffer(self.names.allocate(f"k{self._tmp}", generated=True), dtypes.int64, (len(values),), values)
+    buf = ProgramNode(buf.op, buf.args, {**buf.attrs, "index_table": True}, dtype=buf.dtype)
     self._tmp += 1
     self.buffers[buf.attrs["name"]] = buf
     self.statements.append(buf)

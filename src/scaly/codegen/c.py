@@ -309,6 +309,8 @@ def _has_integer_data(body: list[ProgramNode]) -> bool:
     if node in seen or node.op in (ProgramOp.VIEW, ProgramOp.RANGE):
       continue
     seen.add(node)
+    if node.op == ProgramOp.LOAD and node.args[0].attrs.get("index_table"):
+      continue
     if node.dtype.is_integer and not node.dtype.is_unsigned and node.op in (ProgramOp.CAST, ProgramOp.SELECT, ProgramOp.LOAD):
       return True
     pending.extend(node.args)
