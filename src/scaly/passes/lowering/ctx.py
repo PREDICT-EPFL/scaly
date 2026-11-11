@@ -260,7 +260,10 @@ class LowerCtx:
       self.params.append(buf)
       self.buffers[name] = buf
       self.value_buffers[expr.id] = name
-      if layout is not None:
+      if layout is not None and expr.type.pattern is None:
+        converted = self.reorder(buf, expr, layout.inverse_permutation)
+        self.value_buffers[expr.id] = converted.attrs["name"]
+      elif layout is not None:
         self._orders[expr.id] = layout.inverse_permutation
 
   def register_outputs(self) -> None:
@@ -274,7 +277,11 @@ class LowerCtx:
       )
       self.params.append(buf)
       self.buffers[name] = buf
-      if expr.op in (ExprOp.INPUT, ExprOp.CONST) or expr.id in seen or (layout is not None and expr.op in (ExprOp.CALL, ExprOp.VMAP)):
+      if (
+        expr.op in (ExprOp.INPUT, ExprOp.CONST)
+        or expr.id in seen
+        or (layout is not None and (expr.type.pattern is None or expr.op in (ExprOp.CALL, ExprOp.VMAP)))
+      ):
         continue  # INPUT/CONST or shared output: emit_outputs inserts the copy
       seen.add(expr.id)
       self._output_alias[expr.id] = name
