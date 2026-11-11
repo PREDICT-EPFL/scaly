@@ -14,8 +14,9 @@ and the exemption for Python creating `__pycache__` unchanged.
 - [x] Enable Windows regression tests for restored modification times and directory swaps.
 - [x] Read NTFS change times through ctypes only on Windows, using metadata handles.
 - [x] Prove Linux behaviour and that warm source lookups do not read file contents.
-- [ ] Run all pre-merge checks through the detached shared suite runner.
-- [ ] Commit, push once, open and link a draft pull request, obtain one correctness review.
+- [x] Run all pre-merge checks through the detached shared suite runner.
+- [ ] Obtain one correctness review before the initial push so one CI run proves reviewed code.
+- [ ] Remove the temporary plan, push once, open and link a ready pull request through REST.
 - [ ] Settle review delegates, address findings, and confirm only any fixes.
 - [ ] Get Windows CI evidence from one run. If the method cannot work, tell the
       coordinator before replacing it with the issue's documented-limitation path.
@@ -31,3 +32,6 @@ change-time regressions fail. Clearing the content memo makes the warm-read test
 fail. Both perturbations were process-local and are absent from the files.
 Full checks are detached under `/tmp/scaly-395/pre-merge.log`, with their exit
 code written to `/tmp/scaly-395/pre-merge.exit`.
+The full runner exited 0: types, Ruff, 3679 passed and 55 skipped, benchmark smoke,
+documentation and private-name checks passed. Test collection passed with 3734
+node IDs, including the new test's required baseline entry.
