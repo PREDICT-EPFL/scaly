@@ -1218,6 +1218,7 @@ def where(condition: Any, x: Any, y: Any) -> Expr:
   there. A select inside a mapped ``Function`` also guards derivatives of the map's arguments.
   A selected zero tangent guards later elementwise partials: ``sqrt(where(x > 0, x, 0))`` has
   derivative zero at ``x = -1`` in both modes.
+  Forward mode does not carry tangent conditions into or out of a ``Function`` call.
   """
   condition = _condition(condition)
   x, y = _operands(x, y)

@@ -243,6 +243,9 @@ def tangent(expr: Expr, tangents: Sequence[Expr | None], nseed: int) -> Expr:
   row = ELEMENTWISE[ExprOp(expr.op)]
   assert row.partials is not None
   aligned = [None if t is None else _broadcast_tangent(t, arg, expr, nseed) for arg, t in zip(expr.args, tangents, strict=True)]
+  if expr.op == ExprOp.CAST:
+    assert aligned[0] is not None
+    return _masked(aligned[0], lambda t: cast(t, expr.type.dtype))
   if row.jvp is not None and (expr.op == ExprOp.SELECT or not any(t is not None and _mask_of(t) is not None for t in aligned)):
     return row.jvp(expr, aligned)
   total: Expr | None = None

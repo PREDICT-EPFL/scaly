@@ -292,6 +292,12 @@ In forward mode, a selected zero tangent stays zero through later elementwise
 derivatives. For example, `sc.where(x > 0.0, x, 0.0).sqrt()` has derivative zero
 at `x = -1`, although the square root's partial derivative is infinite at zero.
 
+!!! warning "Forward derivatives across calls"
+    Forward mode loses a selected tangent's condition when it passes into or
+    returns from a `Function` call. With `root` returning `sqrt`,
+    `root(sc.where(x > 0.0, x, 0.0))` can still have a NaN forward derivative at
+    `x = -1`. Keep the select and the later singular operation in the same body.
+
 ### Supported array operations
 
 `Expr` supports fixed shapes, indexing, broadcasting, and common arithmetic.

@@ -504,7 +504,9 @@ def test_forward_mask_survives_operations_before_a_singular_partial(operation: s
     elif operation == "neg":
       y = (-(-selected)).sqrt().sum()
     elif operation == "cast":
-      y = sc.cast(sc.cast(selected, "float32"), "float64").sqrt().sum()
+      narrow = sc.cast(selected, "float32")
+      assert sc.jvp(narrow, x, sc.const(np.ones(2))).type.dtype == sc.dtypes.float32
+      y = sc.cast(narrow, "float64").sqrt().sum()
     elif operation == "reshape":
       y = selected.reshape((2, 1)).sqrt().sum()
     elif operation == "sum":

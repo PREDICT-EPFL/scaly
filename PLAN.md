@@ -27,3 +27,9 @@ original AD modules makes 26 of the new cases fail. Six C/header files for inlin
 mapped gradients without selects are byte-identical to origin/main. Proof files are in
 `/tmp/scaly-364-proof-0cqs9ig2/`. Types and Ruff pass. #408 is still open and conflicted,
 so the maximum regression needs its final integration after #65 lands. No code from #65 copied.
+
+Further focused checks cover broadcasts, stacks and concatenations, and pin the dtype of a
+masked cast. Their failures were reproduced before their fixes. The last focused snapshot run
+passed all 87 cases. Forward tangent conditions crossing call boundaries are a distinct helper
+protocol change, filed as #432 and documented as a remaining limit. An optional scope question
+was sent to the coordinator; absent an answer, keep this PR at the two locations in its brief.
