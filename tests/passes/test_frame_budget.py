@@ -11,12 +11,12 @@ from scaly.passes.program.pack_workspace import pack_workspace
 def _procedure(name, sizes, calls=(), *, noinline=False, dtype=dtypes.float64):
   out = p.buffer("out", dtype, (1,))
   buffers = [p.buffer(f"t{i}", dtype, (size,), address_space="private") for i, size in enumerate(sizes)]
-  zero = ProgramNode(ProgramOp.CONST_FLOAT if dtype.is_floating else ProgramOp.CONST_INT, (), {"value": 0.0 if dtype.is_floating else 0}, dtype)
+  zero = ProgramNode(ProgramOp.CONST_FLOAT if dtype.is_floating else ProgramOp.CONST_INT, (), {"value": 0.0 if dtype.is_floating else 0}, dtype=dtype)
   body = [*buffers, *(p.store(p.view(b, [p.const_int(0)]), zero) for b in buffers)]
   body += [p.store(p.view(out, [p.const_int(0)]), p.load(p.view(b, [p.const_int(0)]))) for b in buffers]
   body += [p.call(callee, [out]) for callee in calls]
   proc = p.proc(name, [out], body)
-  return ProgramNode(proc.op, proc.args, {**proc.attrs, "noinline": noinline}, proc.dtype)
+  return ProgramNode(proc.op, proc.args, {**proc.attrs, "noinline": noinline}, dtype=proc.dtype)
 
 
 def _slots(proc):
