@@ -213,10 +213,10 @@ their values:
 | `A @ B` | See [products](#products) |
 | `A.sum()` | A dense scalar |
 
-So `A_const + 0.0` stores all nine entries while `A_const * 0.0` keeps seven. The unary operations in the table map
-zero to zero. Any other elementwise operation raises as the expression is built,
-including `exp`, `log`, `cos`, powers, division, `sc.atan2`, `sc.minimum` and
-`sc.maximum`:
+So `A_const + 0.0` stores all nine entries while `A_const * 0.0` keeps seven.
+The unary operations in the table map zero to zero. Any other elementwise
+operation raises as the expression is built, including `exp`, `log`, `cos`,
+powers, division, `sc.atan2`, `sc.minimum` and `sc.maximum`:
 
 ```python
 A_const.exp()
