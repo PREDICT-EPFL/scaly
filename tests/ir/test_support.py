@@ -145,7 +145,7 @@ def test_support_uses_shared_zero_preserving_rules(op: ExprOp) -> None:
   assert unary(op, x).support == x.support
 
 
-@pytest.mark.parametrize("op", [ExprOp.COS, ExprOp.ACOS, ExprOp.COSH, ExprOp.EXP, ExprOp.LOG, ExprOp.POW, ExprOp.ATAN2, ExprOp.SOLVER_CALL])
+@pytest.mark.parametrize("op", [ExprOp.COS, ExprOp.ACOS, ExprOp.COSH, ExprOp.EXP, ExprOp.LOG, ExprOp.POW, ExprOp.ATAN2])
 def test_default_support_is_sound_unknown(op: ExprOp) -> None:
   x = sc.const([0, 0])
   args = (x, x) if op in {ExprOp.POW, ExprOp.ATAN2} else (x,)

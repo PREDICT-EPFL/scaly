@@ -48,7 +48,7 @@ class _FakeBackend:
     inputs = ", ".join(f"const double* in{i}" for i in range(len(as_concrete(fun).descriptor.input_signature)))
     outputs = ", ".join(f"double* out{i}" for i in range(len(as_concrete(fun).descriptor.output_signature)))
     return [
-      f"static void {ctx.raw_symbol}({inputs}, {outputs}, double* w, const scaly_solver_option* const* solver_options) {{",
+      f"static void {ctx.raw_symbol}({inputs}, {outputs}, double* w, const scaly_solver_option* options) {{",
       f"  {ctx.stats_symbol}.version = SCALY_SOLVER_STATS_VERSION;",
       "}",
     ]
@@ -163,7 +163,7 @@ def test_external_oracle_source_and_symbol_cross_the_plugin_boundary(monkeypatch
       return super().render_wrapper(fun, ctx)
 
   monkeypatch.setattr(registry, "get_backend", lambda name: _ExternalBackend())
-  source = "\n".join(solver.render_solver_raw(descriptor_function(desc).instantiate(), options_index=0))
+  source = "\n".join(solver.render_solver_raw(descriptor_function(desc).instantiate()))
   assert oracle.source in source
   assert source.index(oracle.source) < source.index("static scaly_solver_stats external_qp_stats_data;")
 
@@ -216,6 +216,7 @@ def _external_solver(name: str, oracle: ExternalOracle) -> sc.Function:
 def test_external_oracle_source_is_deduplicated_across_solver_wrappers(monkeypatch: pytest.MonkeyPatch) -> None:
   source = "static void shared_raw(const double* x, double* y, double* w) { y[0] = x[0]; (void)w; }"
   oracle = ExternalOracle("shared", "shared_raw", source, (("x", (1,)),), (("f", ()),))
+  monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
   left, right = _external_solver("left_solver", oracle), _external_solver("right_solver", oracle)
   args = [sc.const(np.zeros(1)), sc.const(np.zeros(0)), sc.const(np.zeros(0))]
 
@@ -227,12 +228,15 @@ def test_external_oracle_source_is_deduplicated_across_solver_wrappers(monkeypat
 
   from scaly.codegen.aot import render_c_module
 
-  assert render_c_module(host).source.count(source) == 1
+  module = render_c_module(host)
+  assert len(module._libraries) == 2
+  assert all(dict(library.sources).popitem()[1].count(source) == 1 for library in module._libraries)
 
 
-def test_conflicting_external_oracle_symbol_definitions_are_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_static_external_oracle_symbols_are_local_to_each_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
   first = ExternalOracle("first", "shared_raw", "static void shared_raw(void) {}", (), ())
   second = ExternalOracle("second", "shared_raw", "static void shared_raw(int x) { (void)x; }", (), ())
+  monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
   left, right = _external_solver("left_conflict", first), _external_solver("right_conflict", second)
   args = [sc.const(np.zeros(1)), sc.const(np.zeros(0)), sc.const(np.zeros(0))]
 
@@ -244,8 +248,7 @@ def test_conflicting_external_oracle_symbol_definitions_are_rejected(monkeypatch
 
   from scaly.codegen.aot import render_c_module
 
-  with pytest.raises(ValueError, match="conflicting source definitions"):
-    render_c_module(host)
+  assert len(render_c_module(host)._libraries) == 2
 
 
 def test_stats_abi_v3_layout_is_additive() -> None:

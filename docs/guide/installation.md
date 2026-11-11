@@ -132,7 +132,7 @@ Scaly native toolchain
   ipopt discoverable: True
   ipopt loadable: True
   ...
-  JIT solver flags: -I... -L... -Wl,-rpath,... -lipopt ...
+  native solver consumer flags: -I... -L... -Wl,-rpath,... -lipopt ...
 ```
 
 The native build recipe describes the detected CPU and vector math settings.
@@ -147,8 +147,8 @@ them for exported code.
 `discoverable` means Scaly found the library and its C headers. `loadable`
 also checks that the operating system can load the library. A library can be
 present but fail to load because one of its native dependencies is unavailable.
-The final line reports the include and link flags used for solver compilation,
-not all optimization flags used to compile a model.
+The final line reports the include and link flags for native solver consumers.
+Solver graphs declare these requirements through their external libraries.
 
 A `cc: <missing>` line prevents numerical evaluation of any function. A missing
 solver library only affects functions that use that solver. For an installed

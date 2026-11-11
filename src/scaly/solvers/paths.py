@@ -231,7 +231,7 @@ def _include_dirs_from_cflags(cflags: list[str]) -> tuple[Path, ...]:
 def backend_compile_flags(names: Sequence[str], *, rpath: bool = True) -> list[str]:
   """Include/lib/rpath/link flags for the named solver plugins, in order.
 
-  ``graph.solver_compile_flags`` is the same question asked of a ``Function``."""
+  Used by native consumers and toolchain diagnostics. Scaly graphs link through their external libraries."""
   if not names:
     return []
   from .registry import get_backend

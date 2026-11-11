@@ -37,6 +37,9 @@ def _build(tmp_path, fun: sc.Function, **kwargs):
   source = tmp_path / module.source_name
   source.write_text(module.source)
   lib_path = tmp_path / f"lib{fun.name}{'.dylib' if sys.platform == 'darwin' else '.so'}"
+  from scaly.codegen.external import compile_library
+
+  objects = [obj for build in module._library_builds for obj in compile_library(build, cc)]
   cmd = [
     *cc,
     "-dynamiclib" if sys.platform == "darwin" else "-shared",
@@ -46,6 +49,7 @@ def _build(tmp_path, fun: sc.Function, **kwargs):
     "-Werror",
     *(["-Wno-unused-parameter"] if module.backends else []),
     str(source),
+    *objects,
     *module.link_flags,
     "-lm",
     "-o",

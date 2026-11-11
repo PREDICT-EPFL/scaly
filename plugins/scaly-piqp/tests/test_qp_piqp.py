@@ -169,7 +169,7 @@ def test_supported_settings_match_vendored_struct() -> None:
 @pytest.mark.parametrize("sparse", [False, True])
 @pytest.mark.solver("piqp")
 def test_valid_settings_still_render_and_solve(sparse: bool) -> None:
-  from scaly.codegen.aot import render_c_source
+  from tests.solvers.problem_helpers import render_solver_source as render_c_source
   from scaly_piqp import PIQP_VERSION
 
   @sc.problem(vars=sc.arg("x", 1), params=sc.arg("target", 1))

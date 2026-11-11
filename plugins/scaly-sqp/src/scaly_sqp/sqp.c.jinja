@@ -67,7 +67,6 @@ static double {{ raw_symbol }}_option_number(const scaly_solver_option* options,
 }
 // PIQP {{ piqp_version }}-backed SQP wrapper for {{ name }} (n={{ n }}, equality={{ nh }}, inequality={{ ng }}, nnz jac/hess = {{ nnz_j }}/{{ nnz_h }}, nnz P/A/G = {{ nnz_p }}/{{ a_rows|length }}/{{ g_rows|length }}).
 static void {{ raw_symbol }}({{ signature }}) {
-  const scaly_solver_option* options = solver_options[{{ options_index }}];
   const int l1 = (int){{ raw_symbol }}_option_number(options, "globalization");
   const int exact_hessian = (int){{ raw_symbol }}_option_number(options, "hessian"), trace = (int){{ raw_symbol }}_option_number(options, "trace");
   const int max_iter = (int){{ raw_symbol }}_option_number(options, "max_iter"), watchdog = (int){{ raw_symbol }}_option_number(options, "watchdog");

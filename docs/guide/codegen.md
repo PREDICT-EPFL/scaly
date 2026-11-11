@@ -539,7 +539,15 @@ become defaults in C. Generated solver wrappers also keep static state, so
 the same wrapper cannot be called concurrently.
 
 Ordinary generated model code has no dependency on Python, NumPy, or SciPy.
-Solver code additionally needs the corresponding native solver headers and
+Solver exports include a `<name>.build.json` manifest and wrapper sources under
+`libraries/`. Compile those sources separately, using each library record's
+`include_dirs`, `defines` and `compile_flags`, then link their objects with the
+main source. `library_dirs` gives the search directories for the names in `link`.
+The first include directory and all source paths are relative to the manifest.
+Other directories describe the exporting machine and may need changing for a
+deployment target.
+
+Solver code also needs the corresponding native solver headers and
 libraries. The `CModule.link_flags` property reports the flags discovered for
 those dependencies and the selected math library in the current environment. Reading it requires the
 libraries to be available, even though rendering their wrapper source does not.

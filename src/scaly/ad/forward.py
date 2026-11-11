@@ -215,8 +215,6 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
     if _is_zero_const(d[1]):
       return _jvp_many_matmul_left(args[0], args[1], d[0], nseed)
     return _jvp_many_matmul_left(args[0], args[1], d[0], nseed) + _jvp_many_matmul_right(args[0], args[1], d[1], nseed)
-  if op == ExprOp.SOLVER_CALL:
-    raise NotImplementedError(f"active derivative through SOLVER_CALL in callee {callee!r} is not implemented")
   raise NotImplementedError(f"JVP for op {op!r} in callee {callee!r} is not implemented")
 
 

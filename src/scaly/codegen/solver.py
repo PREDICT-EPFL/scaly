@@ -1,35 +1,21 @@
-"""C codegen orchestration for ``ExprOp.SOLVER_CALL`` — plugin-rendered wrappers.
-
-A solver ConcreteFunction's C body is a small hand-written template per backend,
-parameterised by the ``SolverDescriptor`` — the one sanctioned non-Program-IR
-render path (see ``docs/how_it_works/solvers.md``). The templates
-themselves live in the solver plugins (``scaly_piqp.codegen``,
-``scaly_ipopt.codegen``, ...): core hands the plugin's
-``SolverBackend.render_wrapper`` hook a :class:`SolverWrapperCtx` and frames
-the returned body with the scaly-owned stats storage and accessor. The oracle
-Functions the template drives are *not* hand-written — they lower through
-Program IR like any other host ConcreteFunction and are rendered as ``<oracle>_raw``
-by ``codegen/c``. See ``docs/dev/solver_plugins.md`` for the contract.
-
-Outer functions that contain a solver as a callee lower through Program IR with
-the ``solver ConcreteFunction`` callee treated as opaque (``passes.lowering.lower_function``):
-the solver renders to a ``static void qp_xxx_raw(...)`` body here, and the
-caller's lowered ``CALL`` emits a ``qp_xxx_raw(...)`` invocation.
-``codegen.aot.render_c_source`` orchestrates the whole translation unit, ordering
-the solver wrapper after its (Program-IR) oracle PROCs. The graph queries behind
-both — which Functions are solvers, what they reach — are ``solvers/graph.py``.
-"""
+"""Generate solver extern libraries and the options/statistics API around their calls."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from scaly.codegen.abi import c_ident
-from scaly.ir.expr import callees_of
+from scaly.utils.names import NameScope
+from scaly.codegen.c import _c_reserved_names
+from scaly.ir.expr import Expr, callees_of, topo
 from scaly.function.concrete import ConcreteFunction
-from scaly.solvers.graph import external_oracles, is_solver_function, solver_backends_used, solver_callees, solver_descriptor
+from scaly.function.extern import CLibrary, _Extern
+from scaly.solvers.model import _SolverLibrary
+from scaly.codegen.toolchain import BuildRecipe
+from scaly.utils.env import env
+from scaly.solvers.graph import external_oracles, is_solver_function, solver_callees, solver_descriptor
 
 if TYPE_CHECKING:
   from scaly.solvers.model import ExternalOracle
@@ -53,23 +39,12 @@ class SolverWrapperCtx:
   symbol: str
   raw_symbol: str
   stats_symbol: str
-  options_index: int
   function_symbols: Mapping[ConcreteFunction, str] = field(default_factory=dict)
-
-  def oracle_options(self, fun: ConcreteFunction | ExternalOracle | None) -> tuple[str, ...]:
-    """The runtime context argument for a generated oracle, empty for a foreign oracle."""
-    return ("solver_options",) if isinstance(fun, ConcreteFunction) else ()
 
   def raw_symbol_of(self, fun: ConcreteFunction | ExternalOracle) -> str:
     from scaly.solvers.model import ExternalOracle
 
     return fun.raw_symbol if isinstance(fun, ExternalOracle) else f"{self.function_symbols.get(fun, c_ident(fun.name))}_raw"
-
-
-def solver_includes(fun: ConcreteFunction) -> list[str]:
-  from scaly.solvers.registry import get_backend
-
-  return [f'#include "{get_backend(name).header}"' for name in solver_backends_used(fun)]
 
 
 def solver_functions(fun: ConcreteFunction) -> tuple[ConcreteFunction, ...]:
@@ -107,9 +82,7 @@ def solver_stats_symbols(fun: ConcreteFunction) -> tuple[str, ...]:
 # ---------------------------------------------------------------------------
 
 
-def render_solver_raw(
-  fun: ConcreteFunction, *, options_index: int, include_external_sources: bool = True, function_symbols: Mapping[ConcreteFunction, str] | None = None
-) -> list[str]:
+def render_solver_raw(fun: ConcreteFunction, *, function_symbols: Mapping[ConcreteFunction, str] | None = None) -> list[str]:
   """Frame a plugin-rendered wrapper body with the scaly-owned stats storage
   and the exported ``<symbol>_stats`` accessor. The body itself comes from the
   backend's ``render_wrapper`` hook."""
@@ -118,14 +91,13 @@ def render_solver_raw(
   desc = solver_descriptor(fun)
   external_sources: list[str] = []
   for oracle in external_oracles(fun):
-    if include_external_sources and oracle.source and oracle.source not in external_sources:
+    if oracle.source and oracle.source not in external_sources:
       external_sources.append(oracle.source)
   symbol = c_ident(fun.name)
   ctx = SolverWrapperCtx(
     symbol=symbol,
     raw_symbol=_raw_symbol(fun),
     stats_symbol=f"{symbol}_stats_data",
-    options_index=options_index,
     function_symbols=function_symbols or {},
   )
   body = get_backend(desc.backend).render_wrapper(fun, ctx)
@@ -140,6 +112,153 @@ def render_solver_raw(
     "  return 0;",
     "}",
   ]
+
+
+def solver_extern(library: _SolverLibrary, recipe: BuildRecipe, prepare: Callable[[ConcreteFunction], ConcreteFunction]) -> _Extern:
+  """Declare an external bridge with its wrapper and oracle C source."""
+  from scaly.function.extern import extern
+  from scaly.function.tree import arg
+  from scaly.passes.lowering import lower_function
+  from scaly.codegen.c import _includes, _render_raw_callee, extern_declarations
+  from scaly.solvers.registry import get_backend
+  from scaly.solvers.stats import stats_c_defs, stats_c_timing_defs
+
+  fun = library.function
+  oracles = solver_callees(fun)
+  inputs, outputs, entries = [], [], {}
+  for index, oracle in enumerate(oracles):
+    actuals = tuple(arg(f"oracle_{index}_{i}", formal.type).symbols() for i, formal in enumerate(oracle.inputs))
+    entry = ConcreteFunction._from_exprs(
+      f"{oracle.name}_entry",
+      actuals,
+      oracle._call(actuals)[: len(oracle.outputs)],
+      oracle.input_names,
+      oracle.output_names,
+      input_layouts=oracle.input_tree.layouts,
+      output_layouts=oracle.output_tree.layouts,
+    )
+    entry = prepare(entry)
+    entries[oracle] = entry
+    inputs.extend(actuals)
+    outputs.extend(entry._call(actuals))
+  bundle = ConcreteFunction._from_exprs(
+    NameScope().allocate(f"{c_ident(fun.name)}_oracles", generated=True),
+    inputs,
+    outputs,
+    [f"input_{i}" for i in range(len(inputs))],
+    [f"output_{i}" for i in range(len(outputs))],
+  )
+  prog = lower_function(
+    bundle,
+    reserved_names=(f"{c_ident(fun.name)}_raw", *(oracle.raw_symbol for oracle in external_oracles(fun))),
+    lanes=recipe.lanes,
+    reciprocal=recipe.reciprocal,
+    frame_budget=recipe.frame_budget,
+  )
+  count = int(prog.attrs["proc_count"])
+  procs = prog.args[: count - 1]
+  symbols = dict(prog.attrs["function_symbols"])
+  external_workspace = max((oracle.workspace_size for oracle in external_oracles(fun)), default=0)
+  workspace = max((external_workspace, *(int(proc.attrs.get("sz_w", 0)) for proc in procs)))
+  backend = get_backend(fun.descriptor.backend)
+  symbol = c_ident(fun.name)
+  lines = [
+    *_includes(
+      ("#include <time.h>", "#include <string.h>", f'#include "{backend.header}"'), prog=prog, dialect=recipe.dialect, vector_libm=recipe.vector_libm
+    ),
+    *stats_c_defs(),
+    *stats_c_timing_defs(),
+    *solver_options_c_defs(),
+    *extern_declarations(prog),
+  ]
+  for proc in procs:
+    lines.extend(_render_raw_callee(proc, reserved_names=_c_reserved_names(prog), dialect=recipe.dialect, vector_libm=recipe.vector_libm))
+  lines.extend(render_solver_raw(fun, function_symbols={oracle: symbols[entry] for oracle, entry in entries.items()}))
+  ins = [f"const double* in{i}" for i in range(len(fun.inputs))]
+  outs = [f"double* out{i}" for i in range(len(fun.outputs))]
+  args = [*(f"in{i}" for i in range(len(ins))), *(f"out{i}" for i in range(len(outs))), "w", f"{symbol}_options"]
+  lines.extend(
+    [
+      f"static const scaly_solver_option* {symbol}_options;",
+      f"void {symbol}_set_options(const scaly_solver_option* options) {{ {symbol}_options = options; }}",
+      f"void {symbol}_solve({', '.join([*ins, *outs, 'double* w'])}) {{",
+      f"  {symbol}_raw({', '.join(args)});",
+      "}",
+    ]
+  )
+  library = replace(
+    library,
+    recipe=recipe,
+    sources={f"{symbol}_extern.c": "\n".join(lines) + "\n"},
+    compile_flags=(*library.compile_flags, env("SCALY_CC_OPT") or "-O2", *recipe.cpu_flags, "-fno-math-errno"),
+    link=(*library.link, *(flag[2:] for flag in recipe.link_flags)),
+  )
+  return extern(
+    library,
+    f"{symbol}_solve",
+    inputs=tuple(arg(name, value.type) for name, value in zip(fun.input_names, fun.inputs)),
+    outputs=fun.output_tree,
+    workspace=workspace,
+  )
+
+
+def prepare_solver_calls(fun: ConcreteFunction, recipe: BuildRecipe) -> tuple[ConcreteFunction, tuple[CLibrary, ...]]:
+  """Bind solver bridge declarations to the selected recipe before ordinary lowering."""
+  from scaly.passes.lowering.ctx import _check_float64_leaves
+
+  functions: dict[ConcreteFunction, ConcreteFunction] = {}
+  externs: dict[_Extern, _Extern] = {}
+  libraries: dict[CLibrary, None] = {}
+
+  def bind(function: ConcreteFunction) -> ConcreteFunction:
+    if function in functions:
+      return functions[function]
+    _check_float64_leaves(function, "a graph that calls a solver")
+    rebuilt: dict[Expr, Expr] = {}
+    for node in topo(function.results):
+      attrs = dict(node.attrs)
+      for name, callee in attrs.items():
+        if isinstance(callee, ConcreteFunction):
+          attrs[name] = bind(callee)
+        elif isinstance(callee, _Extern):
+          if callee not in externs:
+            library = callee.library
+            externs[callee] = solver_extern(library, recipe, bind) if isinstance(library, _SolverLibrary) and library.recipe != recipe else callee
+            libraries[externs[callee].library] = None
+          attrs[name] = externs[callee]
+      if "branches" in attrs:
+        branches = tuple(bind(branch) for branch in attrs["branches"])
+        if any(a is not b for a, b in zip(branches, attrs["branches"])):
+          attrs["branches"] = branches
+      args = tuple(rebuilt[arg] for arg in node.args)
+      rebuilt[node] = (
+        node
+        if all(value is node.attrs[name] for name, value in attrs.items()) and all(a is b for a, b in zip(args, node.args))
+        else Expr(
+          node.op,
+          args,
+          node.type,
+          node.name,
+          node.value,
+          attrs,
+          node.lowering,
+        )
+      )
+    outputs = tuple(rebuilt[output] for output in function.outputs)
+    rules = function.rules
+    if rules is not None:
+      residuals = tuple(rebuilt[output] for output in rules.residuals)
+      if any(a is not b for a, b in zip(residuals, rules.residuals)):
+        rules = replace(rules, residuals=residuals)
+    functions[function] = (
+      function
+      if all(a is b for a, b in zip(outputs, function.outputs)) and rules is function.rules
+      else function._replace(outputs=outputs, rules=rules)
+    )
+    return functions[function]
+
+  bound = bind(fun)
+  return bound, tuple(libraries)
 
 
 def solver_options_c_defs() -> list[str]:

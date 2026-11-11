@@ -347,10 +347,6 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_a
     return result
   if expr.op == ExprOp.LOOP:
     return _loop_mask(expr, wrt, memo)
-  if expr.op == ExprOp.SOLVER_CALL:
-    if any(_jac_mask(arg, wrt, memo).nnz for arg in expr.args):
-      raise NotImplementedError("active derivative through SOLVER_CALL is not implemented")
-    return _empty((expr.size, wrt.size))
   raise NotImplementedError(f"jacobian sparsity for op {expr.op!r} is not implemented")
 
 

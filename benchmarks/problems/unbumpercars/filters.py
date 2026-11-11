@@ -9,7 +9,7 @@ import numpy as np
 
 from scaly.function.model import as_concrete
 import scaly as sc
-from scaly.codegen import render_c_module
+from scaly.codegen import write_module
 from benchmarks.harness import register_base, registered_base
 from benchmarks.harness import casadi_ipopt
 from .common import (
@@ -831,9 +831,7 @@ class ScalyDTCBFSafetyFilter:
   def dump_c(self, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     nlp = self.nlp.function
-    module = render_c_module(nlp, header_name=f"{nlp.name}.h", source_name=f"{nlp.name}.c")
-    (out_dir / module.header_name).write_text(module.header)
-    (out_dir / module.source_name).write_text(module.source)
+    module = write_module(nlp, out_dir)
     (out_dir / "solver.txt").write_text(f"{module.source_name}: {module.source.count(chr(10)) + 1} lines\n")
 
   def compute_safe_input(self, states: np.ndarray, desired: np.ndarray, step: int = 0) -> np.ndarray:

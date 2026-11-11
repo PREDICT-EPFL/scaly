@@ -88,7 +88,6 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     double lower[{m + n}], upper[{m + n}], lam[{m + n}], factor[{max(1, m)}], obj;
     int kind[{m + n}], column[{m + n}], native[{m + n}], ng[{stages}], ngi[{stages}], invalid;
     double *w, t_fe, t_callback;
-    const scaly_solver_option* const* solver_options;
     int n_f, n_g, n_grad, n_jac, n_hess;
 """)
   if stage is None:
@@ -113,8 +112,6 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
 
   def call(oracle, inputs: list[str], outputs: list[str], count: str = "") -> str:
     args = [*inputs, *outputs, "d->w"]
-    if ctx.oracle_options(oracle):
-      args.append("d->solver_options")
     return f"double t = scaly_clock_s();\n  {ctx.raw_symbol_of(oracle)}({', '.join(args)});\n  d->t_fe += scaly_clock_s() - t;" + (
       f" ++d->{count};" if count else ""
     )
@@ -250,7 +247,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     *(f"const double* in{i}" for i in range(len(desc.input_signature))),
     *(f"double* out{i}" for i in range(len(desc.output_signature))),
     "double* w",
-    "const scaly_solver_option* const* solver_options",
+    "const scaly_solver_option* options",
   ]
   emit(f"""
   static void {ctx.raw_symbol}({", ".join(signature)}) {{
@@ -260,7 +257,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     {stats} = (scaly_solver_stats){{0}};
     {stats}.version = SCALY_SOLVER_STATS_VERSION;
     {stats}.status = SCALY_SOLVE_ERROR; {stats}.native_status = -1;
-    d->w = w; d->solver_options = solver_options;
+    d->w = w;
 """)
   for i in range(len(desc.param_names)):
     emit(f"  d->p{i} = in{2 * nv + 2 + i};")
@@ -313,7 +310,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     interface.full_eval_obj = {s}_objective; interface.user_data = d;
     struct FatropOcpCSolver* solver = setup_ok ? fatrop_ocp_c_create(&interface, NULL, NULL) : NULL;
     setup_ok = setup_ok && solver != NULL;
-    for (const scaly_solver_option* option = solver_options[{ctx.options_index}]; setup_ok && option->name; ++option) {{
+    for (const scaly_solver_option* option = options; setup_ok && option->name; ++option) {{
       int type = fatrop_ocp_c_option_type(option->name);
       if (type == 0 && option->kind == 1 && isfinite(option->number) &&
           option->number > 0.0)

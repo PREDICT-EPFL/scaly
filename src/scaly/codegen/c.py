@@ -4,9 +4,7 @@ decisions of its own.
 This is the renderer half of the Program-IR architecture (``docs/how_it_works/architecture.md``):
 ``passes.lowering.lower_function`` produces the Program IR; this module turns it into a
 translation unit exposing the pointer ABI (``<symbol>(arg,res,iw,w,mem)``) so
-``codegen.jit.CompiledFunction`` dispatches it unchanged. It is the sole CPU renderer for host functions with no solver in
-their call graph; ``codegen/aot.py`` orchestrates the solver-bearing case, reusing
-``_render_raw_callee`` / ``_render_entry`` here and splicing in the solver wrappers.
+``codegen.jit.CompiledFunction`` dispatches it unchanged. ``codegen/aot.py`` also uses its procedure and entry renderers to add solver option entries.
 
 There is **no silent fallback**: a function outside the lowered subset raises
 ``LoweringError`` loudly. Workspace lifetime/spill packing is a Program-IR pass
@@ -16,6 +14,8 @@ Scalar emission spells elementwise ops as the table in ``ad/rules.py`` says — 
 """
 
 from __future__ import annotations
+
+from collections.abc import Sequence
 
 import math
 
@@ -200,8 +200,8 @@ def _render_entry(
   casadi: bool = False,
   dialect: CDialect = "gnu",
   vector_libm: VectorLibm = "none",
-  solver_callees: frozenset[str] = frozenset(),
   options_count: int = 0,
+  entry_setup: Sequence[str] = (),
 ) -> list[str]:
   """Emit the pointer-ABI entry ``<symbol>(arg,res,iw,w,mem)`` with ``fun``'s main PROC body
   inlined. ``codegen/aot.py`` reuses this for solver-bearing functions, so the top function's body
@@ -219,6 +219,7 @@ def _render_entry(
   lines = [
     *_render_vector_helpers(proc, dialect=dialect, vector_libm=vector_libm),
     *entry_prologue(fun, entry_workspace(fun, sz_w, casadi=casadi), options_count=options_count),
+    *entry_setup,
   ]
   if unit == dtypes.uint8:
     # Untyped entry pointers: one cast per leaf, defined because each came from an object of that
@@ -241,7 +242,7 @@ def _render_entry(
     lines += gather.setup
     epilogue = gather.epilogue
   _emit_local_buffers(body, lines, ptr_expr, indent=2, unit=unit)
-  _emit_body(body, ptr_expr, lines, indent=2, dialect=dialect, solver_callees=solver_callees, unit=unit)
+  _emit_body(body, ptr_expr, lines, indent=2, dialect=dialect, unit=unit)
   lines += [*epilogue, "  return SCALY_SUCCESS;", "}"]
   return lines
 
@@ -256,7 +257,6 @@ def _render_raw_callee(
   dialect: CDialect = "gnu",
   vector_libm: VectorLibm = "none",
   reserved_names: NameScope | None = None,
-  solver_callees: frozenset[str] = frozenset(),
   unit: DType = dtypes.float64,
 ) -> list[str]:
   """A callee renders as ``static inline void <name>_raw(const <dtype>* p0, ..., <unit>* w)`` — a
@@ -274,13 +274,11 @@ def _render_raw_callee(
   params = list(proc.args[:param_count])
   body = list(proc.args[param_count:])
   sz_w = int(proc.attrs.get("sz_w", 0))
-  options_name = _c_reserved_names(proc).allocate("solver_options", generated=True)
   ptr_expr = {pp.attrs["name"]: c_ident(pp.attrs["name"]) for pp in params}
   param_decls = ", ".join(
     [
       *(f"{'const ' if i < input_count else ''}{pp.dtype.c_type}* {c_ident(pp.attrs['name'])}" for i, pp in enumerate(params)),
       f"{ENTRY_C_TYPES[unit]}* w",
-      *((f"const scaly_solver_option* const* {options_name}",) if solver_callees else ()),
     ]
   )
   proc_name = proc.attrs["name"]
@@ -296,7 +294,7 @@ def _render_raw_callee(
   if not sz_w:
     out.append("  (void)w;")
   _emit_local_buffers(body, out, ptr_expr, indent=2, unit=unit)
-  _emit_body(body, ptr_expr, out, indent=2, dialect=dialect, solver_callees=solver_callees, options_name=options_name, unit=unit)
+  _emit_body(body, ptr_expr, out, indent=2, dialect=dialect, unit=unit)
   out.append("}")
   if implementation != raw_name:
     out.append(f"static void (*volatile {raw_name})({param_decls}) = {implementation};")
@@ -365,8 +363,6 @@ def _emit_body(
   indent: int,
   *,
   dialect: CDialect = "gnu",
-  solver_callees: frozenset[str] = frozenset(),
-  options_name: str = "solver_options",
   integer_data: bool | None = None,
   unit: DType = dtypes.float64,
 ) -> None:
@@ -382,8 +378,6 @@ def _emit_body(
       lines,
       indent,
       dialect=dialect,
-      solver_callees=solver_callees,
-      options_name=options_name,
       integer_data=integer_data,
       unit=unit,
     )
@@ -396,8 +390,6 @@ def _emit_statement(
   indent: int,
   *,
   dialect: CDialect = "gnu",
-  solver_callees: frozenset[str] = frozenset(),
-  options_name: str = "solver_options",
   integer_data: bool,
   unit: DType = dtypes.float64,
 ) -> None:
@@ -409,8 +401,6 @@ def _emit_statement(
       lines,
       indent,
       dialect=dialect,
-      solver_callees=solver_callees,
-      options_name=options_name,
       integer_data=integer_data,
       unit=unit,
     )
@@ -433,18 +423,16 @@ def _emit_statement(
       lines,
       indent + 2,
       dialect=dialect,
-      solver_callees=solver_callees,
-      options_name=options_name,
       integer_data=integer_data,
       unit=unit,
     )
     lines.append(f"{pad}}}")
   elif stmt.op == ProgramOp.IF:
     lines.append(f"{pad}if ({_emit_scalar(stmt.args[0], ptr_expr)}) {{")
-    _emit_body(list(stmt.args[1].args), ptr_expr, lines, indent + 2, dialect=dialect, solver_callees=solver_callees, options_name=options_name)
+    _emit_body(list(stmt.args[1].args), ptr_expr, lines, indent + 2, dialect=dialect, integer_data=integer_data, unit=unit)
     if stmt.args[2].args:
       lines.append(f"{pad}}} else {{")
-      _emit_body(list(stmt.args[2].args), ptr_expr, lines, indent + 2, dialect=dialect, solver_callees=solver_callees, options_name=options_name)
+      _emit_body(list(stmt.args[2].args), ptr_expr, lines, indent + 2, dialect=dialect, integer_data=integer_data, unit=unit)
     lines.append(f"{pad}}}")
   elif stmt.op == ProgramOp.BREAK_IF:
     lines.append(f"{pad}if ({_emit_scalar(stmt.args[0], ptr_expr)}) break;")
@@ -474,8 +462,6 @@ def _emit_statement(
       ptrs.append(f"(double*)({window})" if stmt.attrs.get("external") and unit == dtypes.uint8 else window)
     else:
       ptrs.append("NULL")
-    if stmt.attrs["callee"] in solver_callees:
-      ptrs.append(options_name)
     symbol = stmt.attrs["callee"] if stmt.attrs.get("external") else f"{c_ident(stmt.attrs['callee'])}_raw"
     lines.append(f"{pad}{symbol}({', '.join(ptrs)});")
   elif stmt.op == ProgramOp.PRINT:

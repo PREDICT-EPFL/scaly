@@ -112,15 +112,15 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   normal_b = [kb for _, _, _, kb in normal_terms]
 
   param_args = [f"in{param_start + i}" for i in range(len(desc.param_names))]
-  base_args = lambda x, f, g: ", ".join([x, *param_args, f, *((g,) if m else ()), "w", *ctx.oracle_options(base)])  # noqa: E731
-  one_out_args = lambda x, out: ", ".join([x, *param_args, out, "w", *ctx.oracle_options(grad if out == "grad_buf" else jac)])  # noqa: E731
-  hess_args = lambda x, lf, lg, out: ", ".join([x, *param_args, lf, *((lg,) if m else ()), out, "w", *ctx.oracle_options(hess)])  # noqa: E731
-  bounds_args = ", ".join([*param_args, "xlb", "xub", *(("gl", "gu") if ng else ()), "w", *ctx.oracle_options(bounds)])
+  base_args = lambda x, f, g: ", ".join([x, *param_args, f, *((g,) if m else ()), "w"])  # noqa: E731
+  one_out_args = lambda x, out: ", ".join([x, *param_args, out, "w"])  # noqa: E731
+  hess_args = lambda x, lf, lg, out: ", ".join([x, *param_args, lf, *((lg,) if m else ()), out, "w"])  # noqa: E731
+  bounds_args = ", ".join([*param_args, "xlb", "xub", *(("gl", "gu") if ng else ()), "w"])
   signature = [
     *(f"const double* in{i}" for i in range(len(desc.input_signature))),
     *(f"double* out{i}" for i in range(len(desc.output_signature))),
     "double* w",
-    "const scaly_solver_option* const* solver_options",
+    "const scaly_solver_option* options",
   ]
   base_raw, grad_raw = ctx.raw_symbol_of(base), ctx.raw_symbol_of(grad)
   jac_raw = ctx.raw_symbol_of(jac) if jac is not None else ""
@@ -129,7 +129,6 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     qp_mode=dict(desc.compile_options)["qp"],
     piqp_version=PIQP_VERSION,
     name=fun.name,
-    options_index=ctx.options_index,
     raw_symbol=ctx.raw_symbol,
     stats_symbol=ctx.stats_symbol,
     signature=", ".join(signature),

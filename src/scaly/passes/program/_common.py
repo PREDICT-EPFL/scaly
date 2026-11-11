@@ -261,13 +261,12 @@ def prune_dead_buffers(proc: ProgramNode) -> ProgramNode:
 
 
 def prune_procedures(prog: ProgramNode) -> ProgramNode:
-  """Keep procedures reachable from the entry procedure and solver oracle roots."""
+  """Keep procedures reachable from the entry procedure."""
   procs = prog.args
   if not procs:
     return prog
   table = {proc.attrs["name"]: proc for proc in procs}
   roots = {procs[-1].attrs["name"]}
-  roots.update(name for names in prog.attrs.get("solver_oracles", {}).values() for name in names)
   reachable: set[str] = set()
   pending = list(roots)
   while pending:

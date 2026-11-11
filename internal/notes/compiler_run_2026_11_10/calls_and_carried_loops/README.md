@@ -16,7 +16,7 @@ differentiation, JIT the just-in-time compiler.
 
 ## Needs the maintainer's decision
 
-1. Public interface (#355): `sc.extern` and `sc.CLibrary` are exported from `scaly` with docstrings, filtered from the API page and absent from the guide until you have reviewed them. Recommend keeping both as they are and publishing them after your review, which should settle two points: no field names a library directory, so a prebuilt library is found only through `SCALY_CC="cc -L..."` or `LIBRARY_PATH`, and `include_dirs` become absolute paths when the `CLibrary` is built, so an exported manifest names directories of the build machine. If 0.2.0 is tagged before the review, leave the two exports out of that release.
+1. Public interface (#355): `sc.extern` and `sc.CLibrary` are exported from `scaly` with docstrings, filtered from the API page and absent from the guide until you have reviewed them. Recommend keeping both as they are and publishing them after your review, which should settle two points: `library_dirs`, added by #342, locates installed native dependencies, and directory fields become absolute paths when the `CLibrary` is built, so an exported manifest names directories of the build machine. If 0.2.0 is tagged before the review, leave the two exports out of that release.
 2. Documented behaviour (#313): a mapped Function with several used outputs prints once per trip, where it printed once per used output. A call is shared only when its arguments are the same expressions, so `callee(x)` and `callee(sc.print(..., x))` run the callee twice. The functions guide says both. Recommend keeping.
 3. Roadmap departure, applied (#313): `invocation_key` also leaves out `slice_size`, because the siblings of one map have different result sizes. Recommend keeping.
 4. Re-cut by the coordinator: #83 keeps `sc.extern`, `sc.CLibrary`, `EXTERN` nodes and their builds. Moving the solver plugins onto them and removing `SOLVER_CALL` became #342, and #357 joined the section. Recommend keeping the cut.
@@ -313,6 +313,17 @@ cases pass on la015 at `6b36854f`.
   `test_wrapper_custom_derivative_matches_finite_differences` (against finite differences, with
   and without a declared sparsity), `test_inactive_external_derivatives_and_zero_input_call`,
   and the refusal case of `tests/ad/test_differential.py`.
+
+### Solver bridge follow-through (#342)
+
+Solver Functions use EXTERN nodes over a generated CLibrary containing their
+wrapper and oracles, linked to the installed plugin library. Runtime options
+and statistics keep their existing API. The common lowerer and workspace pass
+have no solver exception, and the JIT uses the checked external namespace pool.
+A Function containing both a solver and a user extern is exercised for PIQP
+and IPOPT. `extern.md` records the protocol and the two roadmap qualifications,
+installed-library directories and the native workspace, statistics and new option-pointer state.
+The general external-code interface remains unpublished as above.
 
 ### The JIT index key
 

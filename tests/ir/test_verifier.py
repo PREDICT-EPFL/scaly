@@ -262,47 +262,12 @@ def test_function_construction_verifies_inner_nodes() -> None:
     sc.function(sc.arg("construction_verify_x", 3), outputs=sc.arg("out"))(lambda _: bad).instantiate()
 
 
-@pytest.mark.parametrize("fault", ["solver", "output", "output_name", "arity", "input_shape", "shape", "diff"])
-def test_solver_call_contract(fault) -> None:
-  from scaly.solvers.model import SolverDescriptor
-
-  descriptor = SolverDescriptor("verify_solver", "test", 2, 0, 0, (("p", (2,)),), (("x", (2,)),), (), 1)
-  arg = sc.sym("solver_contract_p", 2, diff=False)
-  attrs = {"solver": descriptor, "output": 0, "output_name": "x"}
-  args = (arg,)
-  shape, diff = (2,), False
-  if fault == "solver":
-    del attrs["solver"]
-  elif fault == "output":
-    attrs["output"] = 1
-  elif fault == "output_name":
-    attrs["output_name"] = "wrong"
-  elif fault == "arity":
-    args = ()
-  elif fault == "input_shape":
-    args = (sc.sym("solver_bad_p", 3, diff=False),)
-  elif fault == "shape":
-    shape = (3,)
-  else:
-    diff = True
-  bad = Expr(ExprOp.SOLVER_CALL, args, TensorType(shape, diff=diff), attrs=attrs)
-  with pytest.raises(VerifyError, match="solver-call-signature"):
-    verify_expr(bad)
-
-
 @pytest.mark.parametrize("index", [(slice(None, None, -1), -1), (slice(1, 1), slice(None)), (1, slice(None, None, 2))])
 def test_slice_contract_accepts_normalized_index(index) -> None:
   x = sc.sym("slice_positive_x", (3, 4))
   sliced = x[index]
   verify_expr(sliced)
   assert sliced.shape == np.empty(x.shape)[index].shape
-
-
-def test_solver_call_contract_accepts_descriptor_function() -> None:
-  from scaly.solvers.model import SolverDescriptor, descriptor_function
-
-  descriptor = SolverDescriptor("valid_verify_solver", "test", 2, 0, 0, (("p", (2,)),), (("x", (2,)),), (), 1)
-  verify_expr(as_concrete(descriptor_function(descriptor)).outputs)
 
 
 def test_verifier_checks_batched_result_shape():

@@ -108,8 +108,8 @@ def _prove_variable_independent_bounds(problem: Problem[Any, Any, Any, Any]) -> 
     if bound is None:
       continue
     for name, expr in zip(problem.vars.names, problem.vars.flatten_symbolic(bound, f"{problem.name} {side}"), strict=True):
-      if _reaches_op((expr,), ExprOp.SOLVER_CALL):
-        raise NotQuadratic(f"{problem.name}: cannot prove {side} for {name!r} independent through a nested solver")
+      if _reaches_op((expr,), ExprOp.EXTERN):
+        raise NotQuadratic(f"{problem.name}: cannot prove {side} for {name!r} independent through a nested solver or extern")
       if _reaches_op((expr,), ExprOp.STOP_GRADIENT):
         raise NotQuadratic(f"{problem.name}: cannot prove {side} for {name!r} independent through stop_gradient")
       if any(_jac_mask(expr, variable, {}).nnz for variable in problem._var_symbols) or _decides_on((expr,), problem._var_symbols):
@@ -118,8 +118,8 @@ def _prove_variable_independent_bounds(problem: Problem[Any, Any, Any, Any]) -> 
     label = inequality.name or str(index)
     for side, bound in (("lower bound", inequality.lo), ("upper bound", inequality.hi)):
       if bound is not None:
-        if _reaches_op((bound,), ExprOp.SOLVER_CALL):
-          raise NotQuadratic(f"{problem.name}: cannot prove ineq {label} {side} independent through a nested solver")
+        if _reaches_op((bound,), ExprOp.EXTERN):
+          raise NotQuadratic(f"{problem.name}: cannot prove ineq {label} {side} independent through a nested solver or extern")
         if _reaches_op((bound,), ExprOp.STOP_GRADIENT):
           raise NotQuadratic(f"{problem.name}: cannot prove ineq {label} {side} independent through stop_gradient")
         if any(_jac_mask(bound, variable, {}).nnz for variable in problem._var_symbols) or _decides_on((bound,), problem._var_symbols):
@@ -227,8 +227,8 @@ def build_qp[SV, NV, SP, NP](
   compile_options, resolved_options = backend.prepare_options(options or {})
   _prove_variable_independent_bounds(problem)
   proof_targets = (problem.spec.minimize, *problem.spec.eq, *(group.expr for group in problem.spec.ineq))
-  if _reaches_op(proof_targets, ExprOp.SOLVER_CALL):
-    raise NotQuadratic(f"{problem.name}: cannot prove QP structure through a nested solver")
+  if _reaches_op(proof_targets, ExprOp.EXTERN):
+    raise NotQuadratic(f"{problem.name}: cannot prove QP structure through a nested solver or extern")
   if _reaches_op(proof_targets, ExprOp.STOP_GRADIENT):
     raise NotQuadratic(f"{problem.name}: cannot prove QP structure through stop_gradient")
   if _decides_on(proof_targets, problem._var_symbols):
@@ -270,19 +270,19 @@ def build_qp[SV, NV, SP, NP](
     f"{name}_oracle", params, oracle_outputs, problem.params.names, tuple(f"qp:{output}" for output in oracle_names)
   )
 
-  solver_vars = problem.vars.with_types(tuple(TensorType(expr.shape, expr.type.dtype, diff=False) for expr in problem._var_symbols))
+  solver_vars = problem.vars
   input_tree = group(
     solver_vars,
     solver_vars.relabel("lam:"),
-    arg("lam_eq", TensorType((n_eq,), diff=False)),
-    arg("lam_ineq", TensorType((n_ineq,), diff=False)),
+    arg("lam_eq", TensorType((n_eq,))),
+    arg("lam_ineq", TensorType((n_ineq,))),
     problem.params,
   )
   output_tree: Tree[Any, Any] = group(
     solver_vars,
     solver_vars.relabel("lam:"),
-    arg("lam_eq", TensorType((n_eq,), diff=False)),
-    arg("lam_ineq", TensorType((n_ineq,), diff=False)),
+    arg("lam_eq", TensorType((n_eq,))),
+    arg("lam_ineq", TensorType((n_ineq,))),
   )
   descriptor = SolverDescriptor(
     name=name,

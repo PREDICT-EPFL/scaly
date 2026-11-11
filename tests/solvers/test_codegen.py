@@ -20,7 +20,7 @@ import pytest
 
 import scaly as sc
 from tests.solvers.problem_helpers import build_qp
-from scaly.codegen import render_c_source
+from tests.solvers.problem_helpers import render_solver_source as render_c_source
 from scaly.codegen.jit import CompiledFunction, JitError
 from scaly.solvers.registry import available_backends
 from scaly.solvers.stats import CSolverStats
@@ -241,6 +241,9 @@ int main(void) {{
 """.replace('#include "', '#include <math.h>\n#include "', 1)
   )
   executable = tmp_path / "driver"
+  from scaly.codegen.external import compile_library
+
+  objects = [obj for build in module._library_builds for obj in compile_library(build, c_compiler())]
   obj = source.with_suffix(".o")
   includes = [flag for flag in module.link_flags if flag.startswith("-I")]
   cc = c_compiler()
@@ -253,6 +256,7 @@ int main(void) {{
       "-Wall",
       "-Werror",
       str(obj),
+      *objects,
       str(driver),
       *module.link_flags,
       "-lm",
@@ -306,6 +310,9 @@ int main(void) {{
 }}
 """
   )
+  from scaly.codegen.external import compile_library
+
+  objects = [obj for build in module._library_builds for obj in compile_library(build, c_compiler())]
   obj = source.with_suffix(".o")
   includes = [flag for flag in module.link_flags if flag.startswith("-I")]
   cc = c_compiler()
@@ -319,6 +326,7 @@ int main(void) {{
       "-Wall",
       "-Werror",
       str(obj),
+      *objects,
       str(driver),
       *module.link_flags,
       "-lm",
@@ -330,3 +338,127 @@ int main(void) {{
   )
   path = os.pathsep.join([*map(str, solver_paths().lib_dirs), os.environ["PATH"]])
   subprocess.run([str(executable)], check=True, capture_output=True, env={**os.environ, "PATH": path})
+
+
+@pytest.mark.parametrize(
+  "backend", [pytest.param("piqp", marks=pytest.mark.solver("piqp")), pytest.param("ipopt", marks=pytest.mark.solver("ipopt"))]
+)
+def test_solver_manifest_builds_without_backend_flags(backend: str, tmp_path: Path) -> None:
+  import json
+  import sys
+  from scaly.codegen import write_module
+
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("target", 2), name="manifest_tracking")
+  def tracking(x: sc.Expr, target: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    return sc.ProblemSpec(minimize=sc.sumsqr(x - target))
+
+  solve = sc.solver(tracking, backend, name="manifest_solver")
+  module = write_module(solve.function, tmp_path)
+  manifest = json.loads((tmp_path / "manifest_solver.build.json").read_text())
+  assert manifest["libraries"][0]["link"] == ["piqpc" if backend == "piqp" else "ipopt"]
+  assert manifest["libraries"][0]["library_dirs"]
+  cc = c_compiler()
+  objects, flags, dll_dirs = [], [], []
+  for index, library in enumerate(manifest["libraries"]):
+    includes = ["-I" + str(tmp_path / path) for path in library["include_dirs"]]
+    defines = [f"-D{name}" + (f"={value}" if value is not None else "") for name, value in library["defines"].items()]
+    for i, source in enumerate(library["sources"]):
+      obj = tmp_path / f"library_{index}_{i}.o"
+      subprocess.run(
+        [*cc, "-c", str(tmp_path / source), *includes, *defines, *library["compile_flags"], "-o", str(obj)], check=True, capture_output=True
+      )
+      objects.append(str(obj))
+    dll_dirs.extend(library["library_dirs"])
+    flags.extend("-L" + directory for directory in library["library_dirs"])
+    if sys.platform != "win32":
+      flags.extend("-Wl,-rpath," + directory for directory in library["library_dirs"])
+    flags.extend("-l" + name for name in library["link"])
+  driver = tmp_path / "main.c"
+  driver.write_text(f"""#include <math.h>
+#include "{module.header_name}"
+int main(void) {{
+  double zero[2] = {{0,0}}, empty[1] = {{0}}, target[2] = {{0.3,-0.7}}, x[2], lam[2];
+  const double* arg[] = {{zero, zero, empty, empty, target}};
+  double* res[] = {{x, lam, empty, empty}};
+  double w[manifest_solver_SZ_W > 0 ? manifest_solver_SZ_W : 1];
+  scaly_solver_stats stats;
+  if (manifest_solver(arg, res, 0, w, 0)) return 1;
+  if (manifest_solver_stats(&stats) || stats.status != SCALY_SOLVE_OK) return 2;
+  return fabs(x[0]-target[0]) > 1e-6 || fabs(x[1]-target[1]) > 1e-6;
+}}
+""")
+  executable = tmp_path / ("manifest.exe" if sys.platform == "win32" else "manifest")
+  subprocess.run(
+    [*cc, str(tmp_path / manifest["source"]), str(driver), *objects, *flags, *("-l" + name for name in manifest["link"]), "-o", str(executable)],
+    check=True,
+    capture_output=True,
+  )
+  path = os.pathsep.join([*dll_dirs, os.environ["PATH"]])
+  subprocess.run([str(executable)], env={**os.environ, "PATH": path}, check=True, capture_output=True)
+
+
+@pytest.mark.solver("piqp")
+def test_missing_solver_library_keeps_the_solver_diagnostic(monkeypatch: pytest.MonkeyPatch) -> None:
+  from scaly.codegen import external, render_c_module
+
+  solve = build_qp(P=np.eye(2), c=np.array([1.0, 2.0]), name="missing_solver")
+  monkeypatch.setattr(external, "solver_discoverable", lambda name: False)
+  for action in (lambda: render_c_module(solve.function).link_flags, lambda: solve(())):
+    with pytest.raises(sc.SolverLibraryError, match="SCALY_BUILD_SOLVERS=required uv sync"):
+      action()
+
+
+def test_solver_system_soname_does_not_add_the_working_directory(monkeypatch: pytest.MonkeyPatch) -> None:
+  from dataclasses import replace
+  from scaly.solvers import paths
+  from scaly.function.model import as_concrete
+
+  discovered = paths.solver_paths()
+  monkeypatch.setattr(paths, "solver_paths", lambda **kwargs: replace(discovered, loads={**discovered.loads, "piqp": "libpiqpc.so.0"}))
+  solve = build_qp(P=np.eye(2), c=np.zeros(2))
+  library = as_concrete(solve.function).outputs[0].attrs["callee"].library
+  assert library.library_dirs == ()
+
+
+@pytest.mark.solver("ipopt")
+def test_solver_oracles_follow_the_module_recipe(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+  from scaly.codegen import render_c_module, write_module
+  from scaly.codegen.external import prepare_library
+  from scaly.codegen.toolchain import find_c_compiler, no_gather_flags, vector_libm_flags
+  import json
+  import platform
+
+  @sc.problem(vars=sc.arg("x", 64), params=sc.arg("target", 64), name="recipe_solver")
+  def tracking(x: sc.Expr, target: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    return sc.ProblemSpec(minimize=(x.sin() * target + x * x).sum() + sc.sumsqr(x.exp() / x.exp().sum()))
+
+  solve = sc.solver(tracking, "ipopt")
+  portable = render_c_module(solve.function, lanes=1, dialect="c", frame_budget=0)
+  source = next(iter(dict(portable._libraries[0].sources).values()))
+  assert "__attribute__((vector_size" not in source
+  assert portable.workspace_size > 0
+  monkeypatch.setenv("SCALY_CC_OPT", "-O0")
+  vector_libm = "glibc" if platform.machine().lower() == "x86_64" and platform.libc_ver()[0] == "glibc" else "none"
+  module = render_c_module(solve.function, cpu="native", lanes=4, vector_libm=vector_libm, reciprocal=True)
+  library = module._libraries[0]
+  assert library.sources != portable._libraries[0].sources
+  if vector_libm == "glibc":
+    assert "_ZGV" in next(iter(dict(library.sources).values()))
+    assert "mvec" in library.link
+  generic = render_c_module(module.fun, lanes=1, dialect="c")
+  assert not set(module.recipe.cpu_flags) & set(generic._libraries[0].compile_flags)
+  assert "mvec" not in generic._libraries[0].link
+  compiler = find_c_compiler()
+  assert compiler is not None
+  flags = prepare_library(library, compiler.command).flags
+  for flag in (
+    "-O0",
+    *module.recipe.cpu_flags,
+    "-fno-math-errno",
+    *no_gather_flags(compiler.command),
+    *vector_libm_flags(compiler.command, vector_libm),
+  ):
+    assert flag in flags
+  write_module(solve.function, tmp_path, cpu="native", lanes=4, vector_libm=vector_libm)
+  manifest = json.loads((tmp_path / "recipe_solver_ipopt.build.json").read_text())
+  assert "-O0" in manifest["libraries"][0]["compile_flags"]

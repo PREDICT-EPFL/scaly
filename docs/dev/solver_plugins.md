@@ -76,19 +76,18 @@ choices. Tuning options are Python runtime data.
 `scaly.codegen.solver.SolverWrapperCtx`:
 
 - `ctx.symbol` is the solver's mangled C identifier. Prefix every static the template declares with
-  it, since multiple solvers can share one translation unit.
+  it. Each solver wrapper compiles in its own translation unit.
 - `ctx.raw_symbol` is the name of the function the template must define.
 - `ctx.stats_symbol` is the `scaly_solver_stats` static the template must fill on every call. Core
   declares it and exports the `<symbol>_stats(...)` accessor, and the plugin only writes the fields.
-- `ctx.options_index` is this solver's index in the call-time `solver_options` array.
-- `ctx.oracle_options(fn)` returns the context argument for a generated oracle,
-  or an empty tuple for an external oracle. Append it after the oracle's workspace argument.
 - `ctx.raw_symbol_of(fn)` gives the C symbol of an oracle/derivative `Function` or `ExternalOracle`
   from the descriptor. Scaly renders ordinary functions into the same translation unit.
   An external oracle contributes its declared source and raw symbol directly before the wrapper.
+  Declare supplied functions `static` when sharing their source between solvers, since each
+  bridge is a separate translation unit.
 
 The returned lines are C source, emitted verbatim into the translation unit between the oracle
-kernels and the public entry point. The entry point follows Scaly's application binary interface,
+kernels and the external solve function. The entry point follows Scaly's application binary interface,
 or ABI.
 
 ### Required signature
@@ -99,20 +98,18 @@ With `I = len(desc.input_signature)` and `O = len(desc.output_signature)`:
 static void <ctx.raw_symbol>(const double* in0, ..., const double* in{I-1},
                              double* out0, ..., double* out{O-1},
                              double* w,
-                             const scaly_solver_option* const* solver_options) { ... }
+                             const scaly_solver_option* options) { ... }
 ```
 
-`w` is the caller's scratch workspace. Pass it after the output pointers of every oracle `_raw` call,
-followed by the context argument returned by `ctx.oracle_options(oracle)`.
+`w` is the caller's scratch workspace. Pass it after the output pointers of every oracle `_raw` call.
 An oracle that needs workspace cannot accept `NULL`. Do not use it for the
 wrapper's own storage. Solver workspaces and O(n²) buffers belong in `static` locals, since the
 wrapper is non-reentrant by contract (see [the generated interface](../how_it_works/generated_interface.md)).
 
 ### Oracle calling convention
 
-Every descriptor `Function` renders as
-`static void <name>_raw(const double* <in0>, ..., double* <out0>, ..., double* w,
-const scaly_solver_option* const* solver_options)` inside a solver-bearing module,
+Each descriptor `Function` has a bridge entry named by `ctx.raw_symbol_of(fn)`,
+with signature `static void <symbol>(const double* <in0>, ..., double* <out0>, ..., double* w)`,
 with inputs and outputs in the Function's declared order. External oracles retain
 their declared flat-buffer interface ending in `double* w`.
 
@@ -157,7 +154,8 @@ It checks names, types and combinations and supplies the backend's defaults.
 It returns two dicts. Core stores structural choices in `desc.compile_options`.
 It packs runtime tuning into a null-terminated `scaly_solver_option` array and
 passes it through the `_with_options` entry on every numerical call.
-The wrapper reads its array at `solver_options[ctx.options_index]`.
+The host entry sets each bridge's option pointer before executing the graph.
+The wrapper receives that pointer as its final `options` argument.
 
 Option kind `0` stores an integer, kind `1` a number and kind `2` a string.
 The [C option interface](../guide/codegen.md#solver-options-in-c) describes the
@@ -284,6 +282,9 @@ History:
 - v8: call-time option arrays, `prepare_options`, the `_with_options` entry and
   its context argument on generated internal calls. The preparation hook separates
   fixed compilation choices from runtime tuning.
+
+- v9: core renders solver bridges with their oracles as external libraries using the
+  module build recipe. Wrapper options use one pointer, and oracle calls end at `w`.
 
 ## What core owns
 

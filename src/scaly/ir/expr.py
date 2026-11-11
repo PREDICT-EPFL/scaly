@@ -99,7 +99,6 @@ class ExprOp(StrEnum):
   EXTERN = "extern"
   LOOP = "loop"
   COND = "cond"
-  SOLVER_CALL = "solver_call"
   PRINT = "print"
   STOP_GRADIENT = "stop_gradient"
 
@@ -170,7 +169,6 @@ COMMON_STRUCTURAL = {
   ExprOp.EXTERN,
   ExprOp.LOOP,
   ExprOp.COND,
-  ExprOp.SOLVER_CALL,
   ExprOp.PRINT,
   ExprOp.STOP_GRADIENT,
 }
@@ -284,7 +282,6 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.EXTERN: OpInfo(ExprOp.EXTERN, None),
   ExprOp.COND: OpInfo(ExprOp.COND, None, support_rule="cond"),
   ExprOp.LOOP: OpInfo(ExprOp.LOOP, None, support_rule="loop"),
-  ExprOp.SOLVER_CALL: OpInfo(ExprOp.SOLVER_CALL, None, False),
   ExprOp.PRINT: OpInfo(ExprOp.PRINT, None, support_rule="preserve"),
   ExprOp.STOP_GRADIENT: OpInfo(ExprOp.STOP_GRADIENT, 1, pattern_rule="preserve"),
 }

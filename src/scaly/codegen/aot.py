@@ -1,15 +1,4 @@
-"""AOT: lower a ``ConcreteFunction`` once and package the result as the :class:`CModule` that both the
-file-writing driver here and ``codegen/jit.py`` consume.
-
-``_lower`` is the single render context. It lowers ``fun`` exactly once and holds everything the
-artifacts read off that lowering, so the header's ``SZ_W``, the entry's null check and a consumer's
-workspace allocation cannot disagree. The header comes in two languages (``lang="c"`` here,
-``lang="cpp"`` in ``codegen/cpp.py``) and either can carry the CasADi layer (``codegen/casadi.py``). A function with no solver in its call graph renders entirely
-through ``codegen/c``. A **solver-bearing** graph is orchestrated here: every non-solver ConcreteFunction
-(oracle, host caller, intermediate) is a Program-IR ``_raw`` and each ``solver ConcreteFunction`` is the
-``codegen/solver`` wrapper template that drives its (Program-IR) oracles — the one sanctioned
-non-Program-IR path (see ``docs/how_it_works/solvers.md``).
-"""
+"""Lower a Function once and package its generated C, header and external build requirements."""
 
 from __future__ import annotations
 
@@ -21,7 +10,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from scaly.codegen.external import LibraryBuild, export_libraries, prepare_library
+from scaly.codegen.external import LibraryBuild, export_libraries, libraries_of, prepare_library
 from scaly.function.extern import CLibrary
 from scaly.codegen.toolchain import find_c_compiler, BuildRecipe, CPU_LEVELS, CDialect, CpuLevel, LaneCount, VectorLibm
 from scaly.codegen.abi import (
@@ -41,38 +30,33 @@ from scaly.codegen.c import (
   _includes,
   _render_entry,
   _render_raw_callee,
-  entry_prologue,
   entry_workspace,
   render_program_c,
 )
 from scaly.codegen.casadi import (
   casadi_declarations,
   casadi_defines,
-  casadi_gather,
   casadi_output_sparsities,
   casadi_layout,
   render_casadi_queries,
 )
 from scaly.codegen.cpp import render_cpp_header
 from scaly.codegen.solver import (
-  render_solver_raw,
-  solver_includes,
+  prepare_solver_calls,
   solver_stats_symbols,
   solver_functions,
   solver_options_c_defs,
   render_solver_defaults,
   solver_options_declarations,
 )
-from scaly.ir.expr import callees_of
 from scaly.ir.layout import DenseLayout, SparseLayout
 from scaly.function.concrete import ConcreteFunction
 from scaly.function.model import Function, as_concrete
 from scaly.passes.lowering import lower_function, main_proc, workspace_dtype
 from scaly.passes.program import ProgramObserver
-from scaly.solvers.graph import external_oracles, is_solver_function, solver_backends_used, solver_callees
-from scaly.solvers.paths import backend_compile_flags
+from scaly.solvers.graph import solver_backends_used
 from scaly.solvers.solver import Solver
-from scaly.solvers.stats import stats_c_defs, stats_c_timing_defs
+from scaly.solvers.stats import stats_c_defs
 from scaly.utils.names import NameScope
 
 if TYPE_CHECKING:
@@ -105,10 +89,7 @@ class CModule:
   casadi: bool = False
   recipe: BuildRecipe = BuildRecipe()
 
-  @cached_property
-  def _libraries(self) -> tuple[CLibrary, ...]:
-    """Build descriptions reached by the lowered graph, once per library."""
-    return tuple(dict.fromkeys(fn.library for fn in self.program.attrs.get("externs", ())))
+  _libraries: tuple[CLibrary, ...] = ()
 
   @cached_property
   def _library_builds(self) -> tuple[LibraryBuild, ...]:
@@ -145,11 +126,8 @@ class CModule:
 
   @cached_property
   def link_flags(self) -> tuple[str, ...]:
-    """Compiler and linker flags for ``backends``: include, lib, rpath and ``-l`` flags, plus libraries required by the math recipe. Resolved on demand because ``solvers.paths`` raises ``SolverLibraryError`` when a
-    backend's library or header is missing: rendering has to stay possible on a machine without the
-    vendored solver stack, and against a backend that has no library at all (the fake backends in
-    ``tests/solvers/test_registry.py``)."""
-    return (*backend_compile_flags(self.backends), *self.recipe.link_flags, *(flag for build in self._library_builds for flag in build.link_flags))
+    """Resolved external-library and math linker flags for the current toolchain."""
+    return (*self.recipe.link_flags, *(flag for build in self._library_builds for flag in build.link_flags))
 
 
 class RenderObserver(Protocol):
@@ -184,6 +162,7 @@ class _RenderCtx:
   backends: tuple[str, ...]
   workspace_size: int
   recipe: BuildRecipe
+  libraries: tuple[CLibrary, ...]
 
 
 def _lower(
@@ -197,26 +176,18 @@ def _lower(
   packed ``sz_w`` from ``passes.pack_workspace``, which also accounts for a solver wrapper passing
   its ``w`` straight to the oracle."""
   backends = solver_backends_used(fun)
-  if backends:
-    solver_stats_symbols(fun)  # validate duplicate solver symbols before lowering or compilation
+  reserved = tuple(f"{c_ident(fn.name)}_{suffix}" for fn in solver_functions(fun) for suffix in ("solve", "stats", "set_options", "default_options"))
+  prepared, libraries = prepare_solver_calls(fun, recipe) if backends else (fun, libraries_of(fun))
   prog = lower_function(
-    fun, observe=observe, observe_expr=observe_expr, reciprocal=recipe.reciprocal, lanes=recipe.lanes, frame_budget=recipe.frame_budget
+    prepared,
+    reserved_names=reserved,
+    observe=observe,
+    observe_expr=observe_expr,
+    reciprocal=recipe.reciprocal,
+    lanes=recipe.lanes,
+    frame_budget=recipe.frame_budget,
   )
-  sz_w = (
-    _solver_root_workspace(prog, dict(prog.attrs["function_symbols"])[fun]) if is_solver_function(fun) else int(main_proc(prog).attrs.get("sz_w", 0))
-  )
-  return _RenderCtx(fun, prog, backends, sz_w, recipe)
-
-
-def _solver_root_workspace(prog: ProgramNode, name: str) -> int:
-  pc = int(prog.attrs.get("proc_count", 0))
-  oracle_names = set(prog.attrs.get("solver_oracles", {}).get(name, ()))
-  return max(
-    (
-      int(prog.attrs.get("solver_external_workspace", {}).get(name, 0)),
-      *(int(pr.attrs.get("sz_w", 0)) for pr in prog.args[:pc] if pr.attrs["name"] in oracle_names),
-    )
-  )
+  return _RenderCtx(fun, prog, backends, int(main_proc(prog).attrs.get("sz_w", 0)), recipe, libraries)
 
 
 def _c_array(values: tuple[int, ...]) -> str:
@@ -388,27 +359,15 @@ def _render_source(ctx: _RenderCtx, *, casadi: bool) -> str:
 
 
 def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
-  """One translation unit for a solver-bearing graph. The non-solver Functions (oracles, the host
-  caller, any intermediates) are Program-IR ``_raw`` callees; each ``solver ConcreteFunction`` is the
-  ``solver`` wrapper driving them. ``_function_order`` is topological — a solver sits after its
-  oracle PROCs and before the function that calls it — so emitting each wrapper after the PROCs up
-  to its oracles never forward-references a ``_raw``."""
-  fun, prog = ctx.fun, ctx.prog  # solver callees opaque; oracles + host fns are PROCs (see passes/lowering/)
-  pc = int(prog.attrs.get("proc_count", 1))
-  procs = {pr.attrs["name"]: pr for pr in prog.args[:pc]}
-  lines: list[str] = [
-    *_includes(
-      ("#include <time.h>", "#include <string.h>", *solver_includes(fun)),
-      dialect=ctx.recipe.dialect,
-      prog=prog,
-      vector_libm=ctx.recipe.vector_libm,
-    ),
+  fun, prog = ctx.fun, ctx.prog
+  count = int(prog.attrs["proc_count"])
+  solvers = solver_functions(fun)
+  lines = [
+    *_includes(prog=prog, dialect=ctx.recipe.dialect, vector_libm=ctx.recipe.vector_libm),
     "",
     *abi_status_defines(),
     "",
     *stats_c_defs(),
-    "",
-    *stats_c_timing_defs(),
     *solver_options_c_defs(),
     "",
     *(casadi_defines() + [""] if casadi else []),
@@ -416,61 +375,30 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
     'extern "C" {',
     "#endif",
     "",
+    *extern_declarations(prog),
   ]
-  lines += extern_declarations(prog)
-  order = _function_order(fun)
-  solvers = solver_functions(fun)
-  symbols = dict(prog.attrs["function_symbols"])
-  options_indices = {fn: i for i, fn in enumerate(solvers)}
-  runtime_callees = frozenset((*procs, *(symbols[fn] for fn in solvers)))
-  external_sources: list[str] = []
-  raw_definitions: dict[str, str] = {}
-  for fn in order:
-    for oracle in external_oracles(fn):
-      previous = raw_definitions.setdefault(oracle.raw_symbol, oracle.source)
-      if previous != oracle.source:
-        raise ValueError(f"external oracle symbol {oracle.raw_symbol!r} has conflicting source definitions")
-      if oracle.source and oracle.source not in external_sources:
-        external_sources.append(oracle.source)
-  for source in external_sources:
-    lines += [*source.splitlines(), ""]
-  # Program order also puts a callee before its callers, and it is the only order that knows the
-  # PROCs the program passes split off a ConcreteFunction's PROC (``passes/program/hoist_invariant.py``).
-  pending = [pr for pr in prog.args[:pc] if pr.attrs["name"] != symbols[fun]]
-  reserved_names = _c_reserved_names(prog)
-
-  def flush(until: str | None) -> None:
-    names = [pr.attrs["name"] for pr in pending]
-    count = names.index(until) + 1 if until in names else len(pending) if until is None else 0
-    for pr in pending[:count]:
-      lines.extend(
-        (
-          *_render_raw_callee(
-            pr, dialect=ctx.recipe.dialect, vector_libm=ctx.recipe.vector_libm, reserved_names=reserved_names, solver_callees=runtime_callees
-          ),
-          "",
-        )
-      )
-    del pending[:count]
-
-  for fn in order if is_solver_function(fun) else order[:-1]:
-    if is_solver_function(fn):
-      lines.extend((*render_solver_raw(fn, options_index=options_indices[fn], include_external_sources=False, function_symbols=symbols), ""))
-    else:
-      flush(symbols[fn])
-  flush(None)
-  if is_solver_function(fun):
-    lines += _render_solver_entry(fun, ctx.workspace_size, casadi=casadi, options_count=len(solvers))
-  else:
-    lines += _render_entry(
-      procs[symbols[fun]],
-      fun,
-      casadi=casadi,
-      dialect=ctx.recipe.dialect,
-      vector_libm=ctx.recipe.vector_libm,
-      solver_callees=runtime_callees,
-      options_count=len(solvers),
+  for fn in solvers:
+    symbol = c_ident(fn.name)
+    lines.extend(
+      [
+        f"void {symbol}_set_options(const scaly_solver_option* options);",
+        f"int {symbol}_stats(scaly_solver_stats* out);",
+      ]
     )
+  for proc in prog.args[: count - 1]:
+    lines.extend(
+      [*_render_raw_callee(proc, dialect=ctx.recipe.dialect, vector_libm=ctx.recipe.vector_libm, reserved_names=_c_reserved_names(prog)), ""]
+    )
+  entry = _render_entry(
+    main_proc(prog),
+    fun,
+    casadi=casadi,
+    dialect=ctx.recipe.dialect,
+    vector_libm=ctx.recipe.vector_libm,
+    options_count=len(solvers),
+    entry_setup=[f"  {c_ident(fn.name)}_set_options(solver_options[{i}]);" for i, fn in enumerate(solvers)],
+  )
+  lines.extend(entry)
   symbol = c_ident(fun.name)
   lines += ["", *render_solver_defaults(fun)]
   lines += [
@@ -480,24 +408,9 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
     "}",
   ]
   if casadi:
-    lines += ["", *render_casadi_queries(fun, entry_workspace(fun, ctx.workspace_size, casadi=True))]
-  lines += ["", "#ifdef __cplusplus", "}", "#endif"]
+    lines.extend(["", *render_casadi_queries(fun, entry_workspace(fun, ctx.workspace_size, casadi=True))])
+  lines.extend(["", "#ifdef __cplusplus", "}", "#endif"])
   return "\n".join(lines).rstrip() + "\n"
-
-
-def _render_solver_entry(fun: ConcreteFunction, sz_w: int, *, casadi: bool, options_count: int) -> list[str]:
-  """The entry of a root ``solver ConcreteFunction``: the null checks, then one call into its wrapper."""
-  symbol = c_ident(fun.name)
-  res = {name: f"res[{i}]" for i, name in enumerate(fun.output_names)}
-  lines = entry_prologue(fun, entry_workspace(fun, sz_w, casadi=casadi), options_count=options_count)
-  epilogue: list[str] = []
-  if casadi:
-    gather = casadi_gather(fun, sz_w)
-    res.update(gather.ptr)
-    lines += gather.setup
-    epilogue = gather.epilogue
-  args = [*(f"arg[{i}]" for i in range(len(fun.inputs))), *res.values(), "w", "solver_options"]
-  return [*lines, f"  {symbol}_raw({', '.join(args)});", *epilogue, "  return SCALY_SUCCESS;", "}"]
 
 
 def _render_observed(
@@ -620,6 +533,7 @@ def render_c_module(
     lang=lang,
     casadi=casadi,
     recipe=ctx.recipe,
+    _libraries=ctx.libraries,
   )
 
 
@@ -729,45 +643,9 @@ def main(argv: list[str] | None = None) -> None:
   print(module.recipe.comment(module.source_name).rstrip())
   if module._libraries:
     print("build manifest: " + str(args.out_dir / f"{c_ident(module.fun.name)}.build.json"))
-  flags = (*backend_compile_flags(module.backends), *module.recipe.link_flags)
+  flags = module.recipe.link_flags
   if flags:
     print("link flags: " + " ".join(flags))
-
-
-def _function_order(fun: ConcreteFunction) -> list[ConcreteFunction]:
-  seen: set[int] = set()
-  ordered: list[ConcreteFunction] = []
-
-  def visit(fn: ConcreteFunction) -> None:
-    if id(fn) in seen:
-      return
-    seen.add(id(fn))
-    for callee in _callees(fn):
-      visit(callee)
-    ordered.append(fn)
-
-  visit(fun)
-  return ordered
-
-
-def _callees(fun: ConcreteFunction) -> list[ConcreteFunction]:
-  ret: list[ConcreteFunction] = []
-  seen: set[int] = set()
-  if is_solver_function(fun):
-    # solver Functions render via a custom template that calls the oracle (and for NLP, the
-    # derivative Functions) — these aren't reachable through the solver's own output graph (it
-    # only contains SOLVER_CALL nodes), so surface them explicitly here.
-    for callee in solver_callees(fun):
-      if id(callee) not in seen:
-        seen.add(id(callee))
-        ret.append(callee)
-    return ret
-  for node in fun.nodes:
-    for callee in callees_of(node):
-      if isinstance(callee, ConcreteFunction) and id(callee) not in seen:
-        seen.add(id(callee))
-        ret.append(callee)
-  return ret
 
 
 if __name__ == "__main__":

@@ -278,17 +278,14 @@ def test_fold_after_unit_unroll_reads_nonuniform_constant_table() -> None:
   assert stores[0].args[1].attrs["value"] == 7.0
 
 
-def test_procedure_pruning_keeps_entry_calls_and_solver_oracles_in_order() -> None:
+def test_procedure_pruning_keeps_entry_calls_in_order() -> None:
   leaf = proc_("leaf", [], [])
   dead = proc_("dead", [], [])
-  oracle = proc_("oracle", [], [])
   call = ProgramNode(ProgramOp.CALL, (), {"callee": "leaf", "n_in": 0, "n_out": 0, "returns": ()}, dtype=dtypes.float64)
   entry = proc_("entry", [], [call])
-  prog = ProgramNode(
-    ProgramOp.PROGRAM, (leaf, dead, oracle, entry), {"proc_count": 4, "solver_oracles": {"solver": ("oracle",)}}, dtype=dtypes.float64
-  )
+  prog = ProgramNode(ProgramOp.PROGRAM, (leaf, dead, entry), {"proc_count": 3}, dtype=dtypes.float64)
   result = prune_procedures(prog)
-  assert [proc.attrs["name"] for proc in result.args] == ["leaf", "oracle", "entry"]
+  assert [proc.attrs["name"] for proc in result.args] == ["leaf", "entry"]
 
 
 def test_generated_name_reserves_raw_and_c_identifier_collisions() -> None:

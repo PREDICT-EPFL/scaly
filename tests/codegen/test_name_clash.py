@@ -234,8 +234,25 @@ def test_solver_oracles_with_same_name_keep_their_identity() -> None:
 
   np.testing.assert_allclose(host(), [-4.0, -6.0], atol=1e-7)
   module = render_c_module(host, lanes=1)
-  symbols = dict(module.program.attrs["function_symbols"])
-  assert symbols[left_desc.oracle] != symbols[renamed]
+  assert len(module._libraries) == 2
+  sources = ["\n".join(text for _, text in library.sources) for library in module._libraries]
+  assert all(f"void {left_desc.oracle.name}_entry_raw(" in source for source in sources)
+  assert sources[0] != sources[1]
+
+
+@pytest.mark.solver("piqp")
+def test_solver_bridge_reserves_its_own_raw_symbol() -> None:
+  from dataclasses import replace
+
+  from scaly.function.model import as_concrete
+  from scaly.solvers.model import descriptor_function
+  from tests.solvers.problem_helpers import build_qp
+
+  original = build_qp(P=np.eye(2), c=np.array([1.0, 2.0]))
+  descriptor = as_concrete(original.function).descriptor
+  solve = descriptor_function(replace(descriptor, name=descriptor.oracle.name))
+  zero, empty = np.zeros(2), np.zeros(0)
+  np.testing.assert_allclose(solve(zero, zero, empty, empty)[0], [-1.0, -2.0], atol=1e-7)
 
 
 def test_header_scope_preserves_library_and_table_names() -> None:
@@ -344,3 +361,19 @@ int main(void) {{
   )
   subprocess.run([*c_compiler(), "-std=c11", "-Wall", "-Wextra", "-Werror", str(main), str(source), "-lm", "-o", str(exe)], check=True)
   subprocess.run([str(exe)], check=True)
+
+
+@pytest.mark.solver("piqp")
+@pytest.mark.parametrize("suffix", ["solve", "stats", "set_options", "default_options"])
+def test_host_cannot_use_a_solver_bridge_export_name(suffix: str) -> None:
+  from tests.solvers.problem_helpers import build_qp
+
+  solve = build_qp(P=np.eye(2), c=np.array([1.0, 2.0]), name="bridge_clash")
+
+  @sc.function(outputs=sc.arg("x", 2), name=f"bridge_clash_{suffix}")
+  def host():
+    zero, empty = sc.const(np.zeros(2)), sc.const(np.zeros(0))
+    return solve.function(zero, zero, empty, empty, ())[0]
+
+  with pytest.raises(ValueError, match="exported C identifier.*clashes"):
+    host()

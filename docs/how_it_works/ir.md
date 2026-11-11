@@ -127,7 +127,6 @@ Arity is the number of operands.
 | Assembly        | `stack`, `concat`                             | Variable | Along one axis                            |
 | Linear algebra  | `matmul`                                      | 2        | NumPy's rules, leading axes broadcast     |
 | Function calls  | `call`, `vmap`                                | Variable | An ordinary or a mapped call              |
-| Solvers         | `solver_call`                                 | Variable | A nested solve, not differentiable        |
 
 `dot`, `sumsqr`, `norm_1`, `norm_2`, `norm_inf`, `argmin`, `argmax`, `mean`,
 `diag` and `vec` are builders that expand into these operations. There are no matrix decompositions, interpolation tables or

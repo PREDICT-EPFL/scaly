@@ -152,10 +152,6 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
     return _cond_vjp(expr, cot, active, pullback=vjp)
   if expr.op == ExprOp.LOOP:
     raise NotImplementedError("derivatives through scan and while_loop are not implemented yet")
-  if expr.op == ExprOp.SOLVER_CALL:
-    if cot.op == ExprOp.CONST and cot.value is not None and not np.any(cot.value):
-      return tuple(zeros_like(arg) for arg in args)
-    raise NotImplementedError("active derivative through SOLVER_CALL is not implemented")
   raise NotImplementedError(f"VJP for op {expr.op!r} is not implemented")
 
 

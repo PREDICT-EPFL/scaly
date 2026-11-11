@@ -416,7 +416,6 @@ def test_aot_cli_exports_without_a_compiler_or_jit_cache(tmp_path, monkeypatch, 
   kernel = library_host(library)
   render = aot.render_c_module
   monkeypatch.setattr(aot, "render_c_module", lambda *args, **kwargs: replace(render(*args, **kwargs), backends=backends))
-  monkeypatch.setattr(aot, "backend_compile_flags", lambda names: ("-ltest_solver",) if names else ())
   monkeypatch.setattr(aot.importlib, "import_module", lambda name: SimpleNamespace(kernel=kernel))
   monkeypatch.setattr(aot, "find_c_compiler", lambda: None)
   cache = tmp_path / "cache"
@@ -424,7 +423,7 @@ def test_aot_cli_exports_without_a_compiler_or_jit_cache(tmp_path, monkeypatch, 
   aot.main(["model:kernel", "--out-dir", str(tmp_path / "export"), "--lanes", "1"])
   output = capsys.readouterr().out
   assert "build manifest: " in output
-  assert ("link flags: -ltest_solver" in output) == bool(backends)
+  assert "-ltest_solver" not in output
   assert not cache.exists()
   manifest = json.loads((tmp_path / "export" / "external_build_host.build.json").read_text())
   assert manifest["libraries"][0]["link"] == ["m"]

@@ -176,3 +176,11 @@ def solve_nlp(
     "lam_ineq": lam_ineq,
     "lam_box": lam_box,
   }
+
+
+def render_solver_source(fun) -> str:
+  """The host and all external translation units, for solver source assertions."""
+  from scaly.codegen.aot import render_c_module
+
+  module = render_c_module(fun)
+  return "\n".join((module.body, *(source for library in module._libraries for _, source in library.sources)))

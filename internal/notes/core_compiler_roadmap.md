@@ -1361,8 +1361,9 @@ an update of four entries in a 100k carry 354 times faster than with two alterna
 
 **[#83]. `sc.extern` and `sc.CLibrary`.** External C code is its own construct, not a Function body:
 
-- `sc.CLibrary(name, sources=, headers=, include_dirs=, defines=, compile_flags=, link=, versions=)`
-  is a frozen description of how to compile and link some C. It is the unit of compilation: the C
+- `sc.CLibrary(name, sources=, headers=, include_dirs=, library_dirs=, defines=, compile_flags=, link=, versions=)`
+  is a frozen description of how to compile and link some C. `library_dirs` locates installed
+  dependencies. It is the unit of compilation: the C
   sources are compiled once however many symbols are taken from them, and their flags apply to that
   translation unit only. Flags are written in clang's dialect, which the JIT always speaks after
   [#82], and libraries to link are named, not spelled as `-l` or `.lib` flags: the toolchain
@@ -1387,6 +1388,12 @@ its derivative sparsity is declared or dense. The solver plugins become externs 
 library, which removes `SOLVER_CALL` and [#61]'s zero-derivative guard, and replaces devrush's
 `function.extern = callee` set after construction (`function/extern.py` on that branch).
 `Expr.opaque()` stays a lowering hint.
+
+Revised 2026-11-11 for #342: `CLibrary.library_dirs` replaces compiler-environment-only
+lookup for installed plugins. Solver bridges retain their non-reentrant native workspace and
+statistics and add per-bridge option-pointer state, replacing the blanket reentrant-extern
+requirement for these bridges.
+
 
 ## Milestone checks
 

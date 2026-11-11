@@ -68,52 +68,19 @@ def lower_function(
   reciprocal: bool = False,
   lanes: Literal["auto"] | Literal[1, 2, 4, 8] = 1,
   frame_budget: int = 65536,
+  reserved_names: Iterable[str] = (),
 ) -> ProgramNode:
   """Lower ``fun`` into a Program IR ``PROGRAM`` node (verified before return).
 
   The returned PROGRAM holds every lowered callee PROC in topological order
   followed by ``fun``'s main PROC last.
 
-  A ``solver ConcreteFunction`` callee is **opaque**: its ``ExprOp.SOLVER_CALL`` body is not
-  lowered — the solver wrapper is rendered by the sanctioned ``codegen/solver``
-  path (rule 6) — but its oracle Functions *are* lowered to PROCs (the wrapper
-  calls them as ``<oracle>_raw``). The solver→oracle-name map is recorded on the
-  PROGRAM (``solver_oracles`` attr) so ``pack_workspace`` can size the caller's
-  ``w[]`` to fit the oracle and the CALL-to-solver gets ``callee_needs_w`` right.
   """
   fun = as_concrete(fun)
-  names, symbols, residuals = _function_names(fun)
+  names, symbols, residuals = _function_names(fun, reserved_names)
   callees: dict[ProcKey, ProgramNode] = {}
-  solver_fns: dict[ConcreteFunction, ConcreteFunction] = {}
-  from ...solvers.graph import is_solver_function, solver_callees
-
-  if is_solver_function(fun):
-    solver_fns[fun] = fun
-    for oracle in solver_callees(fun):
-      if oracle not in callees:
-        callees[oracle] = _lower_to_proc(oracle, callees, solver_fns, names, symbols, residuals, observe_expr=observe_expr)
-    prog = p.program([*callees.values()])
-    prog = ProgramNode(ProgramOp.PROGRAM, prog.args, {**prog.attrs, "solver_root": symbols[fun]}, dtype=prog.dtype)
-  else:
-    root = _lower_to_proc(fun, callees, solver_fns, names, symbols, residuals, auto_scalarize=False, observe_expr=observe_expr)
-    prog = p.program([*callees.values(), root])
-  if solver_fns:
-    solver_oracles = {symbols[sf]: tuple(symbols[o] for o in solver_callees(sf)) for sf in solver_fns}
-    from ...solvers.model import ExternalOracle
-
-    solver_external_workspace = {}
-    for sf in solver_fns:
-      desc = sf.descriptor
-      solver_external_workspace[symbols[sf]] = max(
-        (oracle.workspace_size for oracle in (desc.base, desc.grad, desc.jac, desc.hess, desc.bounds) if isinstance(oracle, ExternalOracle)),
-        default=0,
-      )
-    prog = ProgramNode(
-      ProgramOp.PROGRAM,
-      prog.args,
-      {**prog.attrs, "solver_oracles": solver_oracles, "solver_external_workspace": solver_external_workspace},
-      dtype=prog.dtype,
-    )
+  root = _lower_to_proc(fun, callees, names, symbols, residuals, auto_scalarize=False, observe_expr=observe_expr)
+  prog = p.program([*callees.values(), root])
   externs = tuple(fn for fn in symbols if isinstance(fn, _Extern))
   prog = ProgramNode(
     prog.op,
@@ -177,7 +144,6 @@ def _normalize_function(fun: ConcreteFunction, *, residuals: bool = False) -> Co
 def _lower_to_proc(
   fun: ConcreteFunction,
   callees: dict[ProcKey, ProgramNode],
-  solver_fns: dict[ConcreteFunction, ConcreteFunction],
   names: NameScope,
   symbols: dict[ConcreteFunction, str],
   residuals: frozenset[ConcreteFunction],
@@ -192,7 +158,7 @@ def _lower_to_proc(
   fun = _normalize_function(fun, residuals=fun in residuals)
   if observe_expr is not None:
     observe_expr("normalized", fun)
-  ctx = LowerCtx(fun, callees, solver_fns, names, symbols, residuals, observe_expr)
+  ctx = LowerCtx(fun, callees, names, symbols, residuals, observe_expr)
   if argument_support is not None:
     ctx.seed_pairs = True
     ctx.support_of = specialize_support(fun, argument_support, OP_INFO)
@@ -233,7 +199,6 @@ class LowerCtx:
     self,
     fun: ConcreteFunction,
     callees: dict[ProcKey, ProgramNode],
-    solver_fns: dict[ConcreteFunction, ConcreteFunction],
     names: NameScope,
     symbols: dict[ConcreteFunction, str],
     residuals: frozenset[ConcreteFunction],
@@ -244,7 +209,6 @@ class LowerCtx:
     self.support_of: Callable[[Expr], Support] = lambda node: node.support
     self.scalarize = False
     self.callees = callees
-    self.solver_fns = solver_fns  # identity -> solver ConcreteFunction (opaque callees; rendered by codegen/solver)
     self.program_names = names
     self.names = names.child()
     self.symbols = symbols
@@ -703,16 +667,16 @@ def _copy_loop(src: ProgramNode, dst: ProgramNode, shape: tuple[int, ...], names
   return p.for_(rng, [p.store(p.view(dst, [i]), p.load(p.view(src, [i])))])
 
 
-def _function_names(root: ConcreteFunction) -> tuple[NameScope, dict[ConcreteFunction, str], frozenset[ConcreteFunction]]:
+def _function_names(
+  root: ConcreteFunction, reserved_names: Iterable[str] = ()
+) -> tuple[NameScope, dict[ConcreteFunction, str], frozenset[ConcreteFunction]]:
   """Name every reachable function, and find those whose residuals some call reads."""
-  from ...solvers.graph import is_solver_function, solver_callees, external_oracles
 
-  names = NameScope()
+  names = NameScope(reserved_names)
   symbols: dict[ConcreteFunction, str] = {}
   functions: list[ConcreteFunction] = []
   seen: set[ConcreteFunction] = set()
   residuals: set[ConcreteFunction] = set()
-  oracles: set[ConcreteFunction] = set()
 
   external_symbols: dict[str, _Extern] = {}
 
@@ -729,11 +693,6 @@ def _function_names(root: ConcreteFunction) -> tuple[NameScope, dict[ConcreteFun
       return
     seen.add(function)
     functions.append(function)
-    for oracle in external_oracles(function):
-      names.occupied.add(oracle.raw_symbol)
-    for callee in solver_callees(function):
-      oracles.add(callee)
-      visit(callee)
     for node in function.nodes:
       for callee in callees_of(node):
         if node.op != ExprOp.LOOP and node.attrs["output"] >= len(callee.outputs):
@@ -741,26 +700,13 @@ def _function_names(root: ConcreteFunction) -> tuple[NameScope, dict[ConcreteFun
         visit(callee)
 
   visit(root)
-  solver_graph = any(is_solver_function(function) for function in functions)
-  for function in functions if solver_graph else ():
-    _check_float64_leaves(function, "a graph that calls a solver")
   if workspace_dtype(root) == dtypes.float32 and (needs := next((fn for fn in external_symbols.values() if fn.workspace), None)):
     raise LoweringError(f"external C function {needs.name!r} needs a double workspace, and {root.name!r} with only float32 leaves has a float one")
   symbols[root] = names.claim(root.name)
   names.occupied.add(f"{symbols[root]}_FRAME_BYTES")
   for function in functions:
-    if is_solver_function(function):
-      if function is not root:
-        symbols[function] = names.claim(function.name)
-      for suffix in ("stats", "default_options", "stats_data", "raw"):
-        names.claim(f"{symbols[function]}_{suffix}")
-  for function in functions:
     if function not in symbols:
       symbols[function] = names.procedure(function.name)
-  if residuals & oracles:
-    raise LoweringError(
-      f"a solver passes its oracles their outputs only, but a call reads residuals of {sorted(f.name for f in residuals & oracles)}"
-    )
   return names, symbols, frozenset(residuals)
 
 

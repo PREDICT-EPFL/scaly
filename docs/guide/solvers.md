@@ -506,12 +506,11 @@ The generated code includes the solver call and surrounding calculations.
 
 !!! warning "Solver sensitivities are not supported"
     An active derivative through a solver call raises `NotImplementedError`.
-    This applies to forward and reverse differentiation and Jacobian sparsity
-    analysis, including solver calls inside ordinary or mapped functions.
-    A solver call independent of the differentiated input does not block its
-    derivative. Dependency checks count every solver argument, including `x0`
-    and `warm`. They are conservative, so slicing away the solver result can
-    still leave a dependency that raises.
+    Forward and reverse differentiation require `sc.custom_derivative` rules on
+    a wrapping `Function`. Jacobian sparsity is conservatively dense through the
+    solve. A solver call independent of the differentiated input does not block
+    its derivative. Dependency checks count every solver argument, including
+    `x0` and `warm`.
 
 ## Statistics
 
@@ -581,8 +580,10 @@ input leaf, including initial multipliers.
 
 `write_module` and the `scaly_codegen` command accept a `Solver` directly.
 Other [code-generation functions](codegen.md) accept `solve.function`.
-Generated solver code needs the relevant native solver libraries, whose link
-flags are available in the rendered module comments.
+Generated solver code includes a build manifest listing the wrapper sources,
+headers, library directories and native libraries. Compile each listed source
+and link its object into the application, as described in the
+[export guide](codegen.md#solver-export-and-deployment-dependencies).
 
 Solver wrappers keep static state and are not reentrant. Concurrent calls to
 the same wrapper are unsupported. Python passes tuning options on each call.

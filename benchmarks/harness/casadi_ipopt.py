@@ -326,7 +326,7 @@ class CompiledCasadiIpopt:
     self.build_ms = (time.perf_counter() - started) * 1000.0
     self.metadata = json.loads(metadata_path.read_text())
     self.library = library
-    self._dll = load_library(library, isolated=True)
+    self._dll = load_library(library, isolated=True, library_dirs=tuple(str(path) for path in solver_paths().lib_dirs))
     self.resolved_ipopt_library = _symbol_library(self._dll)
     if _library_digest(self.resolved_ipopt_library) != _library_digest(self.configured_ipopt_library):
       raise RuntimeError(

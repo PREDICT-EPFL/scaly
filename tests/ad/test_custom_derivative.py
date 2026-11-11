@@ -713,12 +713,11 @@ def test_residual_names_avoid_output_names() -> None:
 
 @pytest.mark.solver("sqp")
 def test_a_solver_oracle_with_rules_keeps_the_signature_its_solver_calls() -> None:
-  """The solver wrapper passes an oracle its outputs only. The oracle's procedure writes no
-  residuals when it is also called directly, and a call reading one of its residuals raises."""
+  """The bridge oracle entry writes only declared outputs; host calls may also read residuals."""
   from dataclasses import replace
 
   from scaly.function.concrete import ConcreteFunction
-  from scaly.passes.lowering import LoweringError
+  from scaly.codegen import render_c_module
   from scaly.solvers.model import descriptor_function
 
   @sc.problem(vars=sc.arg("x", 2))
@@ -740,10 +739,14 @@ def test_a_solver_oracle_with_rules_keeps_the_signature_its_solver_calls() -> No
   direct = base._call(solver.inputs[:1])[0]
   for outputs in ([solver._call(solver.inputs)[0]], [solver._call(solver.inputs)[0], direct], [direct, solver._call(solver.inputs)[0]]):
     outer = ConcreteFunction._from_exprs("outer", solver.inputs, outputs, solver.input_names, [f"y{i}" for i in range(len(outputs))])
-    program = lower_function(outer)
-    (proc,) = [proc for proc in program.args[: program.attrs["proc_count"]] if proc.attrs["name"] == base.name]
-    assert proc.attrs["param_count"] == len(base.inputs) + len(base.outputs)
+    module = render_c_module(outer)
+    source = "\n".join(text for library in module._libraries for _, text in library.sources)
+    signature = next(line for line in source.splitlines() if f"void {base.name}_entry_raw(" in line)
+    assert signature.count("double*") == len(base.inputs) + len(base.outputs) + 1
+
   residual = base._call(solver.inputs[:1])[1]
   outer = ConcreteFunction._from_exprs("outer", solver.inputs, [solver._call(solver.inputs)[0], residual], solver.input_names, ["y", "r"])
-  with pytest.raises(LoweringError, match="residuals"):
-    lower_function(outer)
+  values = [np.array([1.0, 2.0]), np.zeros(2), np.zeros(0), np.zeros(0)]
+  result, residual = outer(*values)
+  np.testing.assert_allclose(result, np.zeros(2), atol=1e-5)
+  np.testing.assert_array_equal(residual, values[0])
