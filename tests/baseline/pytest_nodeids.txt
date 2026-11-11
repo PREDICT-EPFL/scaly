@@ -4024,6 +4024,8 @@ tests/passes/lowering/test_calls.py::test_condition_and_narrow_store_prevent_exp
 tests/passes/lowering/test_calls.py::test_custom_rule_residual_shares_its_primal_invocation[False]
 tests/passes/lowering/test_calls.py::test_custom_rule_residual_shares_its_primal_invocation[True]
 tests/passes/lowering/test_calls.py::test_different_map_layouts_are_distinct_invocations
+tests/passes/lowering/test_calls.py::test_duplicate_loop_results_share_storage_and_hints[hints0]
+tests/passes/lowering/test_calls.py::test_duplicate_loop_results_share_storage_and_hints[hints1]
 tests/passes/lowering/test_calls.py::test_multi_output_map_uses_one_loop_and_matches_numpy[0]
 tests/passes/lowering/test_calls.py::test_multi_output_map_uses_one_loop_and_matches_numpy[1]
 tests/passes/lowering/test_calls.py::test_multi_output_map_uses_one_loop_and_matches_numpy[5]
@@ -4035,6 +4037,7 @@ tests/passes/lowering/test_calls.py::test_sparse_siblings_preserve_each_declared
 tests/passes/lowering/test_calls.py::test_sparse_siblings_preserve_each_declared_layout[5]
 tests/passes/lowering/test_calls.py::test_sparse_siblings_preserve_each_declared_layout[None]
 tests/passes/lowering/test_calls.py::test_static_loop_budget_boundary_and_scalar_override
+tests/passes/lowering/test_calls.py::test_static_loop_preserves_a_block_callee_boundary
 tests/passes/lowering/test_calls.py::test_unrolling_preserves_reduction_order_bitwise[False]
 tests/passes/lowering/test_calls.py::test_unrolling_preserves_reduction_order_bitwise[True]
 tests/passes/lowering/test_ctx.py::test_duplicate_rule_rejected_without_partial_registration

@@ -11,3 +11,6 @@ Preserve the ordered lowered schedule, hints, static eligibility, and existing s
 
 Focused proof: 76 tests passed including every existing C snapshot. Setting the budget to zero makes the new automatic-unroll gate fail.
 Measurements on la015, GCC 13.3 -O2 C99, lanes=1: scalar sin/multiply/add body costs 3 RHS. N=84/85 unroll, 5665/5722 C bytes, 252/255 arithmetic occurrences, 0.050/0.062 s compilation. N=86/200 roll, 1228/1229 bytes, 6 arithmetic occurrences, 0.042/0.043 s compilation. Scalar N=86 overrides the budget, 5779 bytes, 258 operations, 0.049 s compilation. Timings are observations on the shared machine, not isolated performance comparisons.
+
+First full suite passed: 3823 passed, 55 skipped; smoke, docs, types, Ruff and private-name checks passed. Added a reproduced duplicate-result registration fix so conflicting hints on the same numbered result obey block precedence. A second full suite will cover it.
+Roadmap departure: preserve narrow stores, call boundaries and effects by retaining those loops even under a scalar hint. This keeps the existing scalar interpreter's safety limits and is explicitly recorded beside #50.

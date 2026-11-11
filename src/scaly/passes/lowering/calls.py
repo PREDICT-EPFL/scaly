@@ -177,7 +177,8 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
     layouts = (*fn.input_tree.layouts[:n_carry], *(fn.output_tree.layouts[:n_carry] if fn is callee else ()))
     if any(layout is not None and not np.array_equal(layout.permutation, np.arange(len(layout.permutation))) for layout in layouts):
       raise LoweringError(f"loop carries of {fn.name!r} must use the canonical sparse layout")
-  used = {int(sibling.attrs["output"]): sibling for sibling in ctx.used_results[invocation_key(node)]}
+  siblings = ctx.used_results[invocation_key(node)]
+  used = {int(sibling.attrs["output"]): sibling for sibling in siblings}
   traj = {c for c in range(n_carry) if n_carry + n_ys + 1 + c in used}
   early = cond is not None or trip is not None
   name = ctx.names.allocate("i_loop")
@@ -276,7 +277,7 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
         stop = offset + length * type_.storage_size
         ctx.statements.append(p.for_(p.range_(e, start, stop), [p.store(p.view(buf, [p.var(e)]), _zero(type_.dtype))]))
 
-  hints = {sibling.lowering for sibling in used.values()}
+  hints = {sibling.lowering for sibling in siblings}
   if not early and not hints & {"block", "opaque"}:
     procs = {proc.attrs["name"]: proc for proc in ctx.callees.values()}
     proc = ctx.callees.get(callee)
@@ -319,8 +320,15 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
         *(p.store(target, value) for target, value in zip(targets, values, strict=True)),
       ]
 
+  for sibling in siblings:
+    if sibling.id not in ctx.value_buffers:
+      ctx.value_buffers[sibling.id] = ctx.buf_of(used[int(sibling.attrs["output"])]).attrs["name"]
+
 
 def _loop_cost(proc: ProgramNode, procs: dict[str, ProgramNode]) -> int | None:
+  """Count scalar right-hand sides through every static range and callee, or reject unsafe substitution."""
+  if proc.attrs.get("lowering") in ("block", "opaque"):
+    return None
   total = 0
   stack = [(stmt, 1) for stmt in proc.args[proc.attrs["param_count"] :]]
   while stack:
@@ -329,7 +337,7 @@ def _loop_cost(proc: ProgramNode, procs: dict[str, ProgramNode]) -> int | None:
       return None
     if stmt.op == ProgramOp.CALL:
       callee = procs.get(stmt.attrs["callee"])
-      if callee is None:
+      if callee is None or callee.attrs.get("lowering") in ("block", "opaque"):
         return None
       stack.extend((child, factor) for child in callee.args[callee.attrs["param_count"] :])
     elif stmt.op == ProgramOp.FOR:

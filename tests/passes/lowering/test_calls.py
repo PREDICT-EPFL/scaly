@@ -260,3 +260,26 @@ def test_condition_and_narrow_store_prevent_expansion() -> None:
   y, _ = sc.while_loop(cond, step, x, max_iter=2)
   fn = ConcreteFunction._from_exprs("conditional", [x], [y.scalar()], ["x"], ["y"])
   assert _has_carried_loop(fn)
+
+
+@pytest.mark.parametrize("hints", [("scalar", "block"), ("auto", "scalar")])
+def test_duplicate_loop_results_share_storage_and_hints(hints) -> None:
+  @sc.function(sc.arg("c", ()))
+  def step(c):
+    return c * 1.25 + 0.1
+
+  x = sc.sym("x")
+  y, _ = sc.scan(step, x, length=3)
+  fn = ConcreteFunction._from_exprs("duplicate_loop", [x], [y.with_lowering(h) for h in hints], ["x"], ["a", "b"])
+  assert _has_carried_loop(fn) == ("block" in hints)
+  a, b = fn(np.array(0.3))
+  assert a.tobytes() == b.tobytes()
+
+
+def test_static_loop_preserves_a_block_callee_boundary() -> None:
+  @sc.function(sc.arg("c", ()))
+  def blocked(c):
+    return (c + 1.0).block()
+
+  assert _has_carried_loop(_static_scan(blocked, 2))
+  assert _has_carried_loop(_static_scan(blocked, 2, "scalar"))
