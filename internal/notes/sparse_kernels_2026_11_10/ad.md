@@ -103,3 +103,15 @@ the new #359 reference. Focused checks on the published parent passed 1,515 test
 including calls, mapped calls, sparse AD, workload gates and dense C snapshots.
 The KKT test now asserts that the stored-values output is a NumPy array before
 indexing it, matching #328's broader numerical return type.
+
+After #315 merged, the AD commits were rebased onto main. The sole conflict was
+the end of `ad/forward.py::_pushforward`: tangent-pattern normalization stays
+before main's `_prunable_support(tangent) == frozenset()` test for inactive
+tangents. This keeps #167's support-aware zero handling and #46's stored pattern.
+Main's eager dense input normalization and temporary-and-reorder path for dense
+column-major outputs are retained. All three CI type-check variants pass without
+further numerical-call wrappers.
+The collection baseline's automatic merge retained the old `[100]` and `[400]`
+banded-test IDs alongside their newer symmetry parameters. A fresh complete
+collection removes those obsolete IDs and restores sorted order, with 3,832
+collected cases and no test removed.
