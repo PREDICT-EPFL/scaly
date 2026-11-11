@@ -412,7 +412,9 @@ entries by column must reorder the corresponding Jacobian rows and columns.
 
 !!! warning "Buffer compatibility"
     Dense arrays of rank greater than two are rejected by `casadi=True`.
-    Scalars, vectors, dense matrices, and compact sparse outputs are supported.
+    Scalars, vectors, dense matrices, compact sparse derivative outputs and
+    [sparse matrices](sparse_matrices.md#generated-c) in CSC order without
+    batch axes are supported.
     Solvers require row-major declarations for dense variables and parameters.
     To export `solver.function` with matrix arguments or results for CasADi,
     call it inside an ordinary `Function` and export that wrapper. Direct

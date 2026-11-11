@@ -14,7 +14,7 @@ interfaces for inspecting or extending the compiler.
       show_source: false
       filters:
         - "!^_"
-        - "!^(lowering|with_lowering|opaque|sym|const|support|values|to_dense)$"
+        - "!^(lowering|with_lowering|opaque|sym|const)$"
 
 ::: scaly.ir.expr.Expr.sym
     options:
@@ -26,13 +26,13 @@ interfaces for inspecting or extending the compiler.
     options:
       show_source: false
       show_signature: false
-      heading: "const(value, *, dtype=None)"
+      heading: "const(value, *, dtype=None, pattern=None)"
 
 ::: scaly.ir.expr.ExprOp
     options:
       show_source: false
       filters:
-        - "!^(PACK|VALUES|EXTERN|LOOP)$"
+        - "!^(EXTERN|LOOP)$"
 
 ::: scaly.ir.expr.OpInfo
     options:
@@ -40,7 +40,6 @@ interfaces for inspecting or extending the compiler.
       show_signature: false
       filters:
         - "!^_"
-        - "!^(pattern_rule|support_rule)$"
 
 ## Functions
 
@@ -74,7 +73,6 @@ expression graph for inspection and export.
       show_signature: false
       filters:
         - "!^_"
-        - "!^(pattern|storage_shape|storage_size)$"
 
 ::: scaly.ir.types.DType
 
@@ -90,7 +88,12 @@ expression graph for inspection and export.
       show_source: false
       filters:
         - "!^_"
-        - "!^canonicalize$"
+
+::: scaly.ir.types.CanonicalPattern
+    options:
+      show_source: false
+      filters:
+        - "!^_"
 
 ::: scaly.ir.types.as_dtype
 
@@ -168,6 +171,21 @@ expression graph for inspection and export.
 ::: scaly.function.sugar.vmap
     options:
       show_source: false
+
+## Sparse matrices
+
+These builders convert between sparse and dense tensors. The
+[sparse matrices guide](../guide/sparse_matrices.md) shows them in use.
+
+::: scaly.ir.expr.pack
+
+::: scaly.ir.expr.values
+
+::: scaly.ir.expr.to_dense
+
+::: scaly.ir.expr.from_dense
+
+::: scaly.ir.expr.sparsify
 
 ## PyTorch weights
 

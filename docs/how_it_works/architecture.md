@@ -156,7 +156,8 @@ seed once and adds that node to itself. The intern tables hold weak references, 
 are still garbage-collected. An explicit `sc.cse` pass remains for the cases interning cannot see.
 
 **Every node has a static type.** An expression node's `TensorType` holds a fixed shape, a data
-type and a differentiability flag. Program buffers have fixed shapes too. Nothing in the generated
+type, a differentiability flag and, for a [sparse matrix](../guide/sparse_matrices.md), the pattern
+of entries it stores. Program buffers have fixed shapes too. Nothing in the generated
 code allocates memory or checks a shape at run time, because no shape can change after tracing.
 
 **Each dialect has a verifier.** A table of rules states which operands, types and attributes each

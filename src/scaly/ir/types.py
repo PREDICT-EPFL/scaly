@@ -161,9 +161,10 @@ class SparsityPattern:
     return len(self.rows)
 
   def canonicalize(self) -> tuple[CanonicalPattern, tuple[int, ...]]:
-    """Return the interned row-major pattern and indices that reorder its values.
+    """Return the shared row-major pattern and the permutation that reorders its values.
 
-    ``values_canonical[k] = values[permutation[k]]``. Stored zeros keep their coordinates.
+    ``values_canonical[k] = values[permutation[k]]``. Stored zeros keep their coordinates. The
+    pattern is what ``TensorType(shape, pattern=...)`` takes.
     """
     order = tuple(sorted(range(self.nnz), key=lambda i: (self.rows[i], self.cols[i])))
     return CanonicalPattern(self.shape, tuple(self.rows[i] for i in order), tuple(self.cols[i] for i in order)), order
@@ -307,7 +308,11 @@ class CanonicalPattern:
 
 @dataclass(frozen=True, slots=True)
 class TensorType:
-  """The shape and dtype of an expression, and whether it is differentiable (``diff``)."""
+  """The shape and dtype of an expression, and whether it is differentiable (``diff``).
+
+  A ``pattern`` makes the tensor sparse: it lists the coordinates stored in each matrix over the
+  last two axes, and every other entry is zero. Leading axes are batch axes sharing the pattern.
+  """
 
   shape: tuple[int, ...] = ()
   dtype: DType = dtypes.float64
@@ -334,7 +339,7 @@ class TensorType:
 
   @property
   def storage_shape(self) -> tuple[int, ...]:
-    """The stored values' shape, with one shared pattern per batch entry."""
+    """The shape of the stored values: ``shape`` when dense, the batch axes and ``nnz`` when sparse."""
     return self.shape if self.pattern is None else (*self.shape[:-2], self.pattern.nnz)
 
   @property

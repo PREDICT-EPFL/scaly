@@ -1,7 +1,7 @@
 # How differentiation works
 
 The [derivatives guide](../guide/derivatives.md) shows how to request
-derivatives, and [Sparsity](../guide/sparsity.md) shows how to read compact
+derivatives, and [Sparse derivatives](../guide/sparsity.md) shows how to read compact
 values. This page shows how Scaly builds them: which automatic differentiation
 (AD) mode each request uses, how known zeros reduce the work, and how a mapped
 stage function stays mapped through differentiation. The general theory is in
@@ -252,7 +252,7 @@ derivative function per callee, so repeated requests reuse it.
 ### Forward mode
 
 Here is the sparse Jacobian of the mapped residual from
-[Sparsity](../guide/sparsity.md#sparse-derivatives-and-mapped-structure), with
+[Sparse derivatives](../guide/sparsity.md#sparse-derivatives-and-mapped-structure), with
 `N = 4`:
 
 ```python

@@ -424,17 +424,14 @@ For a symmetric `P`, the objective Hessian is `P`. More generally, Scaly extract
 `0.5 * (P + P.T)`. The helper has no direct variable-bound parameters. A custom
 `Problem` declaration can provide those, or rows of `G` can encode bounds.
 
-## Fixed sparse matrices without sparse constants
+## Fixed sparse matrices
 
-`sc.const` accepts dense numerical arrays and scalars, not SciPy
-sparse matrices. Converting a sparse matrix with `.toarray()` supplies valid
-constant data, but does not turn ordinary matrix multiplication into a sparse
-operation. Sparse derivative storage and sparse solver matrices are separate
-features.
-
-For fixed linear dynamics, expressing the known sparse equations directly can
-avoid assembling a large constant matrix. This three-step model predictive
-control problem has fixed dynamics and a changing scalar reference:
+A fixed matrix given as a SciPy sparse array can enter a model as a
+[sparse constant](sparse_matrices.md#sparse-constants). Only its stored entries
+are kept and multiplied. For fixed linear dynamics, expressing the
+known sparse equations directly avoids assembling the matrix at all. This
+three-step model predictive control problem has fixed dynamics and a changing
+scalar reference:
 
 \[
 \min_{z_0,\ldots,z_3,\,u_0,\ldots,u_2}
@@ -464,8 +461,8 @@ for target in (0.0, 2.0):
 
 The objective Hessian and equality matrix are fixed and sparse. Changing the
 target changes the linear objective term. `sparse=True` makes PIQP receive
-compact matrix data extracted from these equations. There is no sparse
-constant object or sparse matrix multiplication in the model itself.
+compact matrix data extracted from these equations. The model itself contains
+no matrix.
 
 The same solver can be called symbolically without passing any matrices:
 
@@ -482,10 +479,9 @@ assert mpc_trajectory.solver_stats("tracking_mpc_piqp").to_solver_status().ok
 The [complete runnable example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/sparse_constant_mpc.py)
 prints both the states and controls for two target values.
 
-This is useful when the matrix structure is known at model construction. It
-does not provide a general replacement for importing arbitrary SciPy sparse
-matrices. With `qp_problem`, every entry of the declared matrix parameters may
-vary, so numerical zeros in one call do not establish a fixed sparse pattern.
+This is useful when the matrix structure is known at model construction. With
+`qp_problem`, every entry of the declared matrix parameters may vary, so
+numerical zeros in one call do not establish a fixed sparse pattern.
 
 ## Nesting a solver in a graph
 
