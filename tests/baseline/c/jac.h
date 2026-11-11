@@ -40,7 +40,7 @@
 #define dynamics_jac_znext_z_SZ_RES 1
 #define dynamics_jac_znext_z_SZ_IW 0
 #define dynamics_jac_znext_z_SZ_W 0
-#define dynamics_jac_znext_z_FRAME_BYTES 4264
+#define dynamics_jac_znext_z_FRAME_BYTES 4272
 
 // The pointer ABI for dynamics_jac_znext_z.
 #ifdef __cplusplus
