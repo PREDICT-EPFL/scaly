@@ -122,3 +122,8 @@ Main's `carry_mask` dispatch and `accumulate` stay around #46's stored-coordinat
 projection and sparse-to-dense cotangent normalization. The partial table in
 `ad/rules.py` and the analysis in `ad/sparsity.py` stay identical to main.
 Sparse SELECT still belongs to #359.
+
+The subsequent notes-only #393 update conflicted at the roadmap's reference
+footer. The resolution retains main's #288 and #334 links alongside #359.
+Everything outside `internal/notes/` is byte-identical to the validated
+masked-partial integration, including source, tests and dense C snapshots.
