@@ -20,6 +20,8 @@ class HelperKey:
   otherwise. ``constants`` holds, per active input, the dtype and bytes of a seed baked into the
   body, or ``None`` for a seed passed at run time. ``members`` are the helpers a pack concatenates.
   ``n_carry`` distinguishes a loop body's carry partition from an ordinary call.
+  ``broadcasts`` identifies a loop adjoint's shared-parameter accumulators.
+  ``index`` distinguishes its step-number formal from an ordinary int64 input.
   ``rules`` names the callee's custom rules, so its helpers and those of the function it was made
   from are named apart. ``masked`` lists the forward formals with select conditions, or is a
   boolean for an adjoint helper's cotangent condition.
@@ -36,6 +38,8 @@ class HelperKey:
   rules: tuple[str, ...] = ()
   masked: bool | tuple[int, ...] = False
   conditional: bool = False
+  broadcasts: tuple[int, ...] = ()
+  index: bool = False
 
   @classmethod
   def of(cls, callee: ConcreteFunction, role: Role, outputs: tuple[int, ...], active: tuple[int, ...], **fields: Any) -> HelperKey:
@@ -55,4 +59,6 @@ def helper_name(callee: ConcreteFunction, key: HelperKey) -> str:
   fields += (key.masked,) if key.masked else ()
   fields += ("cond",) if key.conditional else ()
   fields += (key.n_carry,) if key.n_carry is not None else ()
+  fields += (key.broadcasts,) if key.broadcasts else ()
+  fields += (key.index,) if key.index else ()
   return f"{callee.name}_{stem}_{hashlib.sha1(repr(fields).encode()).hexdigest()[:10]}"

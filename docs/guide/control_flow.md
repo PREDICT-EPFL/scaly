@@ -58,7 +58,7 @@ sliced inputs. `reverse=True` executes steps in descending order. Step `k` still
 Unused stacked entries are zero. A reverse scan starts at this clamped count minus one. The shapes
 stay fixed at the static `length`, regardless of the value of `trip`.
 
-## Stop when a condition becomes false
+## A condition that stops the loop
 
 `while_loop` checks its condition before each step and stops at the first false result, up to a
 fixed `max_iter`. The condition and body are Functions with the same inputs. Parameters in
@@ -95,8 +95,8 @@ of the carry.
 
 Both loops support forward and reverse derivatives. They differentiate the calculation along the
 steps taken by the primal loop. A condition and a trip count choose the executed steps and have no
-derivative. Near a boundary where that choice changes, the returned derivative need not describe
-changes across the boundary.
+derivative. The derivative holds the number of steps fixed. It does not see the jump when a small
+input change adds or removes a step.
 
 ```python
 control_gradient = sc.gradient(rollout, "cost", "controls")
@@ -107,34 +107,60 @@ root_derivative = sc.gradient(root, "root", "a")
 root_second_derivative = sc.hessian(root, "root", "a")
 print(root_derivative(np.array(2.0)))
 # 0.35355339059327373
+print(root_second_derivative(np.array(2.0)))
+# [[-0.08838835]]
 ```
 
 Reverse mode stores the carries entering each step, then traverses exactly those steps backwards.
-This trajectory is shared with the primal invocation. Cotangents of stacked outputs join the
-carry cotangent at their own steps. Forward over reverse computes second derivatives through the
+A function returning both the value and its gradient runs the loop forwards once and reuses the
+stored values in its backward pass. Forward over reverse computes second derivatives through the
 same executed steps, as in `root_second_derivative` above.
 
-`max_trajectory=` limits trajectory storage for one loop, counted in stored scalar elements across
+`max_trajectory=` limits the primal trajectory requested by reverse mode for one user loop. It counts
+stored scalar elements across
 its carries, using the static `length` or `max_iter`. For example, a four-element carry at
 `length=200` needs 800 trajectory elements. Stacked outputs do not count toward this limit. Each
 nested loop has its own limit, so the limit does not bound the product of their storage. The
 default `None` leaves it unlimited. Exceeding a limit raises `ValueError` and names
 [`sc.custom_derivative`](../api/functions.md#custom-derivative-rules), which can supply a derivative
-that avoids storing the full trajectory.
+that avoids storing the full trajectory. Tangent and backward loops created by differentiation
+do not inherit this limit. Higher derivatives can therefore require additional storage.
 
-Forward Jacobians with respect to per-step inputs grow with the horizon. Use reverse mode for
-scalar costs differentiated with respect to a control sequence. Per-step Jacobian compression is
-not available.
+Forward mode propagates one direction per seeded input element through every step. It does not
+compress those directions into a smaller Jacobian for each step. For a Jacobian with respect to a
+control sequence, seed buffers and generated constants grow with the horizon. Use reverse mode
+for scalar costs differentiated with respect to per-step inputs.
 
 ## Printing inside a loop
 
-`sc.print("x={}", x)` returns `x` and prints when generated code computes that value. Use its
-returned expression in the body's outputs to keep the print reachable. A print in a loop body
-runs once per executed step. A zero-trip loop does not execute its body prints. Derivative
-functions may also print when they compute primal values needed by the derivative.
+`sc.print("x={}", x)` returns `x` and prints when generated code computes that value. A print in a
+loop body runs once per executed step. A zero-trip loop does not execute its body prints. Use the
+returned expression in the body's outputs. An unused print raises `ValueError` while the function
+is traced, because the print does not reach its outputs.
 
-Identical prints share one expression, and independent prints have no guaranteed order. A callee
-whose results are unused does not run, including its prints. Printing records data flow rather
-than a separate sequence of Python side effects.
+A reverse gradient can print the step values again in reverse order when its partial derivatives
+read those values:
 
-The [API reference](../api/functions.md#control-flow) lists the loop signatures.
+```python
+@sc.function(sc.arg("x", ()))
+def printed_step(x: sc.Expr) -> sc.Expr:
+    value = sc.print("x={}", x)
+    return value * value + 1.0
+
+@sc.function(sc.arg("initial", ()), outputs=sc.arg("final", ()))
+def printed_rollout(initial: sc.Expr) -> sc.Expr:
+    return sc.scan(printed_step, initial, length=3)[0]
+
+printed_gradient = sc.gradient(printed_rollout, "final", "initial")
+print(printed_gradient(np.array(1.0)))
+# x=1
+# x=2
+# x=5
+# x=5
+# x=2
+# x=1
+# 80.0
+```
+
+The general [printing rules](functions.md#printing-from-generated-code) cover shared prints and
+ordering. The [API reference](../api/functions.md#control-flow) lists the loop signatures.

@@ -66,7 +66,11 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
       siblings = loops[invocation_key(expr)]
       if expr is not siblings[0]:
         continue
-      seeds = {node.attrs["output"]: adjoints[node.id] for node in siblings if node.id in adjoints}
+      seeds: dict[int, Expr] = {}
+      for node in siblings:
+        if node.id in adjoints:
+          output = node.attrs["output"]
+          seeds[output] = adjoints[node.id] if output not in seeds else accumulate(seeds[output], adjoints[node.id])
       if seeds and needed(expr):
         for arg, arg_cot in _loop_vjp(expr, seeds, wrts, dep_memo, pullback=vjp):
           if arg.id in expr_ids:

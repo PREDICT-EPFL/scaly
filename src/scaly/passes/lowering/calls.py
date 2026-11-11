@@ -238,10 +238,6 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
   siblings = ctx.used_results[invocation_key(node)]
   used = {int(sibling.attrs["output"]): sibling for sibling in siblings}
   traj = {c for c in range(n_carry) if count_output + 1 + c in used}
-  limit = node.attrs.get("max_trajectory")
-  stored = length * sum(callee.inputs[j].type.storage_size for j in traj)
-  if limit is not None and stored > limit:
-    raise ValueError(f"loop {callee.name!r} would store {stored} trajectory elements, exceeding max_trajectory={limit}; use sc.custom_derivative")
   symbol = ctx.symbols[callee]
   normalized = _normalize_function(callee, residuals=callee in ctx.residuals)
   chains = carry_reuse(normalized, n_carry, length, index, traj)

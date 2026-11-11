@@ -282,3 +282,157 @@ def test_loop_respects_custom_reverse_rule():
   for wrt in (c, xs):
     got, want = evaluate([c, xs], [sc.gradient(final, wrt), sc.gradient(ref, wrt)], [np.array(0.3), np.array([0.5, 0.7, -0.4])])
     np.testing.assert_allclose(got, want, atol=1e-12)
+
+
+def test_adjoint_cache_distinguishes_broadcast_partitions():
+  @sc.function(sc.arg("c", ()), sc.arg("a", ()), sc.arg("b", ()))
+  def step(c, a, b):
+    return c * a + b
+
+  c, a, bs = sc.sym("c", ()), sc.sym("a", ()), sc.sym("bs", 3)
+  first = sc.scan(step, c, (sc.broadcast(a), bs), length=3)[0]
+  sc.vjp((first,), (a, bs), (sc.const(1.0),))
+  aa, b = sc.sym("aa", 3), sc.sym("b", ())
+  final = sc.scan(step, c, (aa, sc.broadcast(b)), length=3)[0]
+  ga, gb = sc.vjp((final,), (aa, b), (sc.const(1.0),))
+  got_a, got_b = evaluate([c, aa, b], [ga, gb], [np.array(2.0), np.array([3.0, 4.0, 5.0]), np.array(7.0)])
+  np.testing.assert_array_equal(got_a, [40.0, 65.0, 59.0])
+  assert got_b == 26.0
+  both = sc.scan(step, c, (sc.broadcast(a), sc.broadcast(b)), length=3)[0]
+  ga, gb = sc.vjp((both,), (a, b), (sc.const(1.0),))
+  got_a, got_b = evaluate([c, a, b], [ga, gb], [np.array(2.0), np.array(3.0), np.array(7.0)])
+  assert got_a == 103.0 and got_b == 13.0
+
+
+def test_scalar_parameter_reverse_over_reverse():
+  @sc.function(sc.arg("c", ()), sc.arg("p", ()))
+  def step(c, p):
+    return c * p
+
+  c, p = sc.sym("c", ()), sc.sym("p", ())
+  final = sc.scan(step, c, (sc.broadcast(p),), length=3)[0]
+  grad = sc.gradient(final, p)
+  reverse, forward = evaluate([c, p], [sc.gradient(grad, p), sc.jvp(grad, p, sc.const(1.0))], [np.array(2.0), np.array(3.0)])
+  assert reverse == forward == 36.0
+
+
+def test_unused_singular_carry_does_not_contaminate_gradients():
+  @sc.function(sc.arg("c", ()), sc.arg("d", ()), sc.arg("p", ()))
+  def step(c, d, p):
+    return c * p, d.sqrt() * p
+
+  c, d, p = sc.sym("c", ()), sc.sym("d", ()), sc.sym("p", ())
+  (final, _), _ = sc.scan(step, (c, d), (sc.broadcast(p),), length=2)
+  grads = sc.vjp((final,), (c, d, p), (sc.const(1.0),))
+  actual = evaluate([c, d, p], grads, [np.array(2.0), np.array(0.0), np.array(0.5)])
+  np.testing.assert_array_equal(actual, [0.25, 0.0, 2.0])
+
+
+def test_loop_result_cotangents_accumulate_across_lowering_hints():
+  @sc.function(sc.arg("c", ()))
+  def step(c):
+    return 2.0 * c
+
+  c = sc.sym("c", ())
+  final = sc.scan(step, c, length=3)[0]
+  grad = sc.gradient(final + final.scalar(), c)
+  actual = evaluate([c], [grad], [np.array(2.0)])
+  assert actual == 16.0
+
+
+def test_carry_activity_follows_coupling_across_steps():
+  @sc.function(sc.arg("c", ()), sc.arg("d", ()), sc.arg("p", ()))
+  def step(c, d, p):
+    return c + d, d * p
+
+  c, d, p = sc.sym("c", ()), sc.sym("d", ()), sc.sym("p", ())
+  (final, _), _ = sc.scan(step, (c, d), (sc.broadcast(p),), length=3)
+  ref_c, ref_d = c, d
+  for _ in range(3):
+    ref_c, ref_d = step(ref_c, ref_d, p)
+  grads = sc.vjp((final,), (c, d, p), (sc.const(1.0),))
+  reference = sc.vjp((ref_c,), (c, d, p), (sc.const(1.0),))
+  result = evaluate([c, d, p], [*grads, *reference], [np.array(2.0), np.array(0.4), np.array(0.5)])
+  np.testing.assert_allclose(result[:3], result[3:], atol=1e-12)
+
+
+@pytest.mark.parametrize("mode", ["forward_reverse", "reverse_reverse"])
+def test_second_derivative_at_primal_trajectory_limit(mode):
+  @sc.function(sc.arg("c", 2), sc.arg("x", ()), sc.arg("p", ()))
+  def step(c, x, p):
+    return (c * p + x).sin()
+
+  c, xs, p = sc.sym("c", 2), sc.sym("xs", 4), sc.sym("p", ())
+  final = sc.scan(step, c, (xs, sc.broadcast(p)), length=4, max_trajectory=8)[0]
+  ref = c
+  for k in range(4):
+    ref = step(ref, xs[k], p)
+  point = [np.array([0.2, -0.3]), np.linspace(0.1, 0.3, 4), np.array(0.8)]
+  for wrt in (c, xs, p):
+    grad, gref = sc.gradient(final.sum(), wrt), sc.gradient(ref.sum(), wrt)
+    if mode == "forward_reverse":
+      actual, expected = sc.jacobian(grad, wrt), sc.jacobian(gref, wrt)
+    else:
+      actual, expected = sc.gradient(grad.sum(), wrt), sc.gradient(gref.sum(), wrt)
+    got, want = evaluate([c, xs, p], [actual, expected], point)
+    np.testing.assert_allclose(got, want, atol=1e-12)
+
+
+def test_multiple_map_outputs_keep_mapped_adjoints():
+  from scaly.ir.expr import ExprOp, is_map, topo
+
+  @sc.function(sc.arg("x", ()), sc.arg("p", ()))
+  def stage(x, p):
+    return x * p, x.sin() + p * p
+
+  xs, p = sc.sym("xs", 4), sc.sym("p", ())
+  a, b = sc.vmap(stage, 4)(xs, sc.broadcast(p))
+  grad = sc.vjp((a, b), (xs, p), (sc.const(np.ones(4)), sc.const(np.ones(4))))
+  loops = [node for node in topo(grad) if node.op == ExprOp.LOOP]
+  assert loops and all(is_map(node) for node in loops)
+  dx, dp = evaluate([xs, p], grad, [np.arange(4.0) / 10, np.array(0.7)])
+  np.testing.assert_allclose(dx, 0.7 + np.cos(np.arange(4.0) / 10))
+  np.testing.assert_allclose(dp, np.arange(4.0).sum() / 10 + 8 * 0.7)
+
+
+def test_while_inside_map_reverse_matches_finite_differences():
+  from scaly.ad.derivatives import finite_difference
+
+  @sc.function(sc.arg("c", ()), sc.arg("p", ()), outputs=sc.arg("go", sc.TensorType((), sc.dtypes.bool_)))
+  def cond(c, p):
+    return c < p
+
+  @sc.function(sc.arg("c", ()), sc.arg("p", ()))
+  def step(c, p):
+    return c * 1.2 + 0.1 * p
+
+  @sc.function(sc.arg("c", ()), sc.arg("p", ()))
+  def run(c, p):
+    return sc.while_loop(cond, step, c, max_iter=4, params=(p,))[0]
+
+  xs, p = sc.sym("xs", 3), sc.sym("p", ())
+  cost = sc.sumsqr(sc.vmap(run, 3)(xs, sc.broadcast(p)))
+  point = [np.array([0.1, 0.8, 1.3]), np.array(1.0)]
+  for j, wrt in enumerate((xs, p)):
+    got = evaluate([xs, p], [sc.gradient(cost, wrt)], point)
+    want = finite_difference(lambda value: evaluate([xs, p], [cost], [*point[:j], value, *point[j + 1 :]]), point[j])
+    np.testing.assert_allclose(got.reshape(-1), want.reshape(-1), rtol=1e-6)
+
+
+@pytest.mark.parametrize("indexed_first", [False, True])
+def test_adjoint_cache_distinguishes_step_number_formal(indexed_first):
+  @sc.function(sc.arg("c", ()), sc.arg("k", sc.TensorType((), sc.dtypes.int64)), sc.arg("x", ()))
+  def step(c, k, x):
+    return c * x + 0.01 * k.cast(sc.dtypes.float64)
+
+  c, xs = sc.sym("c", ()), sc.sym("xs", 3)
+  for indexed in (indexed_first, not indexed_first):
+    final = sc.scan(step, c, (xs,) if indexed else (sc.broadcast(sc.const(np.int64(2))), xs), length=3, index=indexed)[0]
+    ref = c
+    for k in range(3):
+      ref = step(ref, sc.const(np.int64(k if indexed else 2)), xs[k])
+    actual = sc.vjp((final,), (c, xs), (sc.const(1.0),))
+    reference = sc.vjp((ref,), (c, xs), (sc.const(1.0),))
+    result = evaluate([c, xs], [*actual, *reference], [np.array(0.3), np.array([0.5, 0.7, 0.9])])
+    for got, want in zip(result[:2], result[2:], strict=True):
+      np.testing.assert_allclose(got, want, atol=1e-12)

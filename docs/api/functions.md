@@ -96,6 +96,8 @@ name, and an input name.
 ::: scaly.function.sugar.scan
     options:
       show_source: false
+      show_signature: false
+      heading: "scan(body, init, xs=(), *, length, trip=None, index=False, reverse=False, max_trajectory=None)"
 
 ::: scaly.function.sugar.while_loop
     options:

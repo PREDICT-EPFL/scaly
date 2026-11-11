@@ -215,7 +215,8 @@ shapes gives those instances different constants.
 
 A Python loop similarly executes during construction and builds its body once
 per iteration. It does not become a loop in the recorded graph. Independent
-repetition can instead use [`vmap`](#regular-repetition-vmap).
+repetition can instead use [`vmap`](#regular-repetition-vmap). A sequential recurrence can use
+[`scan`](control_flow.md#a-fixed-number-of-steps).
 
 ### Prints happen while the body runs
 

@@ -6,8 +6,8 @@ run-time trips, reverse scans, overlapping windows, step numbers and mixed carri
 While-loop checks include early and zero exits, reaching the bound, Newton iteration
 and forward-over-reverse second derivatives. Nested loops also check reverse over reverse.
 
-The problems ported from frozen devrush are in
-`tests/core/integration/test_loop_edge_cases.py`: zero/one-step scans, window and
+The problems ported from frozen devrush
+`tests/core/integration/test_loop_edge_cases.py` into `tests/function/test_loop_reverse.py` cover zero/one-step scans, window and
 step-number derivatives, mixed nonfloating carries, while-loop derivative boundaries,
 and per-loop trajectory limits with nested loops. The port uses main's Function API,
 nonnegative windows and a per-loop argument. Global options, strict-mode switches,
@@ -43,12 +43,13 @@ in full in the JSON. No C snapshots were regenerated.
 
 `docs/guide/control_flow.md` documents scan, while_loop, their differentiation and
 storage limits, and the print rule. Its Python fences were executed together.
-The API adds both loop builders and removes the LOOP enum filter. #53 was still
-open when this was written, so cond remains unpublished.
+The API adds both loop builders and removes the LOOP enum filter. The cond issue #53
+has pull request #417, still open when this was written, so cond remains unpublished.
 
 The backward loop has no condition and takes the primal count as its trip operand.
-This needs no relaxation of #31's ban on conditional reverse loops. No roadmap
-departure was needed. Stacked-output sparsity remains conservative. Per-step
+This needs no relaxation of #31's ban on conditional reverse loops. The roadmap
+clarifies that generated derivative loops do not inherit a user loop's trajectory limit,
+so second derivatives work at the primal trajectory limit. Stacked-output sparsity remains conservative. Per-step
 Jacobian compression, checked builds, in-place carries and unrolling stay outside
 this change.
 
@@ -63,3 +64,18 @@ including all 28 new reverse-loop cases.
 README Python fences and the function_composition, mapped_derivatives and
 function_with_print examples ran successfully. A separate finite-difference check
 of a while loop inside a map also passed, with different trip counts per entry.
+
+## Review fixes
+
+Both independent reviews requested changes. `review.md` records each finding and
+its fix. The final focused loop/map/snapshot run passed 148 tests, including 39
+reverse-loop cases. Ruff lint, formatting and ty passed, and collection contains
+4,885 tests. The revised guide fences ran with their stated second-derivative and
+printing outputs, and the documentation build passed without warnings.
+
+The new map regression keeps multi-output adjoints mapped. The trajectory-limit
+port now checks Hessians and reverse over reverse at the primal trajectory limit.
+The mapped while-loop finite-difference check is a permanent test. The four sol
+findings and the neighboring step-number cache case have failing regressions that
+pass with their fixes. C snapshot files remain byte-identical. The RK4 source sizes
+and program counts remained identical after these fixes.

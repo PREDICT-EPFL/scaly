@@ -513,7 +513,7 @@ def scan(
 
   Returns ``(carry, ys)``: the final carry, shaped like ``init``, and a tuple of the per-step
   outputs, each with a leading axis of ``length``. ``trip``, an int64 scalar, runs only the first
-  ``min(trip, length)`` steps; the unused entries of the stacked outputs are zero. With ``reverse``
+  ``max(0, min(trip, length))`` steps. The unused entries of the stacked outputs are zero. With ``reverse``
   the steps run from the last to the first, and step ``k`` still reads slice ``k`` and writes
   output ``k``. ``in_place`` names carry positions or input names that lowering must prove safe
   to update in place. Forward derivatives follow the same steps
@@ -521,6 +521,7 @@ def scan(
   backwards. ``max_trajectory`` limits the number of stored carry elements for this loop,
   using the static length even when ``trip`` is smaller. ``None`` leaves it unlimited.
   Exceeding the limit raises ``ValueError`` and suggests ``sc.custom_derivative``.
+  Derivative loops do not inherit the limit.
   """
   carry, ys, _ = _loop(body, None, init, tuple(xs), length, trip, index, reverse, "scan", in_place, max_trajectory)
   return carry, ys
@@ -534,13 +535,14 @@ def while_loop(
   ``body`` and ``cond`` take the same parameters: one per entry of ``init`` (one carry when
   ``init`` is not a tuple), then the step number as an int64 scalar when ``index`` is true, then
   one per entry of ``params``, which every step reads whole. ``cond`` returns a bool scalar and is
-  evaluated before each step; ``body`` returns the new carries, each with its input's shape and
+  evaluated before each step. ``body`` returns the new carries, each with its input's shape and
   dtype. Returns ``(carry, count)``: the final carry, shaped like ``init``, and the number of
   steps taken as an int64 scalar. Forward derivatives take the same steps, with the condition
   evaluated on primal carries. Reverse derivatives traverse exactly the steps taken backwards.
   ``max_trajectory`` limits stored carry elements using ``max_iter`` times the stored carry
   size, even when the loop exits early. Each nested loop has its own limit. ``None`` leaves
   storage unlimited. Exceeding the limit raises ``ValueError`` and suggests ``sc.custom_derivative``.
+  Derivative loops do not inherit the limit.
   """
   carry, ys, count = _loop(body, cond, init, _whole(tuple(params)), max_iter, None, index, False, "while_loop", max_trajectory=max_trajectory)
   if ys:

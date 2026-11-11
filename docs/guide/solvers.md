@@ -289,7 +289,7 @@ as an equality constraint.
 In multiple shooting, defect evaluations are independent calculations over
 candidate states, even though their equality constraints couple neighboring
 stages. This makes them suitable for `sc.vmap`. A sequential rollout has a
-loop-carried state and cannot be replaced with the same map.
+loop-carried state and can instead use [`sc.scan`](control_flow.md#a-fixed-number-of-steps).
 
 The [complete multiple-shooting example](getting_started.md#bonus-repeated-stages-with-vmap)
 shows the variable layout, mapped defects, and bounds for a double integrator.

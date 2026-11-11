@@ -340,6 +340,7 @@ def _loop_jvp_many(expr: Expr, tangents: Sequence[Expr | None], nseed: int, *, p
   if is_map(expr):
     return _vmap_jvp_many(expr, tangents, nseed, pushforward=pushforward)
   attrs = dict(expr.attrs)
+  attrs.pop("max_trajectory", None)
   callee, cond = attrs.pop("callee"), attrs.pop("cond")
   output = attrs.pop("output")
   nc, length = attrs["n_carry"], attrs["length"]
@@ -733,15 +734,27 @@ def _vmap_adj_function(
 def _loop_vjp(
   expr: Expr, cots: dict[int, Expr], wrts: Sequence[Expr], dep_memo: dict[tuple[int, int], bool], *, pullback: _Pullback
 ) -> list[tuple[Expr, Expr]]:
-  if is_map(expr) and len(cots) == 1:
-    output, cot = next(iter(cots.items()))
-    return _vmap_vjp(_loop_node(expr.attrs["callee"], None, expr.args, dict(expr.attrs), output), cot, wrts, dep_memo, pullback=pullback)
+  if is_map(expr):
+    return [
+      contribution
+      for output, cot in cots.items()
+      for contribution in _vmap_vjp(
+        _loop_node(expr.attrs["callee"], None, expr.args, dict(expr.attrs), output), cot, wrts, dep_memo, pullback=pullback
+      )
+    ]
   attrs = dict(expr.attrs)
   callee, cond = attrs.pop("callee"), attrs.pop("cond")
   attrs.pop("output")
   nc, length = attrs["n_carry"], attrs["length"]
   skip = nc + int(attrs["index"])
-  carries = tuple(i for i in range(nc) if callee.inputs[i].type.dtype.is_floating)
+  live = {i if i < len(callee.results) else i - len(callee.results) - 1 for i in cots}
+  masks = {}
+  while True:
+    reached = {i for i in range(nc) if callee.inputs[i].type.dtype.is_floating and any(_callee_mask(callee, out, i, masks).nnz for out in live)}
+    if reached <= live:
+      break
+    live.update(reached)
+  carries = tuple(i for i in range(nc) if i in live and callee.inputs[i].type.dtype.is_floating)
   outers = tuple(
     i
     for i in range(len(attrs["starts"]))
@@ -751,7 +764,7 @@ def _loop_vjp(
   sliced = tuple(i for i in outers if attrs["strides"][i] != 0)
   active = (*carries, *(skip + i for i in outers))
   selected = tuple(sorted(cots))
-  key = HelperKey.of(callee, "adjoint", selected, active, n_carry=nc)
+  key = HelperKey.of(callee, "adjoint", selected, active, n_carry=nc, broadcasts=params, index=attrs["index"])
   cache = callee._memo.helpers
   if key not in cache:
     names = set(callee.input_names)
@@ -820,6 +833,8 @@ def _loop_vjp(
     "in_place": (),
   }
 
+  backward.pop("max_trajectory", None)
+
   def result(i: int) -> Expr:
     return _loop_node(fn, None, tuple(args), backward, i)
 
@@ -827,7 +842,7 @@ def _loop_vjp(
   for j, i in enumerate(params):
     formal = callee.inputs[skip + i]
     grad = result(len(carries) + j)
-    ret.append((expr.args[nc + i], scatter(values(grad), attrs["starts"][i] + np.arange(formal.type.storage_size), expr.args[nc + i].shape)))
+    ret.append((expr.args[nc + i], scatter(values(grad).vec(), attrs["starts"][i] + np.arange(formal.type.storage_size), expr.args[nc + i].shape)))
   for j, i in enumerate(sliced):
     formal = callee.inputs[skip + i]
     grad = result(backward["n_carry"] + j)
