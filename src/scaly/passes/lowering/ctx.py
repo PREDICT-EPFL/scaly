@@ -370,7 +370,7 @@ class LowerCtx:
     self._tmp += 1
     buf = _with_support(p.buffer(name, dtype, _shape_or_scalar(shape), address_space="private"), support)
     if self.seed_pairs:
-      buf = ProgramNode(buf.op, buf.args, {**buf.attrs, "per_call": True}, buf.dtype)
+      buf = ProgramNode(buf.op, buf.args, {**buf.attrs, "per_call": True}, dtype=buf.dtype)
     self.buffers[name] = buf
     self.statements.append(buf)  # marks the local-array declaration for the renderer
     return buf

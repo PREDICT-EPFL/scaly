@@ -412,7 +412,7 @@ def test_mapped_workspace_reuses_temporaries_but_preserves_inputs_and_live_outpu
 
   def scratch(name, size=4):
     buf = buffer(name, dtypes.float64, (size,), address_space="private")
-    return ProgramNode(buf.op, buf.args, {**buf.attrs, "per_call": per_call}, buf.dtype)
+    return ProgramNode(buf.op, buf.args, {**buf.attrs, "per_call": per_call}, dtype=buf.dtype)
 
   fixed, history, a, b, c, d = (scratch(name, 12 if name == "history" else 4) for name in ("fixed", "history", "a", "b", "c", "d"))
   k, stage = var("k"), var("stage")
@@ -429,11 +429,11 @@ def test_mapped_workspace_reuses_temporaries_but_preserves_inputs_and_live_outpu
     kernel(store(at(y, offset), add(load(at(d)), load(at(fixed))))),
   ]
   axis = range_("stage", 0, 3)
-  axis = ProgramNode(axis.op, axis.args, {**axis.attrs, "mapped": True}, axis.dtype)
+  axis = ProgramNode(axis.op, axis.args, {**axis.attrs, "mapped": True}, dtype=axis.dtype)
   statements = [fixed, history, a, b, c, d, kernel(store(at(fixed), load(at(x)))), for_(axis, body)]
   statements.append(kernel(store(at(y), add(load(at(y)), load(at(history)))), 12))
   root = proc_("root", [x, y], statements)
-  root = ProgramNode(root.op, root.args, {**root.attrs, "input_count": 1}, root.dtype)
+  root = ProgramNode(root.op, root.args, {**root.attrs, "input_count": 1}, dtype=root.dtype)
   packed = pack_workspace(program([root]))
   verify_program(packed)
   slots = [node for node in packed.args[0].args[2:] if node.op == ProgramOp.BUFFER]
@@ -526,15 +526,15 @@ def test_mapped_calls_keep_input_producer_closures_live_across_iterations():
 
   def temp(name):
     buf = buffer(name, dtypes.float64, (3,), address_space="private")
-    return ProgramNode(buf.op, buf.args, {**buf.attrs, "per_call": True}, buf.dtype)
+    return ProgramNode(buf.op, buf.args, {**buf.attrs, "per_call": True}, dtype=buf.dtype)
 
   x, y = (buffer(name, dtypes.float64, (3,)) for name in ("x", "y"))
   producer, base, result, later = map(temp, ("producer", "base", "result", "later"))
   at = lambda buf: view(buf, [const_int(0)])
   copy = lambda dst, src: store(at(dst), load(at(src)))
   axis = range_("i", 0, 3)
-  axis = ProgramNode(axis.op, axis.args, {**axis.attrs, "mapped": True}, axis.dtype)
-  call = ProgramNode(ProgramOp.CALL, (base, result), {"callee": "consumer", "n_in": 1, "n_out": 1, "returns": ()})
+  axis = ProgramNode(axis.op, axis.args, {**axis.attrs, "mapped": True}, dtype=axis.dtype)
+  call = ProgramNode(ProgramOp.CALL, (base, result), {"callee": "consumer", "n_in": 1, "n_out": 1, "returns": ()}, dtype=dtypes.float64)
   body = [call, copy(later, x), store(view(y, [var("i")]), add(load(at(later)), load(at(result))))]
   root = proc_("root", [x, y], [producer, base, result, later, copy(producer, x), copy(base, producer), for_(axis, body)])
   plan = _plan_pack(root)
