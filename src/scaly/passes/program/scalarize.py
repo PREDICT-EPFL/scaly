@@ -84,7 +84,7 @@ class _Frame:
         value = self.folded.get(key)
         if value is None:
           attrs = {**n.attrs, "strict": True} if self.strict and n.dtype.is_floating else n.attrs
-          value = self.folded[key] = fold_program(ProgramNode(n.op, args, attrs, n.dtype))
+          value = self.folded[key] = fold_program(ProgramNode(n.op, args, attrs, dtype=n.dtype))
         memo[n] = value
       else:
         stack.append((n, True))
