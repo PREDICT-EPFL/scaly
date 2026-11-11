@@ -784,8 +784,8 @@ outputs are all `float64`, floats when they are all `float32`, and bytes
 otherwise. It is not
 the total temporary memory.
 For an export with non-default options, use that module's `workspace_size` or
-its header's `<name>_SZ_W` constant. In particular, CasADi sparse-output
-conversion can require additional workspace.
+its header's `<name>_SZ_W` constant. CasADi exports can require additional
+workspace to change dense matrix buffer order.
 
 `frame_budget` limits the stack each generated C function is estimated to need,
 in bytes, and defaults to 65,536. Scaly adds up its temporary arrays, counting

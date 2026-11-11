@@ -1116,8 +1116,8 @@ shared by all seeds does not cover this case: its union over the seeds is nearly
 **[#48]. Sparse derivative outputs become sparse leaves.** `sparse_jacobian` and `sparse_hessian`
 return sparse-typed outputs with a declared layout and triangle
 (`sc.sparse_hessian(f, of, wrt, layout="csr", triangle="upper")`), and `Function.output_sparsities`
-goes away, so a sparse output has one spelling. The header tables, the CasADi gather and
-`casadi_output_sparsities` read the type. Values switch from arbitrary order to the declared layout,
+goes away, so a sparse output has one spelling. The header tables and CasADi queries read the
+type, and the CasADi gather and `casadi_output_sparsities` go away. Values switch from arbitrary order to the declared layout,
 which removes the two value-permutation tables: an interface change under `docs/dev/versioning.md`.
 The mapped path (`ad/sparse.py::_sparse_jacobian_vmap`) keeps its local coloring and returns the
 two-dimensional pattern of the whole map; `sc.vmap` of a stage's sparse derivative gives the batched

@@ -120,7 +120,7 @@ function can omit the arguments.
 
 Mapping a sparse derivative over `N` independent points gives a batch of
 matrices that share one pattern. The query returns that pattern, and a
-numerical call returns an `N`-dimensional SciPy `coo_array`:
+numerical call returns a SciPy `coo_array` of shape `(N, *pattern.shape)`:
 
 ```python
 batched = sc.vmap(jac, 2)

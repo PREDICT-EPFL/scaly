@@ -8,6 +8,7 @@ from scipy import sparse
 
 import scaly as sc
 from scaly.ad import finite_difference
+from scaly.ir.layout import SparseLayout
 
 N = 4
 POINT = np.linspace(-0.8, 0.9, 2 * N)
@@ -38,32 +39,37 @@ def _coordinates(pattern) -> sc.SparsityPattern:
   return sc.SparsityPattern(pattern.shape, tuple(np.asarray(pattern.rows)[shuffled]), tuple(np.asarray(pattern.cols)[shuffled]))
 
 
-@pytest.mark.parametrize(
-  ("kind", "layout", "triangle"), [("jacobian", "csc", "full"), ("hessian", "csr", "upper"), ("hessian", "coordinate", "lower")]
-)
-def test_values_follow_the_declared_layout(kind: str, layout: str, triangle: Literal["full", "lower", "upper"]) -> None:
-  # The Jacobian goes through the mapped path, whose computed order is not the canonical one.
-  def build(declared):
-    return sc.sparse_jacobian(shooting, layout=declared) if kind == "jacobian" else sc.sparse_hessian(coupled, triangle=triangle, layout=declared)
+@pytest.mark.parametrize(("layout", "triangle"), [("csc", "full"), ("csr", "upper"), ("coordinate", "lower")])
+def test_values_follow_the_declared_layout(layout: str, triangle: Literal["full", "lower", "upper"]) -> None:
+  for kind in ("jacobian", "hessian"):
 
-  pattern = build("csc").sparsity()
+    def build(declared):
+      return sc.sparse_jacobian(shooting, layout=declared) if kind == "jacobian" else sc.sparse_hessian(coupled, triangle=triangle, layout=declared)
+
+    pattern = build("csc").sparsity()
+    assert pattern is not None
+    declared = _coordinates(pattern) if layout == "coordinate" else layout
+    dense = finite_difference(shooting, POINT) if kind == "jacobian" else finite_difference(sc.gradient(coupled), POINT)
+    if kind == "hessian":
+      dense = {"full": dense, "upper": np.triu(dense), "lower": np.tril(dense)}[triangle]
+    stored = sparse.coo_array((dense[pattern.rows, pattern.cols], (pattern.rows, pattern.cols)), shape=pattern.shape)
+    if isinstance(declared, sc.SparsityPattern):
+      expected = dense[np.asarray(declared.rows), np.asarray(declared.cols)]
+    else:
+      expected = stored.tocsc().data if layout == "csc" else stored.tocsr().data
+    result = build(declared)(POINT)
+    assert isinstance(result, sparse.csc_array | sparse.csr_array | sparse.coo_array)
+    assert result.format == ("coo" if layout == "coordinate" else layout)
+    np.testing.assert_allclose(result.data, expected, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(result.toarray(), dense, rtol=1e-6, atol=1e-6)
+
+
+@pytest.mark.parametrize(("layout", "triangle"), [("csc", "full"), ("csr", "upper"), ("coordinate", "lower")])
+def test_a_map_of_independent_stages_keeps_one_batched_pattern(layout: str, triangle: Literal["full", "lower", "upper"]) -> None:
+  pattern = sc.sparse_hessian(stage_cost, triangle=triangle).sparsity()
   assert pattern is not None
   declared = _coordinates(pattern) if layout == "coordinate" else layout
-  dense = finite_difference(shooting, POINT) if kind == "jacobian" else finite_difference(sc.gradient(coupled), POINT)
-  dense = {"full": dense, "upper": np.triu(dense), "lower": np.tril(dense)}[triangle]
-  stored = sparse.coo_array((dense[pattern.rows, pattern.cols], (pattern.rows, pattern.cols)), shape=pattern.shape)
-  if isinstance(declared, sc.SparsityPattern):
-    expected = dense[np.asarray(declared.rows), np.asarray(declared.cols)]
-  else:
-    expected = stored.tocsc().data if layout == "csc" else stored.tocsr().data
-  result = build(declared)(POINT)
-  assert isinstance(result, sparse.csc_array | sparse.csr_array | sparse.coo_array)
-  assert result.format == ("coo" if layout == "coordinate" else layout)
-  np.testing.assert_allclose(result.data, expected, rtol=1e-6, atol=1e-6)
-
-
-def test_a_map_of_independent_stages_keeps_one_batched_pattern() -> None:
-  derivative = sc.sparse_hessian(stage_cost, triangle="lower", layout="csr")
+  derivative = sc.sparse_hessian(stage_cost, triangle=triangle, layout=declared)
   local = derivative.sparsity()
   assert local is not None
   batched = sc.vmap(derivative, N)
@@ -71,7 +77,12 @@ def test_a_map_of_independent_stages_keeps_one_batched_pattern() -> None:
   points = POINT.reshape((N, 2))
   result = batched(points)
   assert isinstance(result, sparse.coo_array) and result.shape == (N, *local.shape)
-  dense = np.stack([np.tril(finite_difference(sc.gradient(stage_cost), point)) for point in points])
+  dense = np.stack([finite_difference(sc.gradient(stage_cost), point) for point in points])
+  dense = {"full": dense, "upper": np.triu(dense), "lower": np.tril(dense)}[triangle]
+  leaf_layout = derivative.instantiate().output_tree.layouts[0]
+  assert isinstance(leaf_layout, SparseLayout)
+  expected = dense[:, leaf_layout.rows, leaf_layout.cols].reshape(-1)
+  np.testing.assert_allclose(result.data, expected, rtol=1e-6, atol=1e-6)
   np.testing.assert_allclose(result.toarray(), dense, rtol=1e-6, atol=1e-6)
 
 
@@ -85,6 +96,10 @@ def test_a_transposed_sparse_output_keeps_its_pattern_through_a_call() -> None:
   pattern, local = transposed.sparsity(), derivative.sparsity()
   assert pattern is not None and local is not None
   assert set(zip(pattern.rows, pattern.cols)) == set(zip(local.cols, local.rows))
+  point, next_point = POINT[:2], POINT[2:4]
+  result = transposed(point, next_point)
+  assert isinstance(result, sparse.csc_array)
+  np.testing.assert_allclose(result.toarray(), finite_difference(lambda z: defect(z, next_point), point).T, atol=1e-6)
 
 
 def test_a_coordinate_layout_must_list_the_derivative_pattern() -> None:

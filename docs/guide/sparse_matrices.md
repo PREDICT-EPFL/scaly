@@ -5,10 +5,9 @@ other entry is identically zero, so generated code stores, passes and computes
 only the stored entries. This page covers sparse inputs, outputs and constants,
 the operations that keep a pattern, and what reaches derivatives and generated C.
 
-This is a different use of sparsity from [sparse derivatives](sparsity.md). There,
-Scaly finds which entries of a Jacobian or Hessian may be nonzero and returns
-them as a compact vector. Here, you choose the pattern and it is part of the
-matrix's type.
+For [sparse derivatives](sparsity.md), Scaly finds which entries of a Jacobian or
+Hessian may be nonzero and uses them as the matrix's stored pattern. You can
+also declare a pattern for your own matrices, as this page describes.
 
 ## Stored patterns
 

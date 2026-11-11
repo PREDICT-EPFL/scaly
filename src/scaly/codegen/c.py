@@ -130,7 +130,7 @@ def render_program_c(
   prog: ProgramNode, fun: ConcreteFunction, *, casadi: bool = False, dialect: CDialect = "gnu", vector_libm: VectorLibm = "none"
 ) -> str:
   """Render ``fun``'s lowered PROGRAM to a standalone pointer-ABI translation unit. ``casadi`` adds
-  the CasADi query functions and the compressed-column gather (``codegen/casadi.py``)."""
+  the CasADi query functions (``codegen/casadi.py``)."""
   proc = main_proc(prog)
   pc = int(prog.attrs.get("proc_count", 1))
   callees = list(prog.args[: pc - 1])
