@@ -26,7 +26,9 @@ all previous plan steps about pushing, readiness and queueing.
   operation coverage. Log /tmp/scaly-434-flush-focused.log. Ruff and ty pass.
 - No C snapshots changed or regenerated. Ten extra C/header comparisons against
   current main are byte-identical; proof path /tmp/scaly-434-flush-c-proof.path.
-- The prior full hook on the preceding base passed: 6,392 tests, 56 skipped, exit 0.
+- Full hook on main 589a2e8f passed: 6,402 tests, 56 skipped, exit 0.
+  Type, format, lint, snapshots, benchmark smoke, docs and private-name checks pass.
+  Log /tmp/scaly-434-flush-suite-nU1reR/final.log.
 - The latest section 4 decision is canonical:
   https://github.com/PREDICT-EPFL/scaly/issues/24#issuecomment-6808554341
   The prepared PR body copies its rule paragraph and boundary table verbatim.
@@ -39,9 +41,11 @@ all previous plan steps about pushing, readiness and queueing.
 
 ## Finish before reporting
 
-- [ ] Full hook detached through ~/.scaly-suite/run on this rebased state.
+- [x] Full hook detached through ~/.scaly-suite/run on this rebased state.
       Log /tmp/scaly-434-flush-suite-nU1reR/final.log; completion /tmp/scaly-434-flush-suite-nU1reR/final.exit.
-- [ ] Recheck exact semantic paragraph/table equality against the latest #24 decision.
-- [ ] Commit the final local evidence in this plan, keep the plan, and report branch,
+- [x] Exact rule paragraph and boundary table match latest #24 decision verbatim.
+      Semantic section is 27 lines. Proof /tmp/scaly-434-flush-semantic-check.log.
+- [x] Commit the final local evidence in this plan, keep the plan, and report branch,
       head, ahead/behind main, hook counts, changed snapshot files and any open point.
-- [ ] Stop after reporting. Do not wait, poll, watch, push, mark ready or queue.
+- Stop after reporting. Do not wait, poll, watch, push, mark ready or queue.
+  Only remaining work is a future coordinator-authorized push and its CI/queue steps.
