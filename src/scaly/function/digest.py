@@ -17,7 +17,7 @@ from typing import Any
 
 import numpy as np
 
-from ..ir.expr import Expr, topo
+from ..ir.expr import Expr
 from ..utils.env import LOADED_AT_NS
 from .concrete import ConcreteFunction
 
@@ -103,7 +103,8 @@ class _Walk:
       for item in (v.start, v.stop, v.step):
         self.value(item)
     elif kind is Expr:
-      self.graph((v,))
+      if id(v) not in self.nodes:
+        self.graph((v,))
       self.put(b"E", str(self.nodes[id(v)]).encode())
     elif kind is ConcreteFunction:
       if id(v) not in self.callees:
@@ -132,17 +133,28 @@ class _Walk:
     return found
 
   def graph(self, roots: tuple[Expr, ...]) -> None:
-    for node in topo(roots):
+    # Number the outer graph before encoding attributes that may refer back into it.
+    nodes = []
+    stack = [(root, False) for root in reversed(roots)]
+    while stack:
+      node, visited = stack.pop()
       if id(node) in self.nodes:
         continue
+      if visited:
+        self.nodes[id(node)] = len(self.nodes)
+        nodes.append(node)
+      else:
+        stack.append((node, True))
+        stack.extend((arg, False) for arg in reversed(node.args))
+    for node in nodes:
       args = ",".join(str(self.nodes[id(arg)]) for arg in node.args)
       self.put(b"n", f"{node.op}|{args}|{node.name!r}|{node.lowering}".encode("utf-8", "surrogatepass"))
       self.put(b"t", self.tensor_type(node.type))
       self.value(node.value)
       self.value(dict(sorted(node.attrs.items())))
-      self.nodes[id(node)] = len(self.nodes)
 
   def function(self, fun: ConcreteFunction) -> None:
+    self.graph(fun.inputs + fun.outputs)
     self.put(b"f", self.named(type(fun)))
     self.value((fun.input_names, fun.output_names, fun.input_tree.layouts, fun.output_tree.layouts))
     for name in _FIELDS:

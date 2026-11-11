@@ -24,7 +24,7 @@ import scaly as sc
 from scaly.function import digest
 from scaly.function.concrete import ConcreteFunction
 from scaly.function.model import as_concrete
-from scaly.ir.expr import Expr, ExprOp
+from scaly.ir.expr import Expr, ExprOp, topo
 from scaly.ir.types import CanonicalPattern, DType, dtypes
 
 
@@ -144,6 +144,52 @@ def test_nodes_are_numbered_in_walk_order_not_by_address() -> None:
   x, y = Expr.sym("x", 3), Expr.sym("y", 3)
   pair = [ConcreteFunction._from_exprs("pair", inputs, [x - y], ["a", "b"], ["out"]) for inputs in ([x, y], [y, x])]
   assert digest.graph_digest(pair[0]) != digest.graph_digest(pair[1])
+
+
+@pytest.mark.parametrize("outputs", [8, 16, 64])
+def test_a_many_output_graph_is_walked_once(outputs: int, monkeypatch: pytest.MonkeyPatch) -> None:
+  x = Expr.sym("x", 200)
+  y = x
+  for _ in range(20):
+    y = y.sin() * 2.0 + 1.0
+  fun = ConcreteFunction._from_exprs("many_outputs", [x], [y[i] for i in range(outputs)], ["x"], [f"y{i}" for i in range(outputs)])
+  nodes = topo(fun.inputs + fun.outputs)
+  reads = 0
+  getattribute = Expr.__getattribute__
+
+  def read(expr: Expr, name: str) -> Any:
+    nonlocal reads
+    reads += name == "args"
+    return getattribute(expr, name)
+
+  monkeypatch.setattr(Expr, "__getattribute__", read)
+  assert digest.graph_digest(fun) is not None
+  assert reads <= 2 * len(nodes)  # one traversal and one encoding of each node's operands
+
+
+def test_an_attribute_expression_reuses_the_outer_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+  x = Expr.sym("x", 3)
+  y = x.sin().cos()
+
+  def function(scale: float) -> ConcreteFunction:
+    out = Expr(ExprOp.NEG, (y,), y.type, attrs={"note": y * scale})
+    return ConcreteFunction._from_exprs("attr_graph", [x], [out, y], ["x"], ["out", "shared"])
+
+  one, other = function(2.0), function(3.0)
+  nodes = set(topo(one.inputs + one.outputs)) | set(topo((one.outputs[0].attrs["note"],)))
+  reads = 0
+  getattribute = Expr.__getattribute__
+
+  def read(expr: Expr, name: str) -> Any:
+    nonlocal reads
+    reads += name == "args"
+    return getattribute(expr, name)
+
+  monkeypatch.setattr(Expr, "__getattribute__", read)
+  first = digest.graph_digest(one)
+  assert first is not None
+  assert reads <= 2 * len(nodes)
+  assert first != digest.graph_digest(other)
 
 
 @pytest.fixture
