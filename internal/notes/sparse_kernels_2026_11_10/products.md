@@ -187,3 +187,18 @@ adjoint: an inactive branch through `sqrt(0)` gives NaN gradients. Sparse SELECT
 #47's scope. Follow-up #420 contains the reproduction, requires correct per-coordinate masks
 and guarded coefficients, and has `source:agent`, `kind:bug` and `area:compiler`. It depends on
 #47 and is recorded on the section issue. Main's mixed-product mask rules are preserved.
+
+Opus's retried low-effort check approved the SELECT rebase without findings. The required CI
+check passed, and #369 re-entered the queue at 06:59 UTC. The queue removed it again at 07:29
+after #404's batched MATMUL change landed. Replaying onto main at `2c8b67e0` had one conflict
+in `ir/expr.py::matmul`. The resolution keeps main's constructor docstring, batched shape
+inference and sparse-batch guard, adding only the existing sampled keyword and attributes.
+Automatic merges preserve the batched derivative and support paths. The now-unused
+`LoweringError` import is removed from `contraction.py`; its dense lowering matches main.
+
+All three type variants and both Ruff checks pass. The focused groups pass 175 product,
+batched-product, verifier and snapshot cases, plus 89 existing MATMUL derivative, sparsity,
+support and lowering cases. Dense C snapshots still match main. Collection matches all
+5,001 baseline IDs.
+The detached full hook exited zero: 4,945 tests passed with 56 solver skips, followed by
+successful benchmark smoke, documentation and private-name checks.
