@@ -252,13 +252,13 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
         return declarations[key[4:]]
       if key.startswith("lam:"):
         decl = None if self.outputs is None else self.outputs.decls[self.outputs.index(key[4:])]
-        return _PatternHole(shape_hole=True) if decl is None else decl
+        return _PatternHole(shape_hole=True) if decl is None and layouts.get(key) in (None, "csc", "csr") else decl
       raise ValueError(f"unknown factory input: {key!r}")
 
     input_layouts = dict(zip(source_inputs.names, source_inputs._layout_decls, strict=True))
     output_layouts = {} if self.outputs is None else dict(zip(self.outputs.names, self.outputs._layout_decls, strict=True))
     layouts = {**input_layouts, **{f"fwd:{k}": v for k, v in input_layouts.items()}, **{f"lam:{k}": v for k, v in output_layouts.items()}}
-    parameters = parameter_list(tuple(_Leaf(key, declaration(key), layout=layouts.get(key) or "csc") for key in input_names))
+    parameters = parameter_list(tuple(_Leaf(key, declaration(key), layout=layouts.get(key)) for key in input_names))
     output_names = tuple(request if isinstance(request, str) else request.output_name for request in requests)
 
     def source_skeleton(skeleton: Any) -> Any:

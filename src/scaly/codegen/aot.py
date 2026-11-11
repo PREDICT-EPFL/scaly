@@ -28,7 +28,7 @@ from scaly.codegen.casadi import (
   casadi_defines,
   casadi_gather,
   casadi_output_sparsities,
-  check_casadi_layout,
+  casadi_layout,
   render_casadi_queries,
 )
 from scaly.codegen.cpp import render_cpp_header
@@ -42,6 +42,7 @@ from scaly.codegen.solver import (
   solver_options_declarations,
 )
 from scaly.ir.expr import callees_of
+from scaly.ir.layout import DenseLayout, SparseLayout
 from scaly.function.concrete import ConcreteFunction
 from scaly.function.model import Function, as_concrete
 from scaly.passes.lowering import lower_function, main_proc
@@ -252,7 +253,10 @@ def _sparse_leaf_tables(fun: ConcreteFunction, symbol: str) -> list[str]:
   for ident, type_, layout in zip(
     (*inputs, *outputs), (*fun.input_tree.types, *fun.output_tree.types), (*fun.input_tree.layouts, *fun.output_tree.layouts), strict=True
   ):
-    if layout is None:
+    if isinstance(layout, DenseLayout):
+      lines.append(f"#define {symbol}_{ident}_COLUMN_MAJOR 1")
+      continue
+    if not isinstance(layout, SparseLayout):
       continue
     prefix = f"{symbol}_{names.allocate(ident + '_' if names.contains(ident) else ident)}"
     lines += [
@@ -264,7 +268,12 @@ def _sparse_leaf_tables(fun: ConcreteFunction, symbol: str) -> list[str]:
       f"static const int {prefix}_shape[{type_.ndim}] = {_c_array(type_.shape)};",
       *(f"static const int {prefix}_{name}[{len(values)}] = {_c_array(values)};" for name, values in sparse_layout_tables(layout) if values),
     ]
-  return ["", "// Sparse leaf metadata: one local pattern shared by all batch entries.", *lines] if lines else []
+  comment = (
+    "// Leaf layout metadata."
+    if any(isinstance(layout, DenseLayout) for layout in (*fun.input_tree.layouts, *fun.output_tree.layouts))
+    else "// Sparse leaf metadata: one local pattern shared by all batch entries."
+  )
+  return ["", comment, *lines] if lines else []
 
 
 def header_sparsities(fun: ConcreteFunction, *, casadi: bool) -> tuple[SparsityPattern | None, ...]:
@@ -448,7 +457,7 @@ def _render_observed(
 
   try:
     if casadi:
-      check_casadi_layout(fun)
+      fun = casadi_layout(fun)
     ctx = _lower(fun, observe if observers else None, observe_expr if observers else None, recipe=recipe)
     source = recipe.comment(source_name or f"{c_ident(fun.name)}.c") + _render_source(ctx, casadi=casadi)
   except Exception as exc:
@@ -503,7 +512,7 @@ def render_c_api_header(
   fun = as_concrete(fun)
   _check_lang(lang)
   if casadi:
-    check_casadi_layout(fun)
+    fun = casadi_layout(fun)
   ctx = _lower(fun, recipe=BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal))
   return ctx.recipe.comment(f"{c_ident(fun.name)}.c") + _render_header(
     ctx.fun, ctx.backends, entry_workspace(fun, ctx.workspace_size, casadi=casadi), lang=lang, casadi=casadi
@@ -536,7 +545,7 @@ def render_c_module(
   )
   symbol = c_ident(fun.name)
   return CModule(
-    fun=fun,
+    fun=ctx.fun,
     header_name=f"{symbol}.{'hpp' if lang == 'cpp' else 'h'}" if header_name is None else header_name,
     source_name=f"{symbol}.c" if source_name is None else source_name,
     body=body,
@@ -563,6 +572,8 @@ def workspace_size(
   ``CModule.workspace_size`` is the same number without a second lowering, so prefer it when the
   module is already in hand."""
   fun = as_concrete(fun)
+  if casadi:
+    fun = casadi_layout(fun)
   return entry_workspace(
     fun,
     _lower(fun, recipe=BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal)).workspace_size,

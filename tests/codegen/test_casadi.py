@@ -1,7 +1,6 @@
 """The CasADi 3.8 compatible layer (``casadi=True``): ``casadi.external`` loads the library and
 agrees with the JIT, the six symbols acados resolves are exported, ``_sparsity_out``
-decodes to the pattern, compact sparse outputs arrive in compressed-column order, and a dense
-matrix input or output is rejected at render time."""
+decodes to the pattern, and dense matrices and compact sparse outputs arrive in column-major order."""
 
 from __future__ import annotations
 
@@ -45,7 +44,9 @@ def _build(tmp_path, fun: sc.Function, **kwargs):
     "-Wall",
     "-Wextra",
     "-Werror",
+    *(["-Wno-unused-parameter"] if module.backends else []),
     str(source),
+    *module.link_flags,
     "-lm",
     "-o",
     str(lib_path),
@@ -191,21 +192,99 @@ def test_casadi_external_empty_dense_leaves(tmp_path, shape, side, lang):
     assert entry(args, res, None, work, 0) == 4
 
 
-def test_casadi_rejects_dense_matrix_buffers() -> None:
-  @sc.function(sc.arg("m", (2, 3)), outputs=sc.arg("n"), name="dense")
-  def fun(m: sc.Expr) -> sc.Expr:
-    return m * 2.0
+@pytest.mark.parametrize("lang", ["c", "cpp"])
+@pytest.mark.parametrize("shape", [(2, 3), (3, 2), (2, 2), (1, 3), (3, 1)])
+def test_casadi_dense_matrices_match_numpy(tmp_path, lang, shape):
+  weights = np.arange(np.prod(shape), dtype=float).reshape(shape) + 0.5
 
-  with pytest.raises(ValueError, match="column-major"):
-    render_c_module(fun, casadi=True)
-  with pytest.raises(ValueError, match="input 'm'"):
-    render_c_api_header(fun, casadi=True)
+  @sc.function(sc.arg("m", shape), outputs=sc.group(sc.arg("n"), sc.arg("t"), sc.arg("s")), name="dense")
+  def fun(m):
+    return m * weights, m.T, (m * weights).sum()
 
-  @sc.function(sc.arg("row", (1, 3)), outputs=sc.arg("n"))
-  def row_ok(row: sc.Expr) -> sc.Expr:
-    return row * 2.0
+  module, lib_path = _build(tmp_path, fun, lang=lang)
+  ext = casadi.external(fun.name, str(lib_path))
+  matrix = np.arange(np.prod(shape), dtype=float).reshape(shape) - 2
+  n, t, s = ext(matrix)
+  assert ext.sparsity_in(0) == casadi.Sparsity.dense(*shape)
+  assert ext.sparsity_out(0) == casadi.Sparsity.dense(*shape)
+  np.testing.assert_allclose(n.full(), matrix * weights)
+  np.testing.assert_allclose(t.full(), matrix.T)
+  np.testing.assert_allclose(float(s), (matrix * weights).sum())
+  actual = fun(matrix)[0]
+  assert isinstance(actual, np.ndarray)
+  np.testing.assert_allclose(actual, matrix * weights)
+  assert module.header == render_c_api_header(fun, lang=lang, casadi=True)
+  assert module.workspace_size == workspace_size(fun, casadi=True)
 
-  render_c_module(row_ok, casadi=True)
+
+def test_casadi_column_major_cpp_buffer_indexing(tmp_path):
+  @sc.function(sc.arg("x", (2, 3)), name="matrix_cpp")
+  def fun(x):
+    return x
+
+  module, _ = _build(tmp_path, fun, lang="cpp")
+  client = tmp_path / "client.cpp"
+  client.write_text(
+    f'#include "{module.header_name}"\n'
+    "#include <type_traits>\n"
+    "static_assert(!std::is_convertible_v<const matrix_cpp::x_t&, const Buffer<double, 2, 3>&>);\n"
+    "static_assert(matrix_cpp::x_t::ndim == 2 && matrix_cpp::x_t::size == 6);\n"
+    "static_assert(matrix_cpp::x_t::shape[0] == 2 && matrix_cpp::x_t::shape[1] == 3);\n"
+    "static_assert(matrix_cpp::x_t::offset(1, 2) == 5);\n"
+    "static_assert(matrix_cpp::x_t::offset(0, 1) == 2);\n"
+    "int main() {\n"
+    "  matrix_cpp::x_t x{};\n"
+    "  for (int k = 0; k < 6; ++k) x.data[k] = k;\n"
+    "  const auto& cx = x;\n"
+    "  return x(0, 1) == 2 && cx(1, 0) == 1 && x.ptr()[4] == 4 ? 0 : 1;\n"
+    "}\n"
+  )
+  executable = tmp_path / "client"
+  subprocess.run([*cxx_compiler(), "-std=c++17", "-pedantic-errors", "-Wall", "-Wextra", "-Werror", str(client), "-o", str(executable)], check=True)
+  subprocess.run([str(executable)], check=True)
+
+
+def test_casadi_cpp_rejects_a_function_named_like_the_column_major_template():
+  fun = sc.function(sc.arg("x", (2, 3)), name="ColumnMajorBuffer")(lambda x: x)
+  with pytest.raises(ValueError, match="ColumnMajorBuffer.*template"):
+    render_c_api_header(fun, lang="cpp", casadi=True)
+  render_c_api_header(fun, lang="cpp")
+  render_c_api_header(fun, casadi=True)
+
+
+def test_casadi_dense_matrix_result_from_vector(tmp_path):
+  @sc.function(sc.arg("x", 6), name="dense_result")
+  def fun(x):
+    return x.reshape((2, 3))
+
+  _, lib_path = _build(tmp_path, fun)
+  ext = casadi.external(fun.name, str(lib_path))
+  np.testing.assert_array_equal(ext(np.arange(6)).full(), np.arange(6).reshape((2, 3)))
+
+
+@pytest.mark.solver("piqp")
+def test_casadi_dense_solver_parameters_use_a_lowered_function_wrapper(tmp_path):
+  weights = np.arange(6, dtype=float).reshape((2, 3)) + 1
+
+  @sc.problem(vars=sc.arg("x", 2), params=sc.arg("p", (2, 3)))
+  def problem(x, p):
+    target = (p * weights).sum()
+    return sc.ProblemSpec(minimize=(x[0] - target) ** 2 + x[1] ** 2, eq=(x[1],), ineq=(sc.bounded(x[:1], lo=-1000.0, hi=1000.0),))
+
+  solve = sc.solver(problem, "piqp", name="dense_solver")
+  for render in (render_c_module, render_c_api_header, workspace_size):
+    with pytest.raises(ValueError, match="solver entry.*Function wrapper"):
+      render(solve.function, casadi=True)
+
+  @sc.function(sc.arg("x0", 2), sc.arg("lam0", 2), sc.arg("lam_eq", 1), sc.arg("lam_ineq", 1), sc.arg("p", (2, 3)), name="dense_solver_external")
+  def wrapped(x0, lam0, lam_eq, lam_ineq, p):
+    return solve.function(x0, lam0, lam_eq, lam_ineq, p)
+
+  _, lib_path = _build(tmp_path, wrapped)
+  ext = casadi.external(wrapped.name, str(lib_path))
+  p = np.arange(6, dtype=float).reshape((2, 3))
+  result = ext(np.zeros(2), np.zeros(2), np.zeros(1), np.zeros(1), p)
+  np.testing.assert_allclose(result[0].full().ravel(), [(p * weights).sum(), 0])
 
 
 @pytest.mark.parametrize("empty", [False, True], ids=["nonempty", "empty"])

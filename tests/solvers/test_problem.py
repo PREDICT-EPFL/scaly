@@ -398,6 +398,20 @@ def test_single_block_solver_signature_is_not_nested() -> None:
   assert as_concrete(solve.function).output_names == ("x", "lam:x", "lam_eq", "lam_ineq")
 
 
+@pytest.mark.parametrize("backend", ["piqp", "sqp"])
+@pytest.mark.parametrize("side", ["vars", "params"])
+def test_solver_rejects_column_major_problem_leaves(backend, side):
+  @sc.problem(
+    vars=sc.arg("x", (2, 3), layout="column-major" if side == "vars" else "row-major"),
+    params=sc.arg("p", (2, 3), layout="column-major" if side == "params" else "row-major"),
+  )
+  def problem(x, p):
+    return sc.ProblemSpec(minimize=sc.sumsqr(x - p))
+
+  with pytest.raises(ValueError, match="row-major.*Function wrapper"):
+    sc.solver(problem, backend)
+
+
 def test_nlp_solver_symbolic_call_preserves_variable_blocks() -> None:
   solve = sc.solver(filter_problem, "sqp", name="filter_nested")
   u0, s0 = sc.sym("u0", 2), sc.sym("s0", 1)

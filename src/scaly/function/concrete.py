@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, Literal, Mapping, Seq
 
 from ..ir.expr import Expr, ExprOp, check_prints_reach, linear_combination, recording_prints, topo
 from ..ir.expr_spec import verify_expr
-from ..ir.layout import SparseLayout, sparse_layout
+from ..ir.layout import LeafLayout, sparse_layout
 from ..ir.match import _apply_lowering
 from ..ir.types import DeviceSpec, Lowering, SparsityPattern, TensorType, dtypes
 from .tree import NumericalArray, Tree, flat_tree, flat_parameters, inferred_outputs
@@ -205,8 +205,8 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     output_coloring_widths: Sequence[int | None] | None = None,
     role: Role | None = None,
     *,
-    input_layouts: tuple[SparseLayout | None, ...] | None = None,
-    output_layouts: tuple[SparseLayout | None, ...] | None = None,
+    input_layouts: tuple[LeafLayout, ...] | None = None,
+    output_layouts: tuple[LeafLayout, ...] | None = None,
   ) -> ConcreteFunction[Any, Any, Any, Any]:
     if role is not None:
       if input_layouts is None:
@@ -459,7 +459,7 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     ret_output_names: list[str] = []
     ret_sparsities: list[SparsityPattern | None] = []
     ret_coloring_widths: list[int | None] = []
-    ret_layouts: list[SparseLayout | None] = []
+    ret_layouts: list[LeafLayout] = []
     for spec in outputs:
       if isinstance(spec, str):
         if spec not in all_outputs:

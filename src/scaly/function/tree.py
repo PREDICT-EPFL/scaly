@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from types import EllipsisType
-from typing import Any, TypeGuard, cast, overload
+from typing import Any, Literal, TypeGuard, cast, overload
 
 import numpy as np
 from scipy import sparse
 
 from ..ir.expr import Expr, ExprOp
-from ..ir.layout import Layout, SparseLayout, sparse_layout
+from ..ir.layout import DenseLayout, Layout, LeafLayout, SparseLayout, sparse_layout
 from ..ir.types import TensorType, as_shape, dtypes
 
 type ShapeDecl = int | tuple[int, ...] | TensorType | None
@@ -54,7 +54,7 @@ class Tree[Symbolic, Numerical]:
 
   names: tuple[str, ...]
   decls: tuple[LeafDecl, ...]
-  layouts: tuple[SparseLayout | None, ...]
+  layouts: tuple[LeafLayout, ...]
   _layout_decls: tuple[Layout, ...]
 
   def __setattr__(self, name: str, value: Any) -> None:
@@ -171,7 +171,7 @@ class _Leaf(Tree[Expr, Array]):
   returned tensor along its first axis exactly as NumPy would.
   """
 
-  def __init__(self, name: str, shape: ShapeDecl = None, /, *, layout: Layout = "csc", pattern: EllipsisType | None = None) -> None:
+  def __init__(self, name: str, shape: ShapeDecl = None, /, *, layout: Layout = None, pattern: EllipsisType | None = None) -> None:
     if not isinstance(name, str) or not name:
       raise ValueError("arg needs a non-empty name")
     self.names = (name,)
@@ -190,15 +190,18 @@ class _Leaf(Tree[Expr, Array]):
     self.decls = (decl,)
     self._layout_decls = (layout,)
     if isinstance(decl, _PatternHole):
-      if layout not in ("csc", "csr"):
+      if layout not in (None, "csc", "csr"):
         raise ValueError("a pattern hole needs a 'csc' or 'csr' layout")
       self.layouts = (None,)
     elif decl is None or decl.pattern is None:
-      if layout != "csc":
-        raise ValueError("a layout requires a declared sparse pattern")
-      self.layouts = (None,)
+      if layout is None or layout == "row-major":
+        self.layouts = (None,)
+      elif isinstance(layout, DenseLayout) or layout == "column-major":
+        self.layouts = (None if decl is not None and len(decl.shape) < 2 else DenseLayout(None if decl is None else decl.shape),)
+      else:
+        raise ValueError("dense layout must be 'row-major' or 'column-major'")
     else:
-      self.layouts = (sparse_layout(decl.pattern, layout),)
+      self.layouts = (sparse_layout(decl.pattern, "csc" if layout is None else layout),)
 
   def symbols(self, *, diff: bool | None = None) -> Expr:
     type_ = self.types[0]
@@ -212,7 +215,10 @@ class _Leaf(Tree[Expr, Array]):
   def with_types(self, types: tuple[TensorType, ...]) -> _Leaf:
     if len(types) != 1:
       raise ValueError(f"arg expects one resolved type, got {len(types)}")
-    return _Leaf(self.names[0], types[0], layout=self.layouts[0] or self._layout_decls[0] if types[0].pattern is not None else "csc")
+    layout = self.layouts[0] or self._layout_decls[0]
+    if isinstance(self.decls[0], _PatternHole) and types[0].pattern is None:
+      layout = None
+    return _Leaf(self.names[0], types[0], layout=layout)
 
   def flatten_symbolic(self, value: Expr, what: str, *, allow_scalar: bool = False) -> tuple[Expr, ...]:
     if not isinstance(value, Expr):
@@ -233,7 +239,7 @@ class _Leaf(Tree[Expr, Array]):
     if dtype != dtypes.float64:
       raise NotImplementedError(f"{what}: input leaf {self.names[0]!r} has dtype {dtype}; only float64 leaves are supported")
     layout = self.layouts[0]
-    if layout is not None:
+    if isinstance(layout, SparseLayout):
       return (layout.numerical_values(value, self.shapes[0]),)
     if sparse.issparse(value):
       raise ValueError(f"{what}: sparse argument for dense leaf {self.names[0]!r}")
@@ -243,7 +249,7 @@ class _Leaf(Tree[Expr, Array]):
     array = array.astype(dtype.numpy(), copy=False)
     if array.shape != self.shapes[0]:
       raise ValueError(f"{what}: expected shape {self.shapes[0]} for {self.names[0]!r}, got {array.shape}")
-    return (np.require(array, requirements="C"),)
+    return (layout.numerical_values(array, self.shapes[0]) if layout is not None else np.require(array, requirements="C"),)
 
   def unflatten(self, values: tuple[Any, ...]) -> Any:
     if len(values) != 1:
@@ -256,14 +262,20 @@ def arg(name: str, shape: int | tuple[int, ...], /) -> Tree[Expr, Array]: ...
 
 
 @overload
-def arg(name: str, shape: ShapeDecl = None, /, *, layout: Layout = "csc", pattern: EllipsisType | None = None) -> Tree[Expr, NumericalArray]: ...
+def arg(name: str, shape: ShapeDecl = None, /, *, layout: Literal["row-major", "column-major"]) -> Tree[Expr, Array]: ...
 
 
-def arg(name: str, shape: ShapeDecl = None, /, *, layout: Layout = "csc", pattern: EllipsisType | None = None) -> Tree[Expr, Any]:
+@overload
+def arg(name: str, shape: ShapeDecl = None, /, *, layout: Layout = None, pattern: EllipsisType | None = None) -> Tree[Expr, NumericalArray]: ...
+
+
+def arg(name: str, shape: ShapeDecl = None, /, *, layout: Layout = None, pattern: EllipsisType | None = None) -> Tree[Expr, Any]:
   """Declare one named tensor, optionally leaving its shape to a call or trace.
 
   A leaf is passed and returned as a bare value. Use ``group`` to declare tuple structure.
   A ``TensorType`` sets the dtype and differentiability explicitly.
+  Dense leaves use row-major buffers by default. ``layout="column-major"`` orders each
+  matrix's values by column, keeping leading batch axes in row-major order.
   """
   return _Leaf(name, shape, layout=layout, pattern=pattern)
 
@@ -382,11 +394,11 @@ def group(*parts: Tree[Any, Any]) -> Tree[Any, Any]:
   return _G(parts)
 
 
-def flat_tree(names: tuple[str, ...], types: tuple[LeafDecl, ...], *, layouts: tuple[SparseLayout | None, ...] | None = None) -> Tree[Any, Any]:
+def flat_tree(names: tuple[str, ...], types: tuple[LeafDecl, ...], *, layouts: tuple[LeafLayout, ...] | None = None) -> Tree[Any, Any]:
   """Build the private flat tree used by dynamic ``Function.factory`` results."""
   if len(names) != len(types):
     raise ValueError(f"expected {len(types)} names, got {len(names)}")
-  leaves = tuple(arg(name, type_, layout=layout or "csc") for name, type_, layout in zip(names, types, layouts or (None,) * len(types), strict=True))
+  leaves = tuple(arg(name, type_, layout=layout) for name, type_, layout in zip(names, types, layouts or (None,) * len(types), strict=True))
   return leaves[0] if len(leaves) == 1 else _G(leaves, public=False)
 
 
@@ -415,10 +427,10 @@ def append_parameter(params: Tree[Any, Any], tree: Tree[Any, Any], /) -> _G:
   return parameter_list((*cast(_G, params).parts, tree))
 
 
-def flat_parameters(names: tuple[str, ...], types: tuple[TensorType, ...], *, layouts: tuple[SparseLayout | None, ...] | None = None) -> _G:
+def flat_parameters(names: tuple[str, ...], types: tuple[TensorType, ...], *, layouts: tuple[LeafLayout, ...] | None = None) -> _G:
   """Build a parameter list with one tensor per parameter."""
   if len(names) != len(types):
     raise ValueError(f"expected {len(types)} names, got {len(names)}")
   return parameter_list(
-    tuple(arg(name, type_, layout=layout or "csc") for name, type_, layout in zip(names, types, layouts or (None,) * len(types), strict=True))
+    tuple(arg(name, type_, layout=layout) for name, type_, layout in zip(names, types, layouts or (None,) * len(types), strict=True))
   )

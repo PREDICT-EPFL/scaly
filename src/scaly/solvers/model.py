@@ -8,6 +8,7 @@ from functools import cached_property
 from typing import Any
 
 from ..ir.expr import Expr, ExprOp
+from ..ir.layout import DenseLayout
 from ..function.concrete import ConcreteFunction
 from ..function.model import Function
 from ..function.tree import Tree
@@ -165,4 +166,6 @@ def descriptor_function(
   )
   inputs = input_tree or flat_parameters(tuple(name for name, _ in descriptor.input_signature), tuple(expr.type for expr in input_exprs))
   outputs = output_tree or flat_tree(tuple(name for name, _ in descriptor.output_signature), tuple(expr.type for expr in output_exprs))
+  if any(isinstance(layout, DenseLayout) for layout in (*inputs.layouts, *outputs.layouts)):
+    raise ValueError("solvers require row-major dense leaves; use an ordinary Function wrapper for a column-major interface")
   return Function._from_instance(ConcreteFunction.build(descriptor.name, inputs, input_exprs, outputs, output_exprs, descriptor=descriptor))

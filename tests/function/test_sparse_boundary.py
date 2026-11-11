@@ -9,6 +9,7 @@ from scipy import sparse
 
 import scaly as sc
 from scaly.function.sugar import _view_window
+from scaly.ir.layout import SparseLayout
 from scaly.ir.types import CanonicalPattern, SparsityPattern
 
 
@@ -61,7 +62,7 @@ def test_sparse_layout_permutations_and_numerical_copies() -> None:
   for requested in LAYOUTS:
     leaf = sc.arg("x", sc.TensorType(PATTERN.shape, pattern=PATTERN), layout=requested)
     layout = leaf.layouts[0]
-    assert layout is not None
+    assert isinstance(layout, SparseLayout)
     compact = layout.numerical_values(source, PATTERN.shape)
     np.testing.assert_array_equal(compact, canonical[layout.permutation])
     np.testing.assert_array_equal(compact[layout.inverse_permutation], canonical)
@@ -173,7 +174,7 @@ def test_sparse_default_csc_layout_handles_a_non_involutive_permutation(outputs)
   pattern = CanonicalPattern((3, 4), (0, 0, 1, 2, 2), (0, 3, 1, 0, 2))
   leaf = sc.arg("x", sc.TensorType(pattern.shape, pattern=pattern))
   layout = leaf.layouts[0]
-  assert layout is not None and not np.array_equal(layout.permutation, layout.inverse_permutation)
+  assert isinstance(layout, SparseLayout) and not np.array_equal(layout.permutation, layout.inverse_permutation)
   decorator = sc.function(leaf, name="sparse_cycle") if outputs is None else sc.function(leaf, outputs=outputs, name="sparse_cycle")
   stage = decorator(lambda x: x.sin())
   source = sparse.coo_array(([2.0, 3.0, 5.0, 7.0, 11.0], (pattern.rows, pattern.cols)), shape=pattern.shape)
@@ -225,7 +226,7 @@ def test_sparse_seeded_functions_and_factory_preserve_source_layouts(layout) -> 
   source = sparse.coo_array(([0.2, -0.5, 1.2, 0.7], (PATTERN.rows, PATTERN.cols)), shape=PATTERN.shape)
   direction = sparse.coo_array(([1.0, -2.0, 0.0, 3.0], (PATTERN.rows, PATTERN.cols)), shape=PATTERN.shape)
   declared = inp.layouts[0]
-  assert declared is not None
+  assert isinstance(declared, SparseLayout)
   x = declared.numerical_values(source, PATTERN.shape)
   seed = declared.numerical_values(direction, PATTERN.shape)
   expected = np.cos(source.toarray()) * direction.toarray()
@@ -252,7 +253,7 @@ def test_sparse_factory_with_shape_holes_preserves_fixed_leaf_layouts(layout) ->
   assert factory.inputs is not None
   assert factory.inputs.layouts == (inp.layouts[0], None, inp.layouts[0])
   declared = inp.layouts[0]
-  assert declared is not None
+  assert isinstance(declared, SparseLayout)
   canonical = np.array([0.2, -0.5, 1.2, 0.7])
   seed = np.array([1.0, -2.0, 0.0, 3.0])
   original, tangent = factory(canonical[declared.permutation], np.array([2.0, 3.0]), seed[declared.permutation])
@@ -270,7 +271,7 @@ def test_sparse_weighted_hessians_preserve_dual_layouts(layout) -> None:
   assert dense.inputs.layouts[-1] is out.layouts[0]
   assert compact.inputs.layouts[-1] is out.layouts[0]
   declared = inp.layouts[0]
-  assert declared is not None
+  assert isinstance(declared, SparseLayout)
   primal = np.array([0.2, -0.5, 1.2, 0.7])[declared.permutation]
   multipliers = np.array([1.0, -2.0, 0.0, 3.0])
   weights = multipliers[declared.permutation]
@@ -296,7 +297,7 @@ def test_sparse_custom_rules_preserve_boundaries_and_reject_different_patterns(l
   primal = sparse.coo_array((values, (PATTERN.rows, PATTERN.cols)), shape=PATTERN.shape)
   seed = sparse.coo_array((seed_values, (PATTERN.rows, PATTERN.cols)), shape=PATTERN.shape)
   declared = x.layouts[0]
-  assert declared is not None
+  assert isinstance(declared, SparseLayout)
   for derivative in (sc.forward(ruled), sc.adjoint(ruled)):
     call: Any = derivative
     result = call(declared.numerical_values(primal, PATTERN.shape), declared.numerical_values(seed, PATTERN.shape))
@@ -326,7 +327,7 @@ def test_sparse_derived_results_inherit_the_primal_leaf_layout(input_order, outp
     (sc.gradient(objective), inp.layouts[0], (source,), 2 * source.toarray()),
   )
   for derivative, layout, args, reference in cases:
-    assert layout is not None
+    assert isinstance(layout, SparseLayout)
     assert derivative.instantiate().output_tree.layouts[0] is layout
     result = derivative(*args)
     assert isinstance(result, sparse.csc_array | sparse.csr_array | sparse.coo_array)
@@ -354,6 +355,9 @@ def test_sparse_ad_helper_boundaries_use_canonical_order():
     visited.add(function)
     if function.role is not None:
       helpers.append(function)
-      assert all(layout is None or layout.format == "csr" for layout in (*function.input_tree.layouts, *function.output_tree.layouts))
+      assert all(
+        layout is None or isinstance(layout, SparseLayout) and layout.format == "csr"
+        for layout in (*function.input_tree.layouts, *function.output_tree.layouts)
+      )
     pending.extend(node.attrs["callee"] for node in topo(function.outputs) if node.op in {sc.ExprOp.CALL, sc.ExprOp.VMAP})
   assert helpers
