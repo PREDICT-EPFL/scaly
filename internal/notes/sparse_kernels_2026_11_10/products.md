@@ -159,3 +159,12 @@ passed 281. Snapshot files are byte-identical to main. The short claude-opus-5-5
 effort approved all three resolutions without findings, relying on those validation runs.
 The detached full pre-merge hook exited zero with 3,995 passed and 56 solver skips, followed by
 successful smoke, documentation and private-name checks. The full collection has 4,051 tests.
+
+Main advanced during that validation when #401 replaced SUM with axis-aware REDUCE. GitHub
+reported a new conflict after the leased push. Replaying onto `0b528bdc` applied without manual
+resolutions; the range diff changes only surrounding REDUCE context and test-baseline adjacency,
+not the sampled implementation. All three type variants and both Ruff checks passed again,
+along with 268 focused product, reduction, SELECT, call-support and snapshot cases. Snapshots
+match that main baseline. The second full hook exited zero with 4,681 passed and 56 solver
+skips, then smoke, docs and the private-name check passed. Collection matches all 4,737 IDs.
+A pre-push merge check against the newer main succeeded, so no further rebase was needed.
