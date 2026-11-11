@@ -12,7 +12,7 @@ VMAP folding and unrolling. Export the builder with a docstring, keep it out of 
 - [x] Add branch tangent and adjoint helpers with primal recomputation.
 - [x] Run focused checks, perturb a new gate, refresh node baseline and detached full checks.
 - [x] Commit, check PR #411 status, push and open a draft PR on the current base; link immediately.
-- [ ] One Opus 5.5 high cross-review and one delta check, fixing findings locally.
+- [x] One Opus 5.5 high cross-review and one delta check, fixing findings locally.
 - [ ] After #411 merges, rebase onto main, retarget, rerun detached suite and push once.
 - [ ] Delete this plan, mark ready, await green CI and report verdict to the coordinator.
 
@@ -34,3 +34,14 @@ regressions failed first. Fixes move canonicalization before branch capture and 
 in each analysis context. Notes addressed: early branch result-type errors, four text renderers,
 and derivative semantics in the builder docstring. The reciprocal-hoisting gap for hand-built
 IF assignments is unreachable from current lowering and stays in the PR description.
+
+Opus delta approved all fixes at the local review-fix commit. Both review threads settled.
+Full validation v2 passed every pre-merge check: 3,894 tests and 55 skips,
+benchmark smoke, docs, strict types, Ruff format/lint and private-name check.
+Evidence: /tmp/scaly-cond-full-v2.log and .exit=0. PR #411 remains open. Keep this PR off the queue until base main and coordinator
+permission. The only review open point is unreachable reciprocal hoisting in hand-built IFs.
+
+Coordinator blocker: PR #411 remains open at the original LOOP base. After it merges, fetch
+origin/main, rebase --onto origin/main the old LOOP tip, remove this plan, rerun the detached
+full checks, retarget PR #417 via REST and push once. Keep the existing review verdict; no
+additional delegates are authorized. Await green CI and explicit "queue now" from coordinator.
