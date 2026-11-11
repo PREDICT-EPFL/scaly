@@ -42,7 +42,10 @@ zero tangents/cotangents as activity. Keep select-free gradient C unchanged.
 
 ## Remaining
 
-- [ ] Run the final full hook detached via ~/.scaly-suite/run and keep this turn alive.
+- [x] Run the final full hook detached via ~/.scaly-suite/run: exit 0, 6,317 passed,
+      56 skipped; all lint/type/snapshot/smoke/docs/private-name checks pass.
+      Running log /tmp/scaly-434-fable-suite-t53Kwr/final.log; completion in final.exit.
+      The runner path is also in /tmp/scaly-434-fable-suite.path.
 - [ ] Commit the fixed state, then one fresh Fable LOW delta on the fixes alone. No third
       Sol review and no second full Fable review. Delta base is the rebased equivalent
       of the reviewed head; exclude unrelated upstream changes.
