@@ -14,7 +14,7 @@ Do not change scalarization budgets, support rules, sparse outputs or Hessian as
 - [ ] Cover contractions and movement, and check sparse-data Jacobian code growth requested by #225.
 - [x] Perturb a seed list and demonstrate the differential test fails; restore and pass focused tests.
 - [x] Regenerate C snapshots and node-ID baseline; measure the resulting build.
-- [ ] Run all pre-merge checks detached through ~/.scaly-suite/run, polling the exit file in this turn.
+- [x] Run all pre-merge checks detached through ~/.scaly-suite/run, polling the exit file in this turn.
 - [ ] Commit, push once, open and link draft PR. Review with Opus and high-risk correctness reviewer,
       fix findings and obtain one delta check. Settle used review threads.
 - [ ] Remove PLAN.md, publish review fixes together, mark ready, post numbers on #214, queue once
@@ -58,3 +58,64 @@ The current diff intentionally stays in lowering plus tests and snapshots. No ro
 has been applied. Ask reviewers to assess the remaining gap and any concrete in-scope fix; if it
 still fails after review and one delta check, follow the run plan's parking rule rather than queue
 an incomplete change. Keep this plan while the pull request is draft.
+
+
+## Full-suite follow-up
+
+The first complete run ended with 4,613 passed, 56 skipped and three failures. Fixed the two
+unit-map dispatch metric failures by retaining the original induction variable for an unfiltered
+map, and normalized full-support call arguments to avoid redundant variants. Do not use seed
+plans when neither the result nor an operand has known zeros. Rectangular seed bands retain
+contiguous entry traversal.
+
+The neural-process Jacobian workspace gate also failed, 12,288 versus 6,144 allowed. New sparse
+kernels prevented producer fusion, and workspace packing treated every temporary in an inlined
+map as live for the whole loop. Lowering now marks scratch that is defined for each call;
+`pack_workspace` follows its kernel lifetimes inside scalar and widened maps. Inputs and values
+used after the map remain pinned across every trip. Whole-loop packing remains for unmarked and
+carried storage. Two generated-C tests cover reuse, values defined before the loop and outputs
+read after it. The numerical test caught and fixed premature reuse of a live output. Existing
+mixed-width vector helper slot reuse caught and fixed an end-position error.
+
+The targeted gates now pass. The broad check after these fixes passed 636 tests, with 50 skipped.
+Ruff and ty pass. The collection now contains 4,674 tests. Re-run the full hook detached before
+pushing and launching review. No PR or branch push has happened yet.
+
+Latest build before the final bound-read accounting tweak: 67,308 operations per stage,
+1,121,802 source bytes, 6.3706 s generation and 7.0294 s compile. The operation criterion and
+sparse-data Jacobian growth criterion remain unmet. Existing snapshots still regenerate
+byte-identically, including the new seed-list case. The workspace file overlaps #368; its changes
+are allowed by this task's workspace scope and may need a conflict rebase.
+
+
+## Ready for independent review
+
+The second full pre-merge hook passed with exit 0: 4,618 passed, 56 skipped; all benchmark smoke
+checks, documentation, type, lint, formatting and private-name checks passed. Log and exit file:
+`/tmp/scaly-225/full-suite-2.log` and `/tmp/scaly-225/full-suite-2.exit`.
+
+Final measured default-budget build: 67,308 operations per stage, 1,121,802 source bytes,
+5.5007 s generation, 8.0032 s generated-C compile, dispatch workspace 57,276 doubles and whole
+workspace 452,466 doubles. The two outstanding criteria remain unchanged. Prepare a draft PR and
+get one Opus xhigh review plus one independent sol xhigh correctness review, then fix and request
+one low-effort delta check. Do not queue or remove this plan while criteria are unmet.
+
+
+## Conflict rebase before review
+
+GitHub reported an actual conflict with "Call external C functions from Scaly graphs" (#355),
+so the branch was rebased onto that main. The call-lowering conflict keeps external calls on their
+external symbol and preserves the external-call marker; only ordinary calls specialize support.
+The merged workspace change retains main's external-call accounting. Snapshots regenerate
+byte-identically, and the node-ID union now contains 4,717 tests. Rebased focused external/seed/
+workspace checks and the final full pre-merge hook must pass before the forced rebase push and
+review. Use `/tmp/scaly-225/full-suite-3.log` and `.exit` for that run. The prior full hook passed
+on the pre-rebase state. The chain translation unit is being checked for byte identity to the
+measured artifact, so unchanged build numbers remain attributed to that identical code.
+
+
+Rebased validation is complete: `/tmp/scaly-225/full-suite-3.exit` is 0. The whole hook passed
+with 4,661 tests passed and 56 skipped, all smoke gates passed, and docs/type/lint/format/private
+checks passed. The 47 focused external/seed/workspace checks also passed. The chain translation
+unit is exactly byte-identical to `/tmp/scaly-225/final.c`, including the 67,308-operation count,
+1,121,802 source bytes and workspace figures. The conflict rebase is ready to push for review.

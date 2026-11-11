@@ -298,7 +298,7 @@ def lower_supported_elementwise(ctx: LowerCtx, node: Expr, program_op) -> bool:
     return False
   supports = [ctx.support_of(arg) for arg in node.args]
   support = ctx.support_of(node)
-  if support is None and all(s is None or len(s) == arg.size for arg, s in zip(node.args, supports, strict=True)):
+  if (support is None or len(support) == node.size) and all(s is None or len(s) == arg.size for arg, s in zip(node.args, supports, strict=True)):
     return False
   if node.type.pattern is not None:
     return False
@@ -313,8 +313,15 @@ def lower_supported_elementwise(ctx: LowerCtx, node: Expr, program_op) -> bool:
     ctx.emit(ranges, [p.store(p.view(out, [k]), p.const_float(0, dtype=node.type.dtype))])
   width = int(np.prod(node.shape[1:], dtype=np.int64))
   for region, count in seed_regions(logical, reads, width):
-    ranges, (entry, seed) = ctx.nest((len(region.writes) // count, count), f"seed_{out.attrs['name']}")
-    k = p.add(p.mul(entry, p.const_int(count)), seed)
+    entries = len(region.writes) // count
+    grid = region.writes.reshape(entries, count)
+    if np.all(grid // width == grid[0] // width):
+      region = MapRegion(grid.T.reshape(-1), tuple(slots.reshape(entries, count).T.reshape(-1) for slots in region.reads))
+      extents = count, entries
+    else:
+      extents = entries, count
+    ranges, (outer, inner) = ctx.nest(extents, f"seed_{out.attrs['name']}")
+    k = p.add(p.mul(outer, p.const_int(extents[1])), inner)
     values = []
     for arg, slots in zip(node.args, region.reads, strict=True):
       if slots[0] < 0:

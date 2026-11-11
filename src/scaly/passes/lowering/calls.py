@@ -28,6 +28,10 @@ def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction, arguments: tuple[Sup
     for oracle in solver_callees(callee):
       _ensure_callee(ctx, oracle)
     return ctx.symbols[callee]
+  if arguments is not None:
+    arguments = tuple(
+      arg.support if support is not None and len(support) == arg.size else support for arg, support in zip(callee.inputs, arguments, strict=True)
+    )
   if arguments == tuple(arg.support for arg in callee.inputs):
     arguments = None
   key = callee if arguments is None else (callee, arguments)
@@ -141,7 +145,7 @@ def _lower_vmap_group(ctx: LowerCtx, node: Expr, stages: np.ndarray, symbol: str
   loop = ctx.names.allocate(f"it_{ctx.buf_of(node).attrs['name']}")
   rng = p.range_(loop, 0, length, kind=RangeKind.GLOBAL)
   rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
-  it = ctx.index_at(stages, p.var(loop), shared=True)
+  it = p.var(loop) if np.array_equal(stages, np.arange(length)) else ctx.index_at(stages, p.var(loop), shared=True)
   in_args = []
   before = len(ctx.statements)
   for k, outer in enumerate(node.args):
