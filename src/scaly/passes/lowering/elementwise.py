@@ -7,7 +7,7 @@ from ...ir.expr import Expr, ExprOp
 from ...ir.program import ProgramNode
 from ...ad.rules import ELEMENTWISE
 from .ctx import LowerCtx, lowers, _flat_coordinates
-from .plans import lower_elementwise
+from .plans import lower_elementwise, lower_supported_elementwise
 
 
 @lowers(*ELEMENTWISE)
@@ -20,6 +20,8 @@ def _lower_elementwise(ctx: LowerCtx, node: Expr) -> None:
   nests (#71)."""
   if node.type.pattern is not None:
     lower_elementwise(ctx, node, ELEMENTWISE[ExprOp(node.op)].program)
+    return
+  if lower_supported_elementwise(ctx, node, ELEMENTWISE[ExprOp(node.op)].program):
     return
   out = ctx.alloc_tmp(node)
   ranges, (flat,) = ctx.nest((node.size,), f"i_{out.attrs['name']}")

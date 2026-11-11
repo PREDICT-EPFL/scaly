@@ -6,6 +6,7 @@ import numpy as np
 
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
+from ...ir.support import support_indices
 from ..program.scalarize import AUTO_SCALAR_OPS_PER_PROC
 from .ctx import LowerCtx, lowers, _flat
 from .schedule import emit_reduction
@@ -17,6 +18,8 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
   a, b = node.args
   if a.type.pattern is not None or b.type.pattern is not None:
     _lower_stored_matmul(ctx, node)
+    return
+  if ctx.seed_pairs and len(a.shape) <= 2 and len(b.shape) <= 2 and _lower_supported_matmul(ctx, node):
     return
   out = ctx.alloc_tmp(node)
   name = out.attrs["name"]
@@ -33,6 +36,44 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
   emit_reduction(
     ctx, outputs, reductions, target, p.mul(ctx.read(a, a_coords), ctx.read(b, b_coords)), batch_axes=sum(dim != 1 for dim in node.shape[:batch_rank])
   )
+
+
+def _lower_supported_matmul(ctx: LowerCtx, node: Expr) -> bool:
+  a, b = node.args
+  supports = [ctx.support_of(arg) for arg in node.args]
+  if all(s is None or len(s) == arg.size for arg, s in zip(node.args, supports, strict=True)):
+    return False
+  inner = a.shape[-1]
+  height = a.shape[0] if len(a.shape) == 2 else 1
+  width = b.shape[-1] if len(b.shape) == 2 else 1
+  out = ctx.alloc_tmp(node)
+  zero, (z,) = ctx.nest((node.size,), f"zero_{out.attrs['name']}")
+  ctx.emit(zero, [p.store(p.view(out, [z]), p.const_float(0, dtype=node.type.dtype))])
+  ranges, (k,) = ctx.reduce((inner,), f"inner_{out.attrs['name']}")
+  coords, values = [], []
+  for left, (arg, support) in zip((True, False), zip(node.args, supports, strict=True), strict=True):
+    if support is None or len(support) == arg.size:
+      extent = height if left else width
+      loops, (coord,) = ctx.nest((extent,), f"free_{out.attrs['name']}_{int(left)}")
+      slot = p.add(p.mul(coord, p.const_int(inner)), k) if left else p.add(p.mul(k, p.const_int(width)), coord)
+    else:
+      entries = support_indices(support)
+      contracted = entries % inner if left else entries // width
+      order = np.argsort(contracted, kind="stable")
+      entries = entries[order]
+      pointers = np.concatenate(([0], np.cumsum(np.bincount(contracted, minlength=inner))))
+      start = ctx.index_at(pointers, k, shared=True)
+      stop = ctx.index_at(pointers, p.add(k, p.const_int(1)), shared=True)
+      loops, (i,) = ctx.nest(((start, stop),), f"stored_{out.attrs['name']}_{int(left)}")
+      coord = ctx.index_at(entries // inner if left else entries % width, i, shared=True)
+      slot = ctx.index_at(entries, i, shared=True)
+    ranges.extend(loops)
+    coords.append(coord)
+    values.append(p.load(ctx.stored_view(arg, slot)))
+  target = p.view(out, [p.add(p.mul(coords[0], p.const_int(width)), coords[1])])
+  value = p.mul(*values)
+  ctx.emit(ranges, [p.store(target, p.add(p.load(target), value))])
+  return True
 
 
 def _lower_stored_matmul(ctx: LowerCtx, node: Expr) -> None:

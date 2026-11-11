@@ -398,6 +398,58 @@ def test_packing_reuses_slots_and_spills() -> None:
   assert _sz_w(f, frame_budget=8192) == 1600
 
 
+@pytest.mark.skipif(not _HAVE_CC, reason="no C compiler for mapped workspace lifetimes")
+@pytest.mark.parametrize("per_call", [False, True])
+def test_mapped_workspace_reuses_temporaries_but_preserves_inputs_and_live_outputs(tmp_path, per_call):
+  import ctypes
+  import subprocess
+
+  from scaly.codegen.c import _includes, _render_raw_callee
+  from scaly.utils.env import shared_lib_ext, shared_lib_flag
+  from tests.compilers import c_compiler
+
+  x, y = buffer("x", dtypes.float64, (16,)), buffer("y", dtypes.float64, (12,))
+
+  def scratch(name, size=4):
+    buf = buffer(name, dtypes.float64, (size,), address_space="private")
+    return ProgramNode(buf.op, buf.args, {**buf.attrs, "per_call": per_call}, dtype=buf.dtype)
+
+  fixed, history, a, b, c, d = (scratch(name, 12 if name == "history" else 4) for name in ("fixed", "history", "a", "b", "c", "d"))
+  k, stage = var("k"), var("stage")
+  at = lambda buf, index=k: view(buf, [index])
+  kernel = lambda stmt, size=4: for_(range_("k", 0, size), [stmt])
+  offset = add(mul(stage, const_int(4)), k)
+  value = load(at(x, add(const_int(4), offset)))
+  body = [
+    kernel(store(at(a), add(value, load(at(fixed))))),
+    kernel(store(at(b), mul(load(at(a)), const_float(2)))),
+    kernel(store(at(history, offset), load(at(b)))),
+    kernel(store(at(c), p.sub(value, load(at(fixed))))),
+    kernel(store(at(d), mul(load(at(c)), const_float(3)))),
+    kernel(store(at(y, offset), add(load(at(d)), load(at(fixed))))),
+  ]
+  axis = range_("stage", 0, 3)
+  axis = ProgramNode(axis.op, axis.args, {**axis.attrs, "mapped": True}, dtype=axis.dtype)
+  statements = [fixed, history, a, b, c, d, kernel(store(at(fixed), load(at(x)))), for_(axis, body)]
+  statements.append(kernel(store(at(y), add(load(at(y)), load(at(history)))), 12))
+  root = proc_("root", [x, y], statements)
+  root = ProgramNode(root.op, root.args, {**root.attrs, "input_count": 1}, dtype=root.dtype)
+  packed = pack_workspace(program([root]))
+  verify_program(packed)
+  slots = [node for node in packed.args[0].args[2:] if node.op == ProgramOp.BUFFER]
+  assert len(slots) == (4 if per_call else 6)
+  source = "\n".join([*_includes(prog=packed), *_render_raw_callee(packed.args[0])])
+  path, library = tmp_path / "mapped.c", tmp_path / ("mapped" + shared_lib_ext())
+  path.write_text(source + "\nvoid run(double *x, double *y) { root_raw(x, y, NULL); }\n")
+  subprocess.run([*c_compiler(), "-O2", "-fPIC", shared_lib_flag(), str(path), "-lm", "-o", str(library)], check=True)
+  run = ctypes.CDLL(str(library)).run
+  ptr = ctypes.POINTER(ctypes.c_double)
+  run.argtypes, run.restype = [ptr, ptr], None
+  data, out = np.random.default_rng(225).normal(size=16), np.empty(12)
+  run(data.ctypes.data_as(ptr), out.ctypes.data_as(ptr))
+  np.testing.assert_allclose(out, 5 * data[4:], atol=1e-14)
+
+
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler for the numeric workspace collision check")
 def test_workspace_slots_do_not_collide_with_output_names() -> None:
   @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("s1", (2, 2)), sc.arg("s2", (2, 2))), name="slot_collision")
@@ -467,6 +519,26 @@ def test_multi_buffer_write_keeps_previous_call_input_dependencies(names) -> Non
   original_value = next(stmt for stmt in statements if stmt.op == ProgramOp.STORE).args[0].attrs["buffer"]
   consumer = next(stmt for stmt in statements if stmt.op == ProgramOp.CALL)
   assert original_value not in {arg.attrs["name"] for arg in consumer.args}
+
+
+def test_mapped_calls_keep_input_producer_closures_live_across_iterations():
+  from scaly.passes.program.pack_workspace import _plan_pack
+
+  def temp(name):
+    buf = buffer(name, dtypes.float64, (3,), address_space="private")
+    return ProgramNode(buf.op, buf.args, {**buf.attrs, "per_call": True}, dtype=buf.dtype)
+
+  x, y = (buffer(name, dtypes.float64, (3,)) for name in ("x", "y"))
+  producer, base, result, later = map(temp, ("producer", "base", "result", "later"))
+  at = lambda buf: view(buf, [const_int(0)])
+  copy = lambda dst, src: store(at(dst), load(at(src)))
+  axis = range_("i", 0, 3)
+  axis = ProgramNode(axis.op, axis.args, {**axis.attrs, "mapped": True}, dtype=axis.dtype)
+  call = ProgramNode(ProgramOp.CALL, (base, result), {"callee": "consumer", "n_in": 1, "n_out": 1, "returns": ()}, dtype=dtypes.float64)
+  body = [call, copy(later, x), store(view(y, [var("i")]), add(load(at(later)), load(at(result))))]
+  root = proc_("root", [x, y], [producer, base, result, later, copy(producer, x), copy(base, producer), for_(axis, body)])
+  plan = _plan_pack(root)
+  assert plan.rename["producer"] != plan.rename["later"]
 
 
 def test_regular_raw_callees_stay_inline() -> None:

@@ -65,9 +65,31 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
   # prevents a CALL output from reusing a slot that contributed to one of its inputs — a pattern
   # that is semantically valid but triggers an Apple-clang inlining miscompile on macOS 15 arm64.
   first_write: dict[str, int] = {}
+  first_read: dict[str, int] = {}
   last_use: dict[str, int] = {}
   deps: dict[str, set[str]] = {}
-  for i, stmt in enumerate(body):
+  statements: list[ProgramNode] = []
+  scopes: list[tuple[int, int]] = []
+
+  def append(stmt: ProgramNode) -> None:
+    mapped = (
+      stmt.op == ProgramOp.FOR and not stmt.args[0].attrs.get("carried") and (stmt.args[0].attrs.get("mapped") or stmt.attrs.get("vector_mapped"))
+    )
+    if mapped:
+      start = len(statements)
+      statements.append(stmt.args[0])
+      children = stmt.args[1].args[1:] if "vector_helper" in stmt.attrs else stmt.args[1:]
+      for child in children:
+        append(child)
+      scopes.append((start, len(statements)))
+    else:
+      statements.append(stmt)
+
+  for stmt in body:
+    append(stmt)
+  references: list[set[str]] = []
+  for i, stmt in enumerate(statements):
+    references.append(set())
     if stmt.op == ProgramOp.BUFFER:
       continue
     refs = buffer_refs(stmt)
@@ -76,8 +98,12 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
     call_outputs = {owner(b) for b in refs.call_outputs} & packable.keys()
     writes = {owner(b) for b in stores} & packable.keys() | call_outputs
     reads = ({owner(b) for b in loads} & packable.keys()) | call_inputs
+    references[i] = writes | reads
+    for b in reads:
+      first_read.setdefault(b, i)
     for b in call_inputs:
       for dep in deps.get(b, set()):
+        references[i].add(dep)
         last_use[dep] = max(last_use.get(dep, i), i)
     produced_from = reads.union(*(deps.get(r, ()) for r in reads))
     for b in writes:
@@ -85,6 +111,16 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
       deps[b] = produced_from
     for b in writes | reads:
       last_use[b] = i
+
+  # A lowered temporary is defined anew at every call. Its kernels inside an inlined map may
+  # share storage within one iteration; inputs and values used after the map stay live across all trips.
+  for start, stop in scopes:
+    for b in set().union(*references[start:stop]):
+      if b not in first_write:
+        continue
+      if not packable[b].attrs.get("per_call") or first_write[b] < start or first_read.get(b, stop) <= first_write[b] or last_use[b] >= stop:
+        first_write[b] = min(first_write.get(b, start), start)
+        last_use[b] = max(last_use[b], stop - 1)
 
   # Pack per dtype, in first-write order (ties: declaration order via the dict insertion order).
   order = sorted((name for name in packable if name in first_write), key=lambda b: (first_write[b], b))

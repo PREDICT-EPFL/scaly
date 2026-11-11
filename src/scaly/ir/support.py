@@ -176,24 +176,7 @@ def _call_support(node: Expr, op: str, support_of: Callable[[Expr], Support]):
   length = node.attrs["length"]
   if not length:
     return frozenset()
-  groups: dict[tuple[Support, ...], list[int]] = {}
-  windows = []
-  for arg, formal, start, stride in zip(node.args, callee.inputs, node.attrs["starts"], node.attrs["strides"], strict=True):
-    support = support_of(arg)
-    indices = None if support is None else support_indices(support)
-    logical = stored_indices(formal.type) if formal.type.pattern is not None else None
-    windows.append((indices, formal.type.storage_size, logical, start, stride))
-  for stage in range(length):
-    arguments = []
-    for indices, width, logical, start, stride in windows:
-      support = None
-      if indices is not None:
-        offset = start + stage * stride
-        lo, hi = np.searchsorted(indices, (offset, offset + width))
-        entries = indices[lo:hi] - offset
-        support = _make_support(entries if logical is None else logical[entries])
-      arguments.append(support)
-    groups.setdefault(tuple(arguments), []).append(stage)
+  groups = _mapped_support_groups(node, support_of)
   tiles = []
   result_expr = callee.results[output]
   for arguments, stages in groups.items():
@@ -262,6 +245,30 @@ def _loop_support(node: Expr, support_of: Callable[[Expr], Support]):
     return None
   j = output - n_carry - n_ys - 1
   return _tile(carries[j], callee.inputs[j].type, length)
+
+
+def _mapped_support_groups(node: Expr, support_of: Callable[[Expr], Support]) -> dict[tuple[Support, ...], list[int]]:
+  """Share mapped argument windows and specialization keys between analysis and lowering."""
+  callee = node.attrs["callee"]
+  groups: dict[tuple[Support, ...], list[int]] = {}
+  windows = []
+  for arg, formal, start, stride in zip(node.args, callee.inputs, node.attrs["starts"], node.attrs["strides"], strict=True):
+    support = support_of(arg)
+    indices = None if support is None else support_indices(support)
+    logical = stored_indices(formal.type) if formal.type.pattern is not None else None
+    windows.append((indices, formal, logical, start, stride))
+  for stage in range(node.attrs["length"]):
+    arguments = []
+    for indices, formal, logical, start, stride in windows:
+      support = None
+      if indices is not None:
+        offset = start + stage * stride
+        lo, hi = np.searchsorted(indices, (offset, offset + formal.type.storage_size))
+        entries = indices[lo:hi] - offset
+        support = formal.support if len(entries) == formal.size else _make_support(entries if logical is None else logical[entries])
+      arguments.append(support)
+    groups.setdefault(tuple(arguments), []).append(stage)
+  return groups
 
 
 def _cached(node: Expr) -> Support:

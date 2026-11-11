@@ -13,6 +13,8 @@ from scaly.ad.forward import jvp_many
 from scaly.ad.reverse import vjp
 from scaly.ad.rules import ELEMENTWISE
 from scaly.ir.expr import ExprOp
+from scaly.codegen import render_c_module
+from scaly.function.model import as_concrete
 
 
 def _pattern(array):
@@ -212,9 +214,78 @@ def test_sparse_multiseeds_keep_one_pattern_and_one_index_table():
   np.testing.assert_allclose(fn(np.ones(pattern.nnz), seed_values, b), expected, atol=1e-12)
   seen = {}
   lower_function(fn, observe=seen.__setitem__)
-  bounds = [0, 2, 3, 6, 9]
-  tables = [n for n in walk_program(seen["lowered"]) if n.op == ProgramOp.BUFFER and np.array_equal(n.attrs.get("values", ()), bounds)]
+  tables = [n for n in walk_program(seen["lowered"]) if n.op == ProgramOp.BUFFER and np.array_equal(n.attrs.get("values", ()), pattern.cols)]
   assert len(tables) == 1
+
+
+@pytest.mark.parametrize("operation", ["matmul", "gather", "scatter"])
+def test_sparse_data_jacobian_has_bounded_loop_and_source_growth(operation):
+  loop_counts = []
+  for n in (4, 8, 16):
+    rows = tuple(np.repeat(np.arange(n), 2))
+    cols = tuple(np.column_stack((np.arange(n), (np.arange(n) + 1) % n)).reshape(-1))
+    pattern = CanonicalPattern((n, n), rows, cols)
+
+    @sc.function(sc.arg("data", pattern.nnz), sc.arg("x", n), name=f"sparse_seed_growth_{operation}_{n}")
+    def fn(data, x):
+      a = sc.pack(data, pattern)
+      if operation == "matmul":
+        result = a @ x
+      elif operation == "gather":
+        result = sc.gather(a, np.asarray(pattern.rows) * n + pattern.cols)
+      else:
+        result = sc.scatter(a, np.arange(n * n), (n, n))
+      return sc.values(result).sin().block()
+
+    jac = as_concrete(sc.jacobian(fn, wrt="data"))
+    jac = jac._replace(outputs=tuple(out.block() for out in jac.outputs))
+    module = render_c_module(jac, lanes=1)
+    loop_counts.append(sum(node.op == ProgramOp.FOR for node in walk_program(module.program)))
+    assert loop_counts[-1] <= 12
+    assert len(module.body.encode()) < 16_000
+    rng = np.random.default_rng(225)
+    data, x = rng.normal(size=pattern.nnz), rng.normal(size=n)
+    if operation == "matmul":
+      a = sparse.coo_array((data, (pattern.rows, pattern.cols)), shape=pattern.shape).toarray()
+      expected = np.zeros((n, pattern.nnz))
+      expected[pattern.rows, np.arange(pattern.nnz)] = x[list(pattern.cols)]
+      expected *= np.cos(a @ x)[:, None]
+    else:
+      expected = np.diag(np.cos(data))
+    np.testing.assert_allclose(jac(data, x), expected, atol=1e-12)
+  assert max(loop_counts) == min(loop_counts)
+
+
+@pytest.mark.parametrize("operation", ["gather_vector", "gather_matrix", "scatter_vector", "scatter_matrix"])
+@pytest.mark.parametrize("empty", [False, True])
+def test_batched_sparse_movement_jvp_matches_numpy(operation, empty):
+  pattern = CanonicalPattern((3, 4), () if empty else (0, 1, 2, 2), () if empty else (3, 0, 1, 3))
+  shape = (2, *pattern.shape)
+  nseed = 5
+  leaf = sc.arg("a", sc.TensorType(shape, pattern=pattern), layout="csr")
+  seeds_leaf = sc.arg("seeds", sc.TensorType((nseed, *shape), pattern=pattern), layout="csr")
+  gather_indices = np.array([0, 3, 11, 12, 23, 3])
+  indices = gather_indices if operation.endswith("vector") else gather_indices.reshape((2, 3))
+  output_shape = (7,) if operation.endswith("vector") else (3, 5)
+  scatter_indices = np.arange(np.prod(shape)) % np.prod(output_shape)
+
+  @sc.function(leaf, seeds_leaf, name=f"batched_sparse_{operation}_{empty}")
+  def fn(a, seeds):
+    moved = sc.gather(a, indices) if operation.startswith("gather") else sc.scatter(a, scatter_indices, output_shape)
+    return sc.to_dense(jvp_many(moved, a, seeds)).block()
+
+  rng = np.random.default_rng(225)
+  av = rng.normal(size=(2, pattern.nnz))
+  seed_values = rng.normal(size=(nseed, 2, pattern.nnz))
+  dense = np.zeros((nseed, *shape))
+  dense[:, :, list(pattern.rows), list(pattern.cols)] = seed_values
+  if operation.startswith("gather"):
+    expected = dense.reshape((nseed, -1))[:, indices]
+  else:
+    expected = np.zeros((nseed, *output_shape))
+    for i in range(nseed):
+      np.add.at(expected[i].reshape(-1), scatter_indices, dense[i].reshape(-1))
+  np.testing.assert_allclose(fn(av, seed_values), expected, atol=1e-12)
 
 
 @pytest.mark.parametrize("form", ["straight", "dense", "affine", "table"])
