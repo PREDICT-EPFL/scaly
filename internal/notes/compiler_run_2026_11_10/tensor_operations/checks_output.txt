@@ -1,0 +1,45 @@
+== 1. signed zeros through sums, against NumPy ==
+sum(axis=()) of [-0, 0, 1]     auto   scaly [0.0, 0.0, 1.0] numpy [0.0, 0.0, 1.0] same bits
+sum(axis=()) of [-0, 0, 1]     block  scaly [0.0, 0.0, 1.0] numpy [0.0, 0.0, 1.0] same bits
+sum(axis=()) of [-0, 0, 1]     scalar scaly [-0.0, 0.0, 1.0] numpy [0.0, 0.0, 1.0] the sign of zero differs
+sum() of [-0, -0]              auto   scaly 0.0            numpy 0.0            same bits
+sum() of [-0, -0]              block  scaly 0.0            numpy 0.0            same bits
+sum() of [-0, -0]              scalar scaly -0.0           numpy 0.0            the sign of zero differs
+sum(axis=0) of a (2, 2) of -0  auto   scaly [0.0, 0.0]     numpy [0.0, 0.0]     same bits
+sum(axis=0) of a (2, 2) of -0  block  scaly [0.0, 0.0]     numpy [0.0, 0.0]     same bits
+sum(axis=0) of a (2, 2) of -0  scalar scaly [-0.0, -0.0]   numpy [0.0, 0.0]     the sign of zero differs
+mean(axis=()) of [-0, 2]       auto   scaly [0.0, 2.0]     numpy [0.0, 2.0]     same bits
+mean(axis=()) of [-0, 2]       block  scaly [0.0, 2.0]     numpy [0.0, 2.0]     same bits
+mean(axis=()) of [-0, 2]       scalar scaly [-0.0, 2.0]    numpy [0.0, 2.0]     the sign of zero differs
+
+== 2. which forward rule a seed batch takes through a product ==
+dense (3,) @ dense (3,)      by x: rule ['batched'], MATMUL operand ranks [3], finite differences agree
+dense (3,) @ dense (3,)      by y: rule ['batched'], MATMUL operand ranks [3], finite differences agree
+dense (2, 3) @ dense (3, 4)  by x: rule ['batched'], MATMUL operand ranks [3], finite differences agree
+dense (2, 3) @ dense (3, 4)  by y: rule ['batched'], MATMUL operand ranks [3], finite differences agree
+dense (5, 2, 3) @ dense (3, 4) by x: rule ['batched'], MATMUL operand ranks [4], finite differences agree
+dense (5, 2, 3) @ dense (3, 4) by y: rule ['batched'], MATMUL operand ranks [4], finite differences agree
+dense (4, 1, 2, 3) @ dense (5, 3, 2) by x: rule ['batched'], MATMUL operand ranks [5], finite differences agree
+dense (4, 1, 2, 3) @ dense (5, 3, 2) by y: rule ['batched'], MATMUL operand ranks [5], finite differences agree
+dense (3,) @ dense (5, 3, 2) by x: rule ['batched'], MATMUL operand ranks [4], finite differences agree
+dense (3,) @ dense (5, 3, 2) by y: rule ['batched'], MATMUL operand ranks [4], finite differences agree
+sparse (3, 4) @ dense (4,)   by v: rule ['one product per seed'], MATMUL operand ranks [2], finite differences agree
+sparse (3, 4) @ dense (4,)   by b: rule ['folded'], MATMUL operand ranks [2], finite differences agree
+sparse (3, 4) @ dense (4, 2) by v: rule ['one product per seed'], MATMUL operand ranks [2], finite differences agree
+sparse (3, 4) @ dense (4, 2) by b: rule ['folded'], MATMUL operand ranks [2], finite differences agree
+dense (2, 3) @ sparse (3, 4) by v: rule ['one product per seed'], MATMUL operand ranks [2], finite differences agree
+dense (2, 3) @ sparse (3, 4) by b: rule ['folded'], MATMUL operand ranks [2], finite differences agree
+sparse (3, 4) @ sparse (4, 3) by v: rule ['one product per seed'], MATMUL operand ranks [2], finite differences agree
+sparse (3, 4) @ sparse (4, 3) by u: rule ['one product per seed'], MATMUL operand ranks [2], finite differences agree
+
+== 3. random einsum specs against np.einsum ==
+3000 specs of one to three operands, folded as constants: agree 2974, both reject 26, disagree 0, an operand of rank 3 or more 1889, a diagonal 1661, a size-1 label or axis 1046, an ellipsis 1087, compiled to C 40
+
+== 4. extrema: NaN, ties and slopes ==
+reduce_max(axis=1)   scaly [nan, 2.0]         numpy [nan, 2.0]
+reduce_min(axis=1)   scaly [nan, -1.0]        numpy [nan, -1.0]
+argmax(axis=1)       scaly [1.0, 0.0]         numpy [1, 0]
+maximum(x[0], x[1])  scaly [2.0, nan, 3.0]    numpy [2.0, nan, 3.0]
+norm_inf             scaly nan                numpy nan
+gradient of reduce_max at [2, 2, 0, -1.5]: [0.5, 0.5, 0.0, 0.0] | of maximum(x[0], x[1]): [0.5, 0.5, 0.0, 0.0]
+gradient of sum(abs): [1.0, 1.0, 0.0, -1.0] | of sum(floor): [0.0, 0.0, 0.0, 0.0]

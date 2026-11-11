@@ -49,10 +49,10 @@ output buffer, and a contiguous slice or a reshape becomes a view into existing
 storage rather than a copy. A called function becomes its own procedure and a
 `prog.call`, and `sc.vmap` becomes a loop around that call.
 
-A few limits come from lowering rather than from the expression dialect. Matrix
-multiplication takes operands of rank at most two. An unsupported case raises
-`LoweringError`. A solver call is not lowered at all. Its plugin renders the
-wrapper, and only the oracles it calls go through this page's pipeline.
+A few limits come from lowering rather than from the expression dialect. The
+input and output leaves of a function must be `float64`. An unsupported case
+raises `LoweringError`. A solver call is not lowered at all. Its plugin renders
+the wrapper, and only the oracles it calls go through this page's pipeline.
 
 ## Loops or scalar code
 
