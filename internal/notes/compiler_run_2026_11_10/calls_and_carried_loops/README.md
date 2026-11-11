@@ -1,21 +1,22 @@
 # Section 5: Calls and carried loops
 
-Packet of section 5 of the [compiler run](../plan.md), parent #294. Built by #313 (#28) and #331
-(#29), then simplified by #379. `sc.extern` (#83, in #355), the solver plugins on externs
-(#342) and linker namespace reuse (#357) are still in flight, and their part is the last heading.
-IR is the intermediate representation, AD automatic differentiation.
+Packet of section 5 of the [compiler run](../plan.md), parent #294. Built by #313 (#28), #331
+(#29) and #355 (#83), with #379 as the simplification pass over the first two. The solver plugins
+on externs (#342) and linker namespace reuse (#357) are still in flight, and the last heading
+holds #83 until they join it. IR is the intermediate representation, AD automatic
+differentiation, JIT the just-in-time compiler.
 
 ## Where this section sits
 
 - A user who maps a Function with several outputs over a batch gets one loop that computes every output the caller uses, and a print inside the mapped body runs once per trip.
-- Nothing else is visible to a user: carried ranges, `BREAK_IF` and exit variables exist only in the program dialect, and every optimization pass leaves them intact.
-- Section 9 (Control flow, #23) builds `LOOP`, `scan` and `while_loop` on carried ranges (#31), differentiates them (#32, #33) and folds `VMAP` into `LOOP` (#34).
-- Section 8 (Fusion and lanes) designs fusion with carried ranges present (#69), and section 4 (Dtypes, #24) counts loop trajectories in the workspace (#76).
-- The section completes none of the Milestone 1 checks in the roadmap's *Milestone checks* table.
+- A user who reads the source can declare a C function with `sc.CLibrary` and `sc.extern` and call it inside a graph, compiled just in time or exported with a build manifest. The published site names neither yet.
+- Carried ranges, `BREAK_IF` and exit variables exist only in the program dialect, and every optimization pass leaves them intact. Section 9 (Control flow, #23) builds `LOOP`, `scan` and `while_loop` on them (#31), differentiates them (#32, #33) and folds `VMAP` into `LOOP` (#34).
+- Section 8 (Fusion and lanes) designs fusion with carried ranges present (#69). Section 4 (Dtypes, #24) counts loop trajectories in the workspace (#76) and gives external functions typed pointers (#56).
+- The section completes none of the Milestone 1 checks in the roadmap's *Milestone checks* table. The check "PIQP and IPOPT through `sc.extern`" in its *Not yet scheduled* row waits for #342.
 
 ## Needs the maintainer's decision
 
-1. Public interface, lands with #355: `sc.extern` and `sc.CLibrary` are exported from `scaly`, filtered from the API page and kept out of the guide until you have reviewed the interface. Recommend reviewing it before 0.2.0 is tagged, then publishing it or removing the two exports.
+1. Public interface (#355): `sc.extern` and `sc.CLibrary` are exported from `scaly` with docstrings, filtered from the API page and absent from the guide until you have reviewed them. Recommend keeping both as they are and publishing them after your review, which should settle two points: no field names a library directory, so a prebuilt library is found only through `SCALY_CC="cc -L..."` or `LIBRARY_PATH`, and `include_dirs` become absolute paths when the `CLibrary` is built, so an exported manifest names directories of the build machine. If 0.2.0 is tagged before the review, leave the two exports out of that release.
 2. Documented behaviour (#313): a mapped Function with several used outputs prints once per trip, where it printed once per used output. A call is shared only when its arguments are the same expressions, so `callee(x)` and `callee(sc.print(..., x))` run the callee twice. The functions guide says both. Recommend keeping.
 3. Roadmap departure, applied (#313): `invocation_key` also leaves out `slice_size`, because the siblings of one map have different result sizes. Recommend keeping.
 4. Re-cut by the coordinator: #83 keeps `sc.extern`, `sc.CLibrary`, `EXTERN` nodes and their builds. Moving the solver plugins onto them and removing `SOLVER_CALL` became #342, and #357 joined the section. Recommend keeping the cut.
@@ -27,8 +28,10 @@ IR is the intermediate representation, AD automatic differentiation.
 - Fusion and lanes have no rule for loop bodies, the passes only refuse carried ranges: #69, #71.
 - The workspace does not count loop trajectories, which do not exist yet: #76.
 - Reverse mode through a map with several used outputs runs one adjoint helper loop per output: #73.
-- The solver plugins still go through `SOLVER_CALL`: #342.
-- Many distinct external libraries in one process exhaust glibc's linker namespaces: #357.
+- The solver plugins still go through `SOLVER_CALL`: #342 moves them onto externs and removes it, and runs next.
+- Every distinct set of linked libraries holds one of glibc's 16 linker namespaces until the process ends, so many sets, or one dependency rebuilt many times, use them up: #357, running now.
+- External functions take float64 leaves only: #56.
+- The program verifier does not model the declaration scopes of the exported entry and of the vector helpers: #396. The section decided not to work on it in this run, since today's lowering reaches neither case (see its comment).
 - The wrapper parameter shadowing that #313's compile measurements worked around was #311, fixed on main by #351.
 
 ## Unowned, filed by this section
@@ -36,13 +39,14 @@ IR is the intermediate representation, AD automatic differentiation.
 - #375 forward mode through a map with several used outputs runs one helper loop per output.
 - #376 invariant work is not hoisted out of a carried loop whose body is more than one call, and unit loops inside an exit loop are not unrolled.
 - #377 call arguments that differ only by a reshape round trip are two invocations since #313, where they were one call.
-- Filed and now owned by the section as sub-issues of #294, each started in its own thread: #374, two exit loops that declare the same variable in one procedure pass the verifier and their C does not compile, and #380, `hoist_invariant` can hoist a top-level scalar assignment away from the statement that reads it (older than this section, reachable only from hand-built programs today).
+- Filed by the section, made sub-issues of #294 and merged since: #374, the verifier now rejects two exit loops that declare the same variable in one scope (#387). #388, it also rejects any two declarations that give one C identifier in one scope (#391). #380, `hoist_invariant` keeps a top-level scalar assignment with the statement that reads it: #315 had brought the rule to main, so #389 added only the tests.
 
 # Reference
 
-Line numbers are on main at `d287c6c3`, after #379, and paths are under `src/scaly/`.
-Beside this file: `demo.py` and `demo_output.txt`, `loop_shapes.py`, and `invocations/` with the
-snapshot diff and the measurements that #313 recorded.
+Line numbers are on main at `d287c6c3`, after #379, and paths are under `src/scaly/`. The #83
+heading and the #83 entries of the reading list are on main at `6b36854f`.
+Beside this file: `demo.py` and `demo_output.txt`, `loop_shapes.py`, `invocations/` with the
+snapshot diff and the measurements that #313 recorded, and `extern.md`, #355's own note.
 
 ## Decisions
 
@@ -55,10 +59,11 @@ Hardest to undo first. "Left open" marks a choice the roadmap did not settle.
    PIQP and IPOPT plugins onto externs and removes `SOLVER_CALL`, blocked by #83. #357, found when
    #355's review loaded 15 distinct dependency sets and hit glibc's namespace limit, makes
    compatible libraries share a namespace. The cut lets the interface land and be reviewed alone.
-2. **`sc.extern` and `sc.CLibrary` are exported but not published** (lands with #355).
+2. **`sc.extern` and `sc.CLibrary` are exported but not published** (#355).
    `scaly/__init__.py` exports both with docstrings. `docs/api/core.md` filters `EXTERN` from the
    op list and leaves both names out of its curated entries, and no guide mentions them. A user
-   who reads the source can call them, so the names are a commitment once 0.2.0 is tagged.
+   who reads the source can call them, so the names are a commitment once 0.2.0 is tagged. The
+   two docstrings are the interface to review: `function/extern.py:26-34` and `123-136`.
 
 ### Documented behaviour
 
@@ -100,7 +105,8 @@ Hardest to undo first. "Left open" marks a choice the roadmap did not settle.
 10. **C spelling** (#331; `codegen/c.py`). An exit loop renders as `long long i = 0;` in the
     enclosing scope followed by `for (i = 0; ...)`, and `BREAK_IF` as `if (...) break;`. A
     `BLOCK` statement now renders its statements in place. Two exit loops with one name in one
-    scope do not compile (#374).
+    scope did not compile (#374). The verifier now rejects them, and any two declarations that
+    give one C identifier in one scope (#387, #391).
 11. **Pass guards** (#331). The roadmap listed five, and #331 added four where a reproduction
     failed.
     - `scalarize.work` returns no estimate for a carried range, so a procedure that holds one is never expanded, nor are its callers.
@@ -195,6 +201,15 @@ About 270 lines, in reading order, on main at `d287c6c3`.
 6. `codegen/c.py:278-296`. The C for a `BLOCK`, an exit loop and a `BREAK_IF`.
 7. The guards: `passes/program/scalarize.py:145-150`, `unroll_unit_loops.py:30-32`, `widen_ranges.py:82-96`, `fuse_ranges.py:76-81`, `hoist_invariant.py:95` and `123-148`, `_common.py:36-42`, `fold_arith.py:139-147`, `combine_scatter_sums.py:70-71`, `pack_masks.py:100-101`.
 
+Then the 78 lines that carry #83, on main at `6b36854f`.
+
+8. `function/extern.py:123-135`. What `sc.extern` declares and what the C function must do. Then `100-109`, one `EXTERN` node per output.
+9. `passes/lowering/ctx.py:706-713`. An external callee keeps its C symbol, and two declarations of one symbol must agree.
+10. `codegen/c.py:134-142`. The declarations at the top of the generated file.
+11. `codegen/external.py:86-98`. What a library's key hashes.
+12. `codegen/jit.py:260-261` and `303-311`, the library keys in the rendered key and in the index key. Then `209` and `417-419`, the two loader decisions.
+13. `ad/sparsity.py:314-321`. The Jacobian pattern of an extern is dense in every argument. `ad/forward.py:94-95` raises on an active one.
+
 ## Source lines
 
 Lines under `src/`, from `git show --numstat`.
@@ -202,6 +217,9 @@ Lines under `src/`, from `git show --numstat`.
 - #313 added 107 and removed 87, in 11 files. #331 added 115 and removed 17, in 13 files.
 - Before the simplification pass the section had added 222 lines, a net 118.
 - #379 added 10 and removed 19, in five files. After it the section's net addition is 109 lines.
+- #355 added 572 and removed 71, in 18 files. Of the added lines, 292 are the two new files, `function/extern.py` (148) and `codegen/external.py` (144), and 163 are in `codegen/jit.py` and `codegen/toolchain.py`. No simplification pass has run over it.
+- #387 added 10 and removed 3, and #391 added 20 and removed 8, both in `ir/program_spec.py`. #389 changed no source line.
+- With these the section has added 834 lines and removed 205, a net 629.
 
 ## What the coordinator was least sure of
 
@@ -246,5 +264,132 @@ one helper loop per used output (#73, #375).
 
 ## `sc.extern`, solver plugins on externs, linker namespaces (#83, #342, #357)
 
-To be written by the coordinator when #355, #342 and #357 have merged. `extern.md` beside this
-file is #355's own note.
+This heading holds #83 alone, on main at `6b36854f`. #342 and #357 will be folded in when they
+land. `extern.md` beside this file is #355's own note, with the example and the layout of the
+build manifest.
+
+### What #83 landed
+
+The tests are in `tests/function/test_extern.py` and `tests/codegen/test_external.py`. Their 37
+cases pass on la015 at `6b36854f`.
+
+- **`sc.CLibrary`** (`function/extern.py:24-62`) is a frozen description of a build. `sources`
+  and `headers` map relative file names to their text, and `include_dirs` names further header
+  directories. `defines` and `compile_flags`, in clang's dialect, apply to the library's own
+  sources only. `link` holds library names such as `"m"`, never linker flags, and `versions` is
+  text that enters the cache key. `test_extern_rejects_invalid_declarations` covers what
+  construction refuses.
+- **`sc.extern(library, symbol, inputs=, outputs=, workspace=0)`** (`function/extern.py:122-148`)
+  declares one C function with a concrete signature and returns a callable. The C function
+  returns `void` and takes one `const double*` per input leaf, one `double*` per output leaf,
+  then `double* w` with `workspace` doubles. Called on expressions it builds nodes, and called
+  on arrays it compiles a wrapper.
+  `test_external_source_two_results_share_one_invocation_and_match_numpy` is the example.
+- **`EXTERN` nodes grouped by invocation.** A call builds one `EXTERN` node per output. `EXTERN`
+  is in `CALLEE_OPS`, so `callees_of` and `invocation_key` group the siblings as #28 does for
+  `CALL`, `_lower_call` writes them with one call statement, and the C calls the bare symbol
+  under a declaration at the top of the file. `pack_workspace` takes the declared workspace as
+  the callee's size. Two declarations of one symbol that differ in library or signature raise.
+  The example checks one lowered call and three workspace doubles. Nesting, mapping, an unused
+  output and sparse leaves are in `test_external_call_nests_maps_and_allocates_unused_outputs`
+  and `test_extern_sparse_leaves_keep_their_declared_storage_order`, and the conflict in
+  `test_extern_verifier_checks_concrete_types_and_symbol_conflicts`.
+- **JIT build** (`codegen/external.py`). Each source of a library is compiled once, with the
+  library's flags, into an object stored under a key of the library's content. The objects are
+  linked into the shared library of every Function that reaches the library.
+  `test_library_compiles_once_for_two_symbols_and_multiple_graphs` counts the compilations, and
+  `test_named_system_math_library_is_resolved_and_linked` links `m` on Linux and macOS.
+- **Ahead-of-time manifest** (`codegen/aot.py:632-639` and `export_libraries`). `write_module`
+  writes each library's sources and headers under `libraries/<n>/` and a
+  `<function>.build.json` that keeps library names instead of linker flags. The command line
+  needs no compiler. `test_aot_exports_library_source_headers_and_build_manifest` checks the
+  files, and `test_manifest_consumer_compiles_each_translation_unit_and_links` builds and runs
+  them from the manifest alone.
+- **Derivative rule.** An extern has no derivative. Forward and reverse mode raise on an active
+  one and name the symbol and `sc.custom_derivative`, whose rules go on a Function that wraps
+  the call. The Jacobian pattern of a bare extern is dense in every argument, and the wrapping
+  Function's is the sparsity it declares, or dense. Behind `sc.stop_gradient` the derivative is
+  zero. `test_active_derivative_names_custom_derivative`,
+  `test_wrapper_custom_derivative_matches_finite_differences` (against finite differences, with
+  and without a declared sparsity), `test_inactive_external_derivatives_and_zero_input_call`,
+  and the refusal case of `tests/ad/test_differential.py`.
+
+### The JIT index key
+
+Section 6 asked, after #321 gave the JIT its index, that the index key cover the contents of
+the files under `include_dirs` and of the resolved `link` libraries. Without that, a warm
+process would keep its index hit and load a stale library after a header edit or a library
+swap. The key covers both, on main at `6b36854f`.
+
+- `_index_key` calls `prepare_library` on every library the graph reaches (`codegen/jit.py:303`).
+  `libraries_of` finds them by walking the callees, without lowering.
+- `prepare_library` (`codegen/external.py:86-98`) hashes the description, the compiler's
+  fingerprint, the name and content of every readable file below each include directory
+  (`directory_fingerprint`, `codegen/toolchain.py:310-329`), the path, SHA-256 and flags of each
+  resolved linked library, and each source after preprocessing.
+- `_toolchain` appends these keys to the toolchain string (`jit.py:260-261`), which enters the
+  index key at `jit.py:311`. The rendered key takes the same string at `jit.py:271`, so the two
+  keys cannot disagree about a library.
+- When a library cannot be prepared, `_index_key` returns no key (`jit.py:305-306`) and the
+  Function is rendered.
+
+The two cross-process tests are `test_include_header_edit_misses_the_index_in_another_process`
+and `test_linked_library_swap_misses_the_index_in_another_process`, in
+`tests/codegen/test_external.py`. Each runs the Function in two fresh processes and requires a
+hit without lowering in the second. It then changes the native file and requires, in a third
+process, a miss, one lowering, another index key and another library. Both run with the index
+alone and under `SCALY_JIT_KEY=verify`, and the header test also edits a header that no source
+includes. The six cases pass at `6b36854f`. The swap test runs on Linux only.
+
+What the key does not see:
+
+- The libraries that a linked library itself depends on. The loader resolves them again, so
+  the code that runs is current, but the index entry stays.
+- A linked library replaced inside one process by a file of the same size and modification
+  time, since `_library_content` remembers a hash by path, size and time.
+- The content of a file under `include_dirs` that the process cannot read. It enters by name.
+- On macOS, the binary behind a library found only as a stub in the SDK. The stub is hashed.
+
+The cost is that a warm lookup runs the preprocessor once per source and resolves each linked
+name. It has not been measured.
+
+### The Linux loader
+
+Both decisions are in `codegen/jit.py` and apply on Linux only.
+
+- **Each generated object binds its own symbols.** A shared library that holds external objects
+  is linked with `-Wl,-Bsymbolic` (`jit.py:209`), so its call to a symbol it defines never
+  reaches another library's definition. Several versions of one source therefore run their own
+  code in one process. `test_library_content_and_flags_change_jit_key` proves it: with the flag
+  removed, the second version returns the first one's result.
+- **One `dlmopen` namespace per distinct dependency set.** A library that holds externs is
+  never loaded into the process's own namespace. Its namespace is named by the path and content hash of
+  every resolved linked library (`jit.py:419`), and `load_library` creates a namespace the first
+  time it meets a name and reuses it afterwards (`jit.py:105-134`). Libraries without a linked
+  dependency share one namespace. Two builds of one dependency thus stay loaded side by side,
+  each with its own callers (`test_changed_linked_binary_changes_key_and_linux_namespace`).
+- **The limit.** glibc allows 16 namespaces in a process. A namespace is never released, the
+  solver plugins hold one, and a rebuilt dependency has a new content hash and takes a new one.
+  In #355's review the load after 15 distinct dependency sets failed, which a notebook that
+  rebuilds a linked library reaches quickly. The error now carries the loader's reason. #357
+  owns sharing a namespace between sets that do not conflict, and releasing namespaces.
+- **Not tested.** A Function that holds both a solver call and an extern, which loads in the
+  extern's namespace and not in the solvers'. #342 will exercise it. Named linking on Windows,
+  where the test of `m` is skipped. `extern.md` gives that to #84, which is closed.
+
+### Review findings that changed the code
+
+From the one review of #355 and its check of the fixes.
+
+- Output printed by an extern, or by `sc.print` in a Function that holds one, was lost on Linux when stdout was not a terminal, because the namespace has its own C library. The call now flushes through the library's own handle (`test_external_and_generated_prints_survive_redirected_stdout`).
+- A failed `dlmopen` gave no reason. The error now carries the loader's message, for example the undefined symbol (`test_missing_external_symbol_names_loader_error`).
+- A bare string for `include_dirs`, `compile_flags` or `link` was split into characters. `CLibrary` rejects it and names the field (`test_library_rejects_a_bare_string_for_a_sequence_field`).
+- A system copy of a named library won over one in a directory given to the compiler with `-L`. Those directories are now searched first (`test_explicit_library_directory_wins_over_the_system_copy`).
+- The ahead-of-time command line resolved the JIT's link flags, which needed a compiler and wrote to the cache. It now prints the manifest's path, and the solver and math link flags that this fix first dropped (`test_aot_cli_exports_without_a_compiler_or_jit_cache`).
+- `sc.custom_derivative` on an extern failed with an `AttributeError`. It raises a `TypeError` that asks for a wrapping Function (`test_custom_derivative_of_an_extern_asks_for_a_wrapping_function`).
+- The docstring of `sc.extern` did not give the order of the leaves, the `NULL` workspace when `workspace=0` or the float64 limit. It does now.
+
+The finding on namespaces changed no code and became #357. Three notes were recorded in
+`extern.md` and left as they are: no field names a library directory, a warm lookup
+preprocesses every source, and `_Extern` stands in for a `ConcreteFunction` through class
+attributes that every walk over callees has to know.
