@@ -1,0 +1,11 @@
+# main at 6c29ef45, 2026-11-11T11:45Z
+CVXQP1_S: P (100, 100) nnz 672, A (150, 100) nnz 248
+KKT (250, 250) nnz 1318 (dense would be 62500), max |K - SciPy| = 0.0e+00
+P x    max error 0.0e+00
+A x    max error 0.0e+00
+A^T y  max error 0.0e+00
+A^T diag(w) A: nnz 392 (SciPy 392), max error 1.4e-14
+d(y'Ax)/dA: nnz 248 (A has 248), max error 0.0e+00
+directional derivative in A's values: finite difference 15.88958521, gradient 15.88958520
+qp        largest private buffer 920 entries (m*n = 15000, n*n = 10000); C source 49407 bytes
+gradient  largest private buffer 0 entries (m*n = 15000, n*n = 10000); C source 6675 bytes
