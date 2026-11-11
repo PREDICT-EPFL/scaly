@@ -310,7 +310,7 @@ def test_exit_loops_cannot_redeclare_a_variable_in_one_scope(where):
     body = [p.block(*first), p.block(p.block(*second))]
   elif where == "loop_body":
     body = [p.for_(p.range_("j", 0, 2), body)]
-  with pytest.raises(VerifyError, match="duplicate exit variable 'i'"):
+  with pytest.raises(VerifyError, match="duplicate C identifier 'i'"):
     verify_program(p.program([p.proc("twice", [flags, count], body)]))
 
 
