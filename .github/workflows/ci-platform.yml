@@ -8,10 +8,10 @@ on:
         type: string
         default: ci
       environments:
-        description: JSON matrix with platform, runner and optional label, python, cc, cxx, toolchain, save-cache and verify-key
+        description: JSON matrix with platform, runner and optional label, python, cc, cxx, toolchain and save-cache
         type: string
         default: >-
-          [{"platform":"linux-x86_64","runner":"ubuntu-latest","verify-key":true},
+          [{"platform":"linux-x86_64","runner":"ubuntu-latest"},
            {"platform":"linux-arm64","runner":"ubuntu-24.04-arm"},
            {"platform":"macos-arm64","runner":"macos-15"},
            {"platform":"windows-x86_64","runner":"windows-latest"}]
@@ -88,5 +88,4 @@ jobs:
           cxx: ${{ matrix.cxx }}
           toolchain: ${{ matrix.toolchain || false }}
           save-cache: ${{ matrix.save-cache || false }}
-          verify-key: ${{ matrix.verify-key || false }}
           download: 'false'

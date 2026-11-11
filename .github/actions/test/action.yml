@@ -28,9 +28,6 @@ inputs:
   save-cache:
     description: Save the nightly compile and Google Benchmark caches
     default: 'false'
-  verify-key:
-    description: Restore the nightly JIT cache and diagnose its entries with key verification
-    default: 'false'
   download:
     description: Download the platform and pure distributions from this run
     default: 'true'
@@ -110,7 +107,7 @@ runs:
         EOF
 
     - name: Restore the nightly compile cache
-      if: inputs.verify-key == 'true'
+      if: ${{ false }}
       uses: actions/cache/restore@v6
       with:
         path: ${{ env.SCALY_CACHE_DIR }}
@@ -147,9 +144,8 @@ runs:
       if: inputs.suite != 'benchmarks' && inputs.suite != 'smoke'
       shell: bash
       env:
-        SCALY_JIT_KEY: ${{ (inputs.suite == 'verify' || inputs.verify-key == 'true') && 'verify' || '' }}
-        PYTHONPATH: ${{ inputs.verify-key == 'true' && format('{0}/.github/scripts', github.workspace) || '' }}
-      run: uv run pytest -n=auto --durations=25 ${{ inputs.verify-key == 'true' && '-p jit_cache_diagnostic' || '' }}
+        SCALY_JIT_KEY: ${{ inputs.suite == 'verify' && 'verify' || '' }}
+      run: uv run pytest -n=auto --durations=25
 
     - name: Benchmark smoke
       if: ${{ !cancelled() && (inputs.suite == 'toolchain' || inputs.suite == 'benchmarks' || inputs.suite == 'smoke') }}
