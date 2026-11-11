@@ -266,7 +266,20 @@ def _cases() -> list[Case]:
           ),
         ]
       )
-  for name, left, right in [("vv", (3,), (3,)), ("mv", (2, 3), (3,)), ("vm", (3,), (3, 2)), ("mm", (2, 3), (3, 2)), ("empty", (2, 0), (0, 3))]:
+  for name, left, right in [
+    ("vv", (3,), (3,)),
+    ("mv", (2, 3), (3,)),
+    ("vm", (3,), (3, 2)),
+    ("mm", (2, 3), (3, 2)),
+    ("empty", (2, 0), (0, 3)),
+    ("batched", (2, 2, 3), (2, 3, 2)),
+    ("broadcast", (2, 1, 2, 3), (3, 3, 2)),
+    ("vector-batch", (3,), (2, 3, 2)),
+    ("batch-vector", (2, 2, 3), (3,)),
+    ("rank5", (2, 1, 1, 2, 3), (3, 1, 3, 2)),
+    ("empty-batch", (0, 2, 3), (1, 3, 2)),
+    ("singleton", (2, 1, 1), (1, 1, 1)),
+  ]:
     values = tuple(np.arange(np.prod(shape), dtype=float).reshape(shape) / 5 + 0.4 for shape in (left, right))
     cases.append(Case(f"matmul-{name}", ExprOp.MATMUL, values, lambda x, y: x @ y, np.matmul))
   for shape in [(3,), (2, 2)]:

@@ -381,6 +381,27 @@ def _combine_children(expr: Expr, wrt: Expr, memo: _JacContext, *, stack: bool) 
 def _matmul_mask(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_array:
   x, y = expr.args
   xm, ym = _jac_mask(x, wrt, memo), _jac_mask(y, wrt, memo)
+  if max(len(x.shape), len(y.shape)) > 2:
+    batch = expr.shape[: len(expr.shape) - (len(x.shape) > 1) - (len(y.shape) > 1)]
+    m, k = (1, x.shape[0]) if len(x.shape) == 1 else x.shape[-2:]
+    n = 1 if len(y.shape) == 1 else y.shape[-1]
+    xi = np.broadcast_to(np.arange(x.size).reshape((*x.shape[:-2], m, k)), (*batch, m, k))
+    yi = np.broadcast_to(np.arange(y.size).reshape((*y.shape[:-2], k, n)), (*batch, k, n))
+    output = np.arange(expr.size).reshape((*batch, m, n))
+    xs, ys = memo.support_of(x), memo.support_of(y)
+    rows, xc, yc = [], [], []
+    for inner in range(k):
+      a = np.broadcast_to(xi[..., :, inner, None], output.shape).reshape(-1)
+      b = np.broadcast_to(yi[..., inner, None, :], output.shape).reshape(-1)
+      rows.append(output.reshape(-1))
+      xc.append(a)
+      yc.append(b)
+    if not rows:
+      return _empty((expr.size, wrt.size))
+    row, a, b = np.concatenate(rows), np.concatenate(xc), np.concatenate(yc)
+    left = np.ones(len(row), dtype=bool) if ys is None else np.isin(b, support_indices(ys))
+    right = np.ones(len(row), dtype=bool) if xs is None else np.isin(a, support_indices(xs))
+    return _or(_compose(_incidence((expr.size, x.size), row[left], a[left]), xm), _compose(_incidence((expr.size, y.size), row[right], b[right]), ym))
   m, k = (1, x.shape[0]) if len(x.shape) == 1 else x.shape
   n = 1 if len(y.shape) == 1 else y.shape[1]
 

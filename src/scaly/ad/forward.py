@@ -196,17 +196,14 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
 
 
 def _jvp_many_matmul_left(x: Expr, y: Expr, dx: Expr, nseed: int) -> Expr:
-  if len(x.shape) == 1:
-    return dx @ y
-  m, k = x.shape
-  return (dx.reshape((nseed * m, k)) @ y).reshape((nseed, m, *y.shape[1:]))
+  batch = max(len(x.shape) - 2, len(y.shape) - 2, 0)
+  left = dx.reshape((nseed, *((1,) * (batch - len(x.shape[:-2]))), *((1, x.shape[0]) if len(x.shape) == 1 else x.shape)))
+  right = y.reshape((*y.shape, 1)) if len(y.shape) == 1 else y
+  return (left @ right).reshape((nseed, *(x @ y).shape))
 
 
 def _jvp_many_matmul_right(x: Expr, y: Expr, dy: Expr, nseed: int) -> Expr:
-  if len(y.shape) == 1:
-    return (x @ dy.T).T if len(x.shape) == 2 else dy @ x
-  k, n = y.shape
-  product = x @ dy.transpose((1, 0, 2)).reshape((k, nseed * n))
-  if len(x.shape) == 1:
-    return product.reshape((nseed, n))
-  return product.reshape((x.shape[0], nseed, n)).transpose((1, 0, 2))
+  batch = max(len(x.shape) - 2, len(y.shape) - 2, 0)
+  left = x.reshape((1, *x.shape)) if len(x.shape) == 1 else x
+  right = dy.reshape((nseed, *((1,) * (batch - len(y.shape[:-2]))), *y.shape, *((1,) if len(y.shape) == 1 else ())))
+  return (left @ right).reshape((nseed, *(x @ y).shape))

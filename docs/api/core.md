@@ -100,6 +100,10 @@ expression graph for inspection and export.
     options:
       show_source: false
 
+::: scaly.ir.expr.matmul
+    options:
+      show_source: false
+
 ::: scaly.ir.expr.dot
     options:
       show_source: false

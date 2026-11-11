@@ -186,18 +186,13 @@ def test_leading_seed_matvec_matches_numpy(isolated_cache) -> None:
 
 
 def test_leading_seed_matvec_access_maps() -> None:
-  """The seed-axis transposes are copies with explicit coordinates and strided reads, which
-  lowering-time fusion can turn into index remaps; only the broadcast product divides, as one flat
-  loop until lanes handle nests."""
+  """Seeds are a batch axis and are read directly by the product's reduction."""
   proc = _lowered(_leading_seed_matvec())
-  s_t, product_t = (s for s in _nests(proc) if [r.attrs["kind"] for r in _loops(s)] == [RangeKind.GLOBAL] * 2)
-  assert not _divides(s_t) and not _divides(product_t)
-  outer, inner = (r.attrs["name"] for r in _loops(s_t))
-  assert _strides(s_t, "S") == [{outer: 1, inner: 5}]
-  outer, inner = (r.attrs["name"] for r in _loops(product_t))
-  buffers = {v.attrs["buffer"] for v in walk_program(product_t) if v.op == ProgramOp.VIEW}
-  reads = {frozenset(stride.items()) for b in buffers for stride in _strides(product_t, b)}
-  assert reads == {frozenset({outer: 1, inner: 3}.items()), frozenset({outer: 4, inner: 1}.items())}
+  (product,) = (s for s in _nests(proc) if [r.attrs["kind"] for r in _loops(s)] == [RangeKind.GLOBAL] * 2)
+  assert not _divides(product)
+  batch, _ = (r.attrs["name"] for r in _loops(product))
+  assert _strides(product, "S") == [{batch: 5}]
+  assert any(n.op == ProgramOp.LOAD and n.args[0].attrs["buffer"] == "A" for n in walk_program(product))
   (tangent,) = (s for s in _nests(proc) if any(v.op == ProgramOp.VIEW and v.attrs["buffer"] == "t" for v in walk_program(s)))
   (rng,) = _loops(tangent)
   assert int(rng.args[1].attrs["value"]) == 12 and _strides(tangent, "t") == [{rng.attrs["name"]: 1}]

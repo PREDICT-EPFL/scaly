@@ -1261,26 +1261,19 @@ def _normalize_index(index: Any, shape: tuple[int, ...]) -> tuple[Any, ...]:
 
 
 def matmul(x: Expr, y: Expr) -> Expr:
+  """Multiply arrays with NumPy vector promotion and broadcast batch axes.
+
+  The last two axes form each matrix product. A vector's added matrix axis is removed
+  from the result. Batched products require dense operands.
+  """
   if not x.type.dtype.is_floating or not y.type.dtype.is_floating:
     raise TypeError(f"@ takes floating operands, got {x.type.dtype} and {y.type.dtype}; convert with sc.cast")
-  if len(x.shape) == 1 and len(y.shape) == 1:
-    if x.shape[0] != y.shape[0]:
-      raise ValueError(f"cannot matmul shapes {x.shape} and {y.shape}")
-    shape: tuple[int, ...] = ()
-  elif len(x.shape) == 2 and len(y.shape) == 1:
-    if x.shape[1] != y.shape[0]:
-      raise ValueError(f"cannot matmul shapes {x.shape} and {y.shape}")
-    shape = (x.shape[0],)
-  elif len(x.shape) == 1 and len(y.shape) == 2:
-    if x.shape[0] != y.shape[0]:
-      raise ValueError(f"cannot matmul shapes {x.shape} and {y.shape}")
-    shape = (y.shape[1],)
-  elif len(x.shape) == 2 and len(y.shape) == 2:
-    if x.shape[1] != y.shape[0]:
-      raise ValueError(f"cannot matmul shapes {x.shape} and {y.shape}")
-    shape = (x.shape[0], y.shape[1])
-  else:
-    raise NotImplementedError(f"matmul shape inference for {x.shape} @ {y.shape}")
+  if max(len(x.shape), len(y.shape)) > 2 and any(arg.type.pattern is not None for arg in (x, y)):
+    raise NotImplementedError("batched sparse MATMUL requires the shared-pattern CSR kernel in #403")
+  if not x.shape or not y.shape or x.shape[-1] != y.shape[-2 if len(y.shape) > 1 else -1]:
+    raise ValueError(f"cannot matmul shapes {x.shape} and {y.shape}")
+  shape = broadcast_shape(x.shape[:-2], y.shape[:-2])
+  shape += (() if len(x.shape) == 1 else (x.shape[-2],)) + (() if len(y.shape) == 1 else (y.shape[-1],))
   return Expr(
     ExprOp.MATMUL,
     (x, y),

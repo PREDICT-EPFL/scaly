@@ -10,7 +10,7 @@ from ..ir.expr import Expr, ExprOp, _uniform, gather, pack, scatter, topo, to_de
 from ..ir.support import slice_indices, support_indices
 from ..ir.types import stored_indices
 from .calls import _call_vjp, _vmap_vjp
-from .rules import ELEMENTWISE, _masked, accumulate, carry_mask, cotangent
+from .rules import ELEMENTWISE, _masked, accumulate, carry_mask, cotangent, _unbroadcast
 from .sparsity import _check_wrt, _depends_on, _prunable_support
 
 
@@ -246,4 +246,15 @@ def _matmul_vjp(x: Expr, y: Expr, cot: Expr) -> tuple[Expr, Expr]:
     return y @ cot, x.reshape((x.shape[0], 1)) @ cot.reshape((1, y.shape[1]))
   if len(x.shape) == 2 and len(y.shape) == 2:
     return cot @ y.T, x.T @ cot
-  raise NotImplementedError(f"matmul VJP for {x.shape} @ {y.shape} is not implemented")
+  a = x.reshape((1, *x.shape)) if len(x.shape) == 1 else x
+  b = y.reshape((*y.shape, 1)) if len(y.shape) == 1 else y
+  batch = (a @ b).shape[:-2]
+  c = cot.reshape((*batch, a.shape[-2], b.shape[-1]))
+
+  def transpose(value):
+    axes = list(range(len(value.shape)))
+    axes[-2:] = axes[-2:][::-1]
+    return value.transpose(tuple(axes))
+
+  da, db = c @ transpose(b), transpose(a) @ c
+  return _unbroadcast(da, a.shape, da.shape).reshape(x.shape), _unbroadcast(db, b.shape, db.shape).reshape(y.shape)

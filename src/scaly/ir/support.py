@@ -360,6 +360,8 @@ def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> 
     a, b = support_of(x), support_of(y)
     if a is None and b is None:
       return None
+    if max(len(x.shape), len(y.shape)) > 2:
+      return None
     xshape = (1, x.shape[0]) if len(x.shape) == 1 else (x.shape[0], x.shape[1])
     yshape = (y.shape[0], 1) if len(y.shape) == 1 else (y.shape[0], y.shape[1])
     if a is None or b is None:

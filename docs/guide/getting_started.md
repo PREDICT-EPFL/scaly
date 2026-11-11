@@ -46,7 +46,11 @@ name `x` later does not change the recorded graph.
 Shapes, indexing, broadcasting, and arithmetic follow NumPy conventions.
 Here, `x[1:]` has shape `(1,)`, so concatenating it with `u` produces a vector
 of shape `(2,)`. `*` is elementwise multiplication and `@` is matrix
-multiplication. The [expression reference](../api/core.md#expressions) lists
+multiplication, with leading batch axes broadcast as in NumPy. For example,
+`(2, 1, 3, 4) @ (5, 4, 6)` has shape `(2, 5, 3, 6)`.
+A vector on either side is promoted to a matrix for the product, then its added
+axis is removed. Batched products require dense operands.
+The [expression reference](../api/core.md#expressions) lists
 `Expr` methods, and [array builders](../api/core.md#builders) include operations
 such as `sc.concat`, `sc.stack`, and `sc.sumsqr`.
 

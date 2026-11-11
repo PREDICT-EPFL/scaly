@@ -253,20 +253,15 @@ def _matmul_shape(expr: Expr) -> str | None:
   x, y = expr.args
   if x.type.dtype != y.type.dtype:
     return f"MATMUL operands have mismatched dtypes: {x.type.dtype} vs {y.type.dtype}"
-  if len(x.shape) == 1 and len(y.shape) == 1:
-    if x.shape[0] != y.shape[0] or expr.shape != ():
-      return f"MATMUL vec/vec shape mismatch: {x.shape}@{y.shape} -> {expr.shape}"
-  elif len(x.shape) == 2 and len(y.shape) == 1:
-    if x.shape[1] != y.shape[0] or expr.shape != (x.shape[0],):
-      return f"MATMUL mat/vec shape mismatch: {x.shape}@{y.shape} -> {expr.shape}"
-  elif len(x.shape) == 1 and len(y.shape) == 2:
-    if x.shape[0] != y.shape[0] or expr.shape != (y.shape[1],):
-      return f"MATMUL vec/mat shape mismatch: {x.shape}@{y.shape} -> {expr.shape}"
-  elif len(x.shape) == 2 and len(y.shape) == 2:
-    if x.shape[1] != y.shape[0] or expr.shape != (x.shape[0], y.shape[1]):
-      return f"MATMUL mat/mat shape mismatch: {x.shape}@{y.shape} -> {expr.shape}"
-  else:
-    return f"MATMUL unsupported ranks {x.shape}@{y.shape}"
+  if not x.shape or not y.shape or x.shape[-1] != y.shape[-2 if len(y.shape) > 1 else -1]:
+    return f"MATMUL shape mismatch: {x.shape}@{y.shape}"
+  try:
+    shape = broadcast_shape(x.shape[:-2], y.shape[:-2])
+  except ValueError:
+    return f"MATMUL batch mismatch: {x.shape}@{y.shape}"
+  shape += (() if len(x.shape) == 1 else (x.shape[-2],)) + (() if len(y.shape) == 1 else (y.shape[-1],))
+  if expr.shape != shape:
+    return f"MATMUL shape mismatch: expected {shape}, got {expr.shape}"
   return None
 
 
