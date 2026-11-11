@@ -125,7 +125,7 @@ Arity is the number of operands.
 | Shape           | `reshape`, `transpose`                        | 1        | Size-preserving reshape, axis permutation |
 | Indexing        | `slice`, `gather`, `scatter`                  | 1        | Gather and scatter use flat index tables  |
 | Assembly        | `stack`, `concat`                             | Variable | Along one axis                            |
-| Linear algebra  | `matmul`                                      | 2        | Operands of rank at most two              |
+| Linear algebra  | `matmul`                                      | 2        | NumPy's rules, leading axes broadcast     |
 | Function calls  | `call`, `vmap`                                | Variable | An ordinary or a mapped call              |
 | Solvers         | `solver_call`                                 | Variable | A nested solve, not differentiable        |
 
