@@ -64,7 +64,8 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
         if arg.type.pattern is not None and arg_cot.type.pattern is not arg.type.pattern:
           arg_cot = _on_pattern(arg_cot, arg)
         elif arg.type.pattern is None and arg_cot.type.pattern is not None:
-          arg_cot = to_dense(arg_cot)
+          (arg_cot,) = carry_mask(arg_cot, lambda c: (to_dense(c),))
+          assert arg_cot is not None
         adjoints[arg.id] = arg_cot if arg.id not in adjoints else accumulate(adjoints[arg.id], arg_cot)
 
   return tuple(adjoints.get(wrt.id, zeros_like(wrt)) for wrt in wrts)
@@ -144,8 +145,13 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
 
 
 def _on_pattern(value: Expr, primal: Expr) -> Expr:
-  assert primal.type.pattern is not None
-  return pack(gather(value, stored_indices(primal.type)).reshape(primal.type.storage_shape), primal.type.pattern, shape=primal.shape)
+  pattern = primal.type.pattern
+  assert pattern is not None
+  (result,) = carry_mask(
+    value, lambda c: (pack(gather(c, stored_indices(primal.type)).reshape(primal.type.storage_shape), pattern, shape=primal.shape),)
+  )
+  assert result is not None
+  return result
 
 
 def _stored_movement_vjp(expr: Expr, cot: Expr) -> Expr:

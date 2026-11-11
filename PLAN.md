@@ -29,4 +29,10 @@ with 3,894 tests and 55 skips. Benchmark smoke, docs build and all remaining hoo
 #367 rebased upstream since this branch started. This branch now includes its notes-only update,
 and source and tests are byte-identical to the reviewed candidate. Use the updated ancestor in
 the coordinator's latest `rebase --onto` instruction when #367 lands. Hold the next push until
-the review fixes are together. Opus and Sol reviews of the original candidate are running.
+the review fixes are together. Opus's review of the original candidate is running. Sol found two
+mask-loss paths: nested masks lost their inner condition during the compact transpose, and pattern
+normalization hid a mask in PACK/GATHER. Both are fixed locally through the existing mask helper,
+including the corresponding dense conversion. Three regression cases failed first and now pass
+with gradient and Hessian checks. Focused SELECT and C snapshot validation passed 51 tests, and
+strict types and Ruff passed. Combine any Opus fixes, rerun full pre-merge, then ask for the short
+delta check on fixes only. Do not push the rebase separately.

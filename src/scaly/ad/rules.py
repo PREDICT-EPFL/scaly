@@ -243,7 +243,7 @@ def carry_mask(cot: Expr, transpose: Callable[[Expr], tuple[Expr | None, ...]]) 
   if mask is None:
     return results
   ones = _full_like(1, cot) if cot.type.pattern is not None else Expr.const(np.ones(cot.shape, dtype=cot.type.dtype.numpy()), dtype=cot.type.dtype)
-  weights = transpose(where(mask[0], ones, zeros_like(cot) if cot.type.pattern is not None else _const(0, cot)))
+  weights = transpose(_masked(cot, lambda inner: ones))
   return tuple(
     r
     if r is None or w is None or r.op == ExprOp.CONST or _mask_of(r) is not None

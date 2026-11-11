@@ -217,3 +217,38 @@ def test_constant_sparse_condition_narrows_support_and_derivative_rows():
   point = np.array([0.3, 0.7, 1.2])
   np.testing.assert_array_equal(fn(point), [0.3, 0, 0])
   np.testing.assert_array_equal(sc.jacobian(fn)(point), np.diag([1.0, 0, 0]))
+
+
+@pytest.mark.parametrize("path", ["nested", "stack", "concat"])
+def test_sparse_select_masks_survive_nesting_and_pattern_normalization(path):
+  p = CanonicalPattern((2, 3), (0, 1), (0, 2))
+  q = CanonicalPattern(p.shape, (0, 1), (1, 0))
+
+  @sc.function(sc.arg("v", p.nnz), sc.arg("c", 2), name=f"sparse_select_normalized_{path}")
+  def loss(v, c):
+    x = sc.pack(v, p).sqrt()
+    other = sc.pack(sc.const(np.ones(p.nnz)), p if path == "nested" else q)
+    if path == "nested":
+      branch = sc.where(c[1] > 0, x, other)
+    elif path == "stack":
+      branch = sc.stack((x, other))
+    else:
+      branch = sc.concat((x.reshape((1, *p.shape)), other.reshape((1, *q.shape))))
+    assert branch.type.pattern is not None
+    ones = sc.pack(sc.const(np.ones(branch.type.storage_shape)), branch.type.pattern, shape=branch.shape)
+    return sc.where(c[0] > 0, branch, ones).sum().block()
+
+  grad = sc.gradient(loss, wrt="v")
+  hess = sc.hessian(loss, wrt="v")
+  conditions = ([0.0, 0.0], [0.0, 1.0], [1.0, 0.0]) if path == "nested" else ([0.0, 0.0],)
+  for condition in conditions:
+    c = np.asarray(condition)
+    zero = np.zeros(p.nnz)
+    np.testing.assert_array_equal(grad(zero, c), zero)
+    np.testing.assert_array_equal(hess(zero, c), np.zeros((p.nnz, p.nnz)))
+    np.testing.assert_array_equal(finite_difference(lambda v: loss(v, c), zero), zero.reshape((1, -1)))
+  point = np.array([0.25, 1.0])
+  for condition in ([1.0, 0.0], [1.0, 1.0]):
+    c = np.asarray(condition)
+    reference = finite_difference(lambda v: loss(v, c), point).reshape(point.shape)
+    np.testing.assert_allclose(np.asarray(grad(point, c)), reference, atol=1e-7, rtol=1e-7)
