@@ -174,3 +174,17 @@ def test_tangent_support_and_sparsity_follow_loop_fixed_point():
   pattern = sc.jacobian_sparsity(tangent, x)
   assert set(pattern.rows) == {0, 1}
   check_derivatives([c, x], [final], [np.array([0.2, 0.3, 0.0]), np.array([0.4, 0.5, 0.6, 0.7])])
+
+
+@pytest.mark.parametrize("shape", [(), (2,), (2, 2)])
+def test_matrix_slices_and_shared_initial_dependency(shape):
+  """Port devrush's carry ranks and shared dependency cases to leading-axis slices."""
+
+  @sc.function(sc.arg("c", shape), sc.arg("a", (2, 2)), sc.arg("b", ()))
+  def step(c, a, b):
+    return (c * a[0, 0]).sin() + a[1, 1] * b, (c * c).sum()
+
+  p = sc.sym("p", 16)
+  init = p[: max(1, int(np.prod(shape)))].reshape(shape)
+  final, (ys,) = sc.scan(step, init, (p.reshape((4, 2, 2)), sc.window(p, 1, 2)), length=4)
+  check_derivatives([p], [final, ys], [np.linspace(0.01, 0.1, 16)])

@@ -453,9 +453,8 @@ def test_callees_and_the_verifier() -> None:
 def test_derivatives_raise_and_an_inactive_loop_is_a_constant() -> None:
   p, x = sc.sym("p", 2), sc.sym("x", 2)
   (c, _) = sc.scan(mix, p, (sc.broadcast(sc.const(np.array([0.5, 2.0]))), sc.const(np.arange(3.0))), length=3)
-  for derivative in (lambda: sc.vjp((c,), (p,), (sc.const(np.ones(2)),)),):
-    with pytest.raises(NotImplementedError, match="scan and while_loop"):
-      derivative()
+  with pytest.raises(NotImplementedError, match="scan and while_loop"):
+    sc.vjp((c,), (p,), (sc.const(np.ones(2)),))
   y = x * c
   f = from_exprs("inactive", [x, p], [sc.jvp(y, x, sc.const(np.ones(2))), sc.vjp((y,), (x,), (sc.const(np.ones(2)),))[0]], ["x", "p"], ["fwd", "rev"])
   expected, _ = mix_numpy(np.array([1.0, 3.0]), np.array([0.5, 2.0]), [0.0, 1.0, 2.0])
@@ -796,7 +795,6 @@ def test_a_loop_on_the_variables_is_a_decision_for_the_quadratic_proof() -> None
 def test_rk4_forward_gradient_at_200_steps():
   from tests.function.test_loop_forward import evaluate
   from scaly.ad.derivatives import finite_difference
-  from scaly.codegen import render_c_source
 
   z, us = sc.sym("z0", 4), sc.sym("us", 200)
   zn, costs = rollout(200)(z, us)
@@ -813,13 +811,18 @@ def test_rk4_forward_gradient_at_200_steps():
   zn_ref, costs_ref = rollout(200, unrolled=True)(z, us)
   want = evaluate([z, us], [sc.jacobian(sc.sumsqr(zn_ref) + costs_ref.sum(), z)], [Z0, controls])
   np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-8)
-  sizes = []
+  from scaly.codegen import render_c_module
+  from scaly.ir.program import walk_program
+
+  sizes, counts = [], []
   for length in (20, 200, 2000):
     initial, control = sc.sym("z0", 4), sc.sym("us", length)
     final, stages = rollout(length)(initial, control)
     fn = ConcreteFunction._from_exprs(
       "roll_gradient", [initial, control], [sc.jacobian(sc.sumsqr(final) + stages.sum(), initial)], ["z0", "us"], ["grad"]
     )
-    source = render_c_source(fn)
-    sizes.append(len(source.encode()))
+    module = render_c_module(fn)
+    sizes.append(len(module.source.encode()))
+    counts.append(len(list(walk_program(module.program))))
   assert max(sizes) - min(sizes) < 200
+  assert counts[0] == counts[1] == counts[2]
