@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol, cast
 
 from ..ir import program as p
-from ..ir.expr import Expr, ExprOp, _uniform, pack
+from ..ir.expr import Expr, ExprOp, _full_like
 from ..ir.program import ProgramNode, ProgramOp
 from ..ir.types import DType, _uniform_value
 
@@ -127,18 +127,12 @@ def _expr_const(e: Expr) -> int | float | None:
   return value.item() if value is not None else None
 
 
-def _expr_full(value: int | float, like: Expr) -> Expr:
-  if like.type.pattern is not None:
-    return pack(_uniform(value, like.type.storage_shape, dtype=like.type.dtype, lowering=like.lowering), like.type.pattern, shape=like.shape)
-  return _uniform(value, like.shape, dtype=like.type.dtype, lowering=like.lowering)
-
-
 ARITH_EXPR: Arith[Expr] = Arith(
   kind=lambda e: str(e.op) if str(e.op) in _KINDS else None,
   const=_expr_const,
   fits=lambda arg, result: arg.shape == result.shape and arg.type.dtype == result.type.dtype and arg.type.pattern is result.type.pattern,
   scalar=lambda value, like: Expr.const(value, dtype=like.type.dtype, lowering=like.lowering),
-  full=_expr_full,
+  full=_full_like,
   build=lambda kind, args, like: Expr(ExprOp(kind), args, like.type, lowering=like.lowering),
 )
 

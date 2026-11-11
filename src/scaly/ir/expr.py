@@ -726,8 +726,6 @@ def _attrs_key(attrs: Mapping[str, Any]) -> tuple[tuple[str, Any], ...]:
       return (float, struct.pack("<d", v))
     if isinstance(v, Expr):
       return v.structural_key()
-    if isinstance(v, CanonicalPattern):
-      return v
     if hasattr(v, "structural_key") and callable(getattr(v, "structural_key")):
       return v.structural_key()
     if hasattr(v, "name") and hasattr(v, "input_names") and hasattr(v, "output_names"):
@@ -1120,10 +1118,15 @@ def vec(x: Any) -> Expr:
   return as_expr(x).vec()
 
 
-def zeros_like(x: Expr) -> Expr:
+def _full_like(value: int | float, x: Expr) -> Expr:
+  """A uniform constant with the shape, dtype, lowering hint and stored pattern of ``x``."""
   if x.type.pattern is not None:
-    return pack(_uniform(0, x.type.storage_shape, dtype=x.type.dtype, lowering=x.lowering), x.type.pattern, shape=x.shape)
-  return _uniform(0, x.shape, dtype=x.type.dtype, lowering=x.lowering)
+    return pack(_uniform(value, x.type.storage_shape, dtype=x.type.dtype, lowering=x.lowering), x.type.pattern, shape=x.shape)
+  return _uniform(value, x.shape, dtype=x.type.dtype, lowering=x.lowering)
+
+
+def zeros_like(x: Expr) -> Expr:
+  return _full_like(0, x)
 
 
 def pack(value: Any, pattern: CanonicalPattern | SparsityPattern, *, shape: tuple[int, ...] | None = None) -> Expr:
