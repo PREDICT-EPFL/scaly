@@ -374,3 +374,16 @@ def test_reduction_axes_are_normalized_and_interned() -> None:
       sc.diag(sc.sym("bad_diag", shape))
   with pytest.raises(TypeError, match="offset"):
     sc.diag(x, k=0.5)  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize("axis", [True, np.bool_(True), [0], (True,)])
+@pytest.mark.parametrize("method", ["sum", "mean"])
+def test_reduction_rejects_boolean_and_list_axes(axis, method) -> None:
+  with pytest.raises(TypeError, match="integer"):
+    getattr(sc.sym("invalid_axis", (2, 3)), method)(axis)
+
+
+@pytest.mark.parametrize("method", ["sum", "mean"])
+def test_reduction_keepdims_is_keyword_only(method) -> None:
+  with pytest.raises(TypeError):
+    getattr(sc.sym("keepdims_keyword", (2, 3)), method)(1, True)

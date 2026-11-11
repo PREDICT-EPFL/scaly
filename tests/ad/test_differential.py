@@ -163,7 +163,7 @@ def _cases() -> list[Case]:
               f"axis-sum-{shape}-{axes}-{keepdims}",
               ExprOp.RESHAPE if keepdims else ExprOp.REDUCE,
               (value,),
-              lambda x, axes=axes, keepdims=keepdims: x.sum(axes, keepdims),
+              lambda x, axes=axes, keepdims=keepdims: x.sum(axes, keepdims=keepdims),
               lambda x, axes=axes, keepdims=keepdims: x.sum(axis=axes, keepdims=keepdims),
             )
           )
@@ -173,7 +173,7 @@ def _cases() -> list[Case]:
                 f"axis-mean-{shape}-{axes}-{keepdims}",
                 ExprOp.DIV,
                 (value,),
-                lambda x, axes=axes, keepdims=keepdims: x.mean(axes, keepdims),
+                lambda x, axes=axes, keepdims=keepdims: x.mean(axes, keepdims=keepdims),
                 lambda x, axes=axes, keepdims=keepdims: x.mean(axis=axes, keepdims=keepdims),
               )
             )

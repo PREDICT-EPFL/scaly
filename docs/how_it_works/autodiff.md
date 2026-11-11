@@ -88,7 +88,7 @@ operation and the function whose body contains it.
 Before building a sparse derivative, Scaly finds which entries can be nonzero.
 It walks the graph once and keeps, for every node, a Boolean matrix saying which
 input elements each of its elements can depend on. An elementwise operation
-takes the union of its operands' rows, a sum merges all rows into one, a gather
+takes the union of its operands' rows, an axis sum merges rows within each reduction group, a gather
 picks rows, and a call composes the callee's pattern with its arguments'
 patterns. No numbers and no derivatives are involved[^griewank].
 

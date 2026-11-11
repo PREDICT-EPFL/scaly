@@ -6,7 +6,8 @@ import numpy as np
 
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
-from ...ir.support import reduce_entries
+from ...ir.program import ProgramNode, ProgramOp
+from ...ir.support import reduce_entries, support_indices
 from ...ir.types import stored_indices
 from ..program.scalarize import AUTO_SCALAR_OPS_PER_PROC
 from .ctx import LowerCtx, lowers, _flat
@@ -22,6 +23,9 @@ def _lower_reduce(ctx: LowerCtx, node: Expr) -> None:
   if src.type.pattern is not None and len(axes) != len(src.shape):
     _lower_stored_reduce(ctx, node)
     return
+  if len(axes) != len(src.shape) and src.type.pattern is None and (support := src.support) is not None and len(support) < src.size:
+    _lower_supported_reduce(ctx, node, support_indices(support))
+    return
   if len(axes) == len(src.shape):
     reductions, (i,) = ctx.reduce((src.type.storage_size,), f"i_{name}")
     value = ctx.read_stored(src, np.arange(src.type.storage_size, dtype=np.int64), i)
@@ -33,6 +37,26 @@ def _lower_reduce(ctx: LowerCtx, node: Expr) -> None:
   kept, reduced = iter(output_coords), iter(reduce_coords)
   coords = [next(reduced) if axis in axes else next(kept) for axis in range(len(src.shape))]
   emit_reduction(ctx, outputs, reductions, p.view(out, [_flat(node.shape, output_coords)]), ctx.read(src, coords), kind=kind)
+
+
+def _lower_supported_reduce(ctx: LowerCtx, node: Expr, entries: np.ndarray) -> None:
+  src = node.args[0]
+  axes, kind = node.attrs["axes"], node.attrs["kind"]
+  groups = reduce_entries(entries, src.shape, axes)
+  domain = int(np.prod([src.shape[axis] for axis in axes], dtype=np.int64))
+  counts = np.bincount(groups, minlength=node.size)
+  out = ctx.raw_buf_of(node)
+  name = out.attrs["name"]
+  identity = {"add": 0.0, "max": -np.inf, "min": np.inf}[kind]
+  for missing in (False, True) if kind != "add" else (False,):
+    selected = np.flatnonzero((counts < domain) == missing) if kind != "add" else np.arange(node.size)
+    outputs, (i,) = ctx.nest((len(selected),), f"zero_{name}")
+    ctx.emit(outputs, [p.store(p.view(out, [ctx.index_at(selected, i)]), p.const_float(0 if missing else identity, dtype=node.type.dtype))])
+  reductions, (k,) = ctx.reduce((len(entries),), f"support_{name}")
+  target = p.view(out, [ctx.index_at(groups, k)])
+  value = ctx.read_stored(src, entries, k)
+  operation = {"add": ProgramOp.ADD, "max": ProgramOp.MAXIMUM, "min": ProgramOp.MINIMUM}[kind]
+  ctx.emit(reductions, [p.store(target, ProgramNode(operation, (p.load(target), value), dtype=node.type.dtype))])
 
 
 def _lower_stored_reduce(ctx: LowerCtx, node: Expr) -> None:
@@ -54,13 +78,14 @@ def _lower_stored_reduce(ctx: LowerCtx, node: Expr) -> None:
   identity = {"add": 0.0, "max": -np.inf, "min": np.inf}[kind]
   if ctx.scalarize and (ctx.fun._effective_lowering == "scalar" or src.type.storage_size + len(writes) <= AUTO_SCALAR_OPS_PER_PROC):
     for row, count in enumerate(counts):
-      initial = 0.0 if kind != "add" and count < domain else identity
+      initial = 0.0 if count < domain else identity
       emit_group([], p.const_int(row), order[pointers[row] : pointers[row + 1]], int(count), p.const_float(initial, dtype=node.type.dtype))
     return
   bounds = ctx.new_const_index(pointers)
   # An absent coordinate contributes zero once, while an empty domain keeps its identity.
-  for missing in (False, True) if kind != "add" and domain else (False,):
-    selected = np.flatnonzero((counts < domain) == missing) if kind != "add" and domain else np.arange(len(writes))
+  extrema = kind != "add" and domain > 0
+  for missing in (False, True) if extrema else (False,):
+    selected = np.flatnonzero((counts < domain) == missing) if extrema else np.arange(len(writes))
     outputs, (i,) = ctx.nest((len(selected),), f"group_{name}")
     row = ctx.index_at(selected, i)
     start = p.load(p.view(bounds, [row]))

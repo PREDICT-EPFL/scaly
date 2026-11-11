@@ -11,6 +11,7 @@ from scaly.ir.expr import _reduce
 from scaly.ir.program import ProgramOp, walk_program
 from scaly.ir.types import CanonicalPattern
 from scaly.passes.lowering import lower_function
+from scaly.passes.program._common import trip_count
 
 
 def _subsets(rank):
@@ -26,7 +27,9 @@ def test_sum_mean_every_axis_subset(shape, lowering):
   @sc.function(sc.arg("x", shape), outputs=sc.group(*(sc.group(*(sc.arg(f"out{i}_{j}") for j in range(4))) for i in range(len(axes_cases)))))
   def f(x):
     return tuple(
-      tuple((x.mean if mean else x.sum)(tuple(axis - len(shape) for axis in axes), keepdims).with_lowering(lowering) for keepdims, mean in cases)
+      tuple(
+        (x.mean if mean else x.sum)(tuple(axis - len(shape) for axis in axes), keepdims=keepdims).with_lowering(lowering) for keepdims, mean in cases
+      )
       for axes in axes_cases
     )
 
@@ -148,3 +151,61 @@ def test_sparse_extrema_full_partial_and_absent_rows(kind, lowering):
   sign = -1 if kind == "max" else 1
   data = sign * np.array([1.0, 2.0, 3.0, 4.0, 5.0, 0.0])
   np.testing.assert_array_equal(f(data), [sign, 0, 0, 0])
+
+
+def test_reverse_broadcast_evaluates_only_the_known_support():
+  n = 40
+  mask = np.eye(n)
+  mask[0, :] = 1
+
+  @sc.function(sc.arg("v", n), outputs=sc.arg("cost"), name="supported_broadcast")
+  def f(v):
+    y = (sc.const(mask) * v).block()
+    return (y.sin() * y).sum()
+
+  grad = sc.gradient(f, of="cost", wrt="v")
+  observed = {}
+  lower_function(grad, observe=observed.__setitem__)
+  work = []
+
+  def count(node, iterations=1):
+    if node.op == ProgramOp.FOR:
+      extent = trip_count(node.args[0])
+      assert extent is not None
+      iterations *= extent
+    if node.op in {ProgramOp.SIN, ProgramOp.COS}:
+      work.append(iterations)
+    for arg in node.args:
+      count(arg, iterations)
+
+  count(observed["pass:fuse_elementwise"])
+  assert work == [int(mask.sum())] * 2
+  data = np.linspace(-0.7, 0.9, n)
+  y = mask * data
+  np.testing.assert_allclose(grad(data), ((np.sin(y) + y * np.cos(y)) * mask).sum(axis=0), atol=1e-12)
+
+
+@pytest.mark.parametrize("kind", ["add", "max", "min"])
+@pytest.mark.parametrize("lowering", ["scalar", "block"])
+def test_dense_known_support_reductions_match_numpy(kind, lowering):
+  shape = (2, 3, 4)
+  mask = (np.random.default_rng(66).random(shape) < 0.3).astype(float)
+  axes = _subsets(len(shape))
+
+  @sc.function(sc.arg("x", shape), outputs=sc.group(*(sc.arg(f"y{i}") for i in range(len(axes)))))
+  def f(x):
+    return tuple(_reduce(x * sc.const(mask), kind, axis).with_lowering(lowering) for axis in axes)
+
+  data = np.random.default_rng(67).normal(size=shape)
+  for actual, axis in zip(f(data), axes, strict=True):
+    expected = np.sum(data * mask, axis=axis) if kind == "add" else (np.max if kind == "max" else np.min)(data * mask, axis=axis)
+    np.testing.assert_allclose(np.asarray(actual), expected, atol=1e-12)
+
+
+def test_no_axis_sum_keeps_numpy_signed_zero():
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
+  def f(x):
+    return x.sum(()).block()
+
+  data = np.array([-0.0, 1.0])
+  np.testing.assert_array_equal(np.signbit(np.asarray(f(data))), np.signbit(data.sum(axis=())))

@@ -313,8 +313,7 @@ print(center_rows(np.arange(6.0).reshape(2, 3)))
 
 `sc.diag(vector)` builds a diagonal matrix, and `sc.diag(matrix)` extracts
 its diagonal. The optional integer `k` selects a diagonal above the main one
-when positive and below when negative. These forms accept rank-one and
-rank-two inputs, respectively.
+when positive and below when negative.
 
 `sc.gather(x, indices)` reads flat entries of `x`, with the result shaped like
 `indices`. `sc.scatter(values, indices, shape)` places values into a zero array.

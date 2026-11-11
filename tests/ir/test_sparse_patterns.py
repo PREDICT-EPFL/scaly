@@ -113,7 +113,7 @@ def test_reductions_project_patterns_without_using_numerical_support() -> None:
   assert x.sum((1, 2)).type.pattern is None
   assert x.sum(1).type.pattern is _pattern(np.broadcast_to(mask.any(axis=0), (4, 3)))
   assert x.sum(2).type.pattern is _pattern(np.broadcast_to(mask.any(axis=1), (4, 2)))
-  for result in (x.sum(0), x.sum(1), x.sum(2), x.sum((1, 2)), x.sum(1, True), (x * 0).sum(0)):
+  for result in (x.sum(0), x.sum(1), x.sum(2), x.sum((1, 2)), x.sum(1, keepdims=True), (x * 0).sum(0)):
     verify_expr(result)
   assert (x * 0).sum(0).type.pattern is x.type.pattern
   assert x.mean(0).type.pattern is x.type.pattern

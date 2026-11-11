@@ -256,7 +256,7 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   # A zero divisor gives 0, so the dividend's zeros stay.
   ExprOp.FLOORDIV: OpInfo(ExprOp.FLOORDIV, 2, False, support_rule="numerator"),
   ExprOp.MOD: OpInfo(ExprOp.MOD, 2, False, support_rule="numerator"),
-  ExprOp.SUM: OpInfo(ExprOp.SUM, 1, support_rule="reduce"),
+  ExprOp.REDUCE: OpInfo(ExprOp.REDUCE, 1, support_rule="reduce"),
   ExprOp.RESHAPE: OpInfo(ExprOp.RESHAPE, 1, support_rule="preserve"),
   ExprOp.TRANSPOSE: OpInfo(ExprOp.TRANSPOSE, 1, support_rule="transpose"),
   ExprOp.SLICE: OpInfo(ExprOp.SLICE, 1, support_rule="slice"),
@@ -694,7 +694,7 @@ class Expr:
     """Place stored values at their logical coordinates, filling other entries with zero."""
     return to_dense(self)
 
-  def sum(self, axis: int | tuple[int, ...] | None = None, keepdims: bool = False) -> Expr:
+  def sum(self, axis: int | tuple[int, ...] | None = None, *, keepdims: bool = False) -> Expr:
     """Sum over the chosen axes, or every axis when ``axis`` is ``None``.
 
     Negative axes count from the end. An empty tuple leaves every entry unchanged.
@@ -705,7 +705,7 @@ class Expr:
     result = _reduce(self, "add", axis)
     return result.reshape(tuple(1 if i in result.attrs["axes"] else n for i, n in enumerate(self.shape))) if keepdims else result
 
-  def mean(self, axis: int | tuple[int, ...] | None = None, keepdims: bool = False) -> Expr:
+  def mean(self, axis: int | tuple[int, ...] | None = None, *, keepdims: bool = False) -> Expr:
     """Average over the chosen axes, counting structural zeros in sparse inputs.
 
     Axes and ``keepdims`` follow ``sum``. An empty reduction domain returns NaN.
@@ -1276,8 +1276,10 @@ def matmul(x: Expr, y: Expr) -> Expr:
 def _reduce(x: Expr, kind: str, axis: int | tuple[int, ...] | None = None) -> Expr:
   if kind not in {"add", "max", "min"}:
     raise ValueError(f"unknown reduction kind {kind!r}")
-  axes = tuple(range(len(x.shape))) if axis is None else (axis,) if isinstance(axis, int | np.integer) else tuple(axis)
-  if any(not isinstance(i, int | np.integer) for i in axes):
+  if axis is not None and not isinstance(axis, int | np.integer | tuple):
+    raise TypeError("reduction axis must be an integer or a tuple of integers")
+  axes = tuple(range(len(x.shape))) if axis is None else (axis,) if isinstance(axis, int | np.integer) else axis
+  if any(isinstance(i, bool | np.bool_) or not isinstance(i, int | np.integer) for i in axes):
     raise TypeError("reduction axes must be integers")
   if any(i < -len(x.shape) or i >= len(x.shape) for i in axes):
     raise ValueError(f"reduction axis out of range for shape {x.shape}")

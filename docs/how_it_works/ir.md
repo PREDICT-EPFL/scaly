@@ -115,7 +115,7 @@ Arity is the number of operands.
 | Selection       | `select`                                      | 3        | `sc.where`, derivative of the chosen branch |
 | Conversion      | `cast`                                        | 1        | A derivative between floating types only  |
 | Integer         | `floordiv`, `mod`                             | 2        | Rounding down, as in NumPy                |
-| Reduction       | `sum`                                         | 1        | All elements into a scalar, no axis       |
+| Reduction       | `reduce`                                      | 1        | Sum over chosen axes                     |
 | Shape           | `reshape`, `transpose`                        | 1        | Size-preserving reshape, axis permutation |
 | Indexing        | `slice`, `gather`, `scatter`                  | 1        | Gather and scatter use flat index tables  |
 | Assembly        | `stack`, `concat`                             | Variable | Along one axis                            |
@@ -123,7 +123,7 @@ Arity is the number of operands.
 | Function calls  | `call`, `vmap`                                | Variable | An ordinary or a mapped call              |
 | Solvers         | `solver_call`                                 | Variable | A nested solve, not differentiable        |
 
-`dot`, `sumsqr`, `norm_2` and `vec` are builders that expand into these
+`dot`, `sumsqr`, `norm_2`, `mean`, `diag` and `vec` are builders that expand into these
 operations. There are no matrix decompositions, interpolation tables or
 data-dependent control flow yet, and no `expm1` or `log1p`.
 

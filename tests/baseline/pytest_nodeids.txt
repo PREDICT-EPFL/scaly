@@ -2996,8 +2996,17 @@ tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={0}-values
 tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={:.3f}-values3-ValueError-only empty '{}' placeholders]
 tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={} y={}-values1-ValueError-2 placeholders for 1 value]
 tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={}-values4-TypeError-float64, int32, int64, bool values, got float32]
-tests/ir/test_expr.py::test_print_rejects_a_format_it_cannot_render[x={}-values4-TypeError-float64]
 tests/ir/test_expr.py::test_reduction_axes_are_normalized_and_interned
+tests/ir/test_expr.py::test_reduction_keepdims_is_keyword_only[mean]
+tests/ir/test_expr.py::test_reduction_keepdims_is_keyword_only[sum]
+tests/ir/test_expr.py::test_reduction_rejects_boolean_and_list_axes[mean-True]
+tests/ir/test_expr.py::test_reduction_rejects_boolean_and_list_axes[mean-axis1]
+tests/ir/test_expr.py::test_reduction_rejects_boolean_and_list_axes[mean-axis2]
+tests/ir/test_expr.py::test_reduction_rejects_boolean_and_list_axes[mean-axis3]
+tests/ir/test_expr.py::test_reduction_rejects_boolean_and_list_axes[sum-True]
+tests/ir/test_expr.py::test_reduction_rejects_boolean_and_list_axes[sum-axis1]
+tests/ir/test_expr.py::test_reduction_rejects_boolean_and_list_axes[sum-axis2]
+tests/ir/test_expr.py::test_reduction_rejects_boolean_and_list_axes[sum-axis3]
 tests/ir/test_expr.py::test_shape_checks_for_structural_ops
 tests/ir/test_expr.py::test_slice_rejects_invalid_indices_without_a_shape_allocation[index0]
 tests/ir/test_expr.py::test_slice_rejects_invalid_indices_without_a_shape_allocation[index1]
@@ -3362,6 +3371,12 @@ tests/passes/lowering/test_nest.py::test_movement_matches_numpy[transpose_reshap
 tests/passes/lowering/test_nest.py::test_reshape_reads_a_materialized_transpose_in_place
 tests/passes/lowering/test_nest.py::test_strided_slice_copies_in_one_flat_loop
 tests/passes/lowering/test_nest.py::test_unit_loop_not_from_zero_keeps_constant_indices
+tests/passes/lowering/test_reduce.py::test_dense_known_support_reductions_match_numpy[block-add]
+tests/passes/lowering/test_reduce.py::test_dense_known_support_reductions_match_numpy[block-max]
+tests/passes/lowering/test_reduce.py::test_dense_known_support_reductions_match_numpy[block-min]
+tests/passes/lowering/test_reduce.py::test_dense_known_support_reductions_match_numpy[scalar-add]
+tests/passes/lowering/test_reduce.py::test_dense_known_support_reductions_match_numpy[scalar-max]
+tests/passes/lowering/test_reduce.py::test_dense_known_support_reductions_match_numpy[scalar-min]
 tests/passes/lowering/test_reduce.py::test_diag_numpy[-1-shape0]
 tests/passes/lowering/test_reduce.py::test_diag_numpy[-1-shape1]
 tests/passes/lowering/test_reduce.py::test_diag_numpy[-1-shape2]
@@ -3408,6 +3423,8 @@ tests/passes/lowering/test_reduce.py::test_internal_extrema_every_axis_subset[sc
 tests/passes/lowering/test_reduce.py::test_internal_extrema_every_axis_subset[scalar-min-shape1]
 tests/passes/lowering/test_reduce.py::test_internal_extrema_every_axis_subset[scalar-min-shape2]
 tests/passes/lowering/test_reduce.py::test_internal_extrema_every_axis_subset[scalar-min-shape3]
+tests/passes/lowering/test_reduce.py::test_no_axis_sum_keeps_numpy_signed_zero
+tests/passes/lowering/test_reduce.py::test_reverse_broadcast_evaluates_only_the_known_support
 tests/passes/lowering/test_reduce.py::test_sparse_extrema_full_partial_and_absent_rows[block-max]
 tests/passes/lowering/test_reduce.py::test_sparse_extrema_full_partial_and_absent_rows[block-min]
 tests/passes/lowering/test_reduce.py::test_sparse_extrema_full_partial_and_absent_rows[scalar-max]
