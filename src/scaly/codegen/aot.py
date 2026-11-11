@@ -108,11 +108,12 @@ class CModule:
     if compiler is None:
       raise RuntimeError("external libraries need a C compiler")
     return tuple(prepare_library(library, compiler.command) for library in self._libraries)
+
   @cached_property
   def frame_bytes(self) -> int:
     """Largest estimated procedure frame in bytes, including inlined locals and scalar spills.
 
-    External solver implementations are outside this estimate.
+    External C functions and solver implementations are outside this estimate.
     """
     return _frame_bytes(self.program)
 

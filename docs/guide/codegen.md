@@ -646,6 +646,7 @@ temporary array. The 4,096 bytes remain, so a budget below that behaves like zer
 
 `module.frame_bytes` and `<name>_FRAME_BYTES` give the largest estimate over the
 generated C functions. A function that is not inlined adds its own frame on top
-of its caller's, and that sum is not included, nor is a solver library's stack.
+of its caller's, and that sum is not included. The estimate also excludes the
+stack used by external C functions and solver libraries.
 Check the compiled frames with `-Wframe-larger-than=<budget> -Werror` under the
 application's own compiler flags.
