@@ -1,0 +1,98 @@
+[
+  {
+    "name": "chain_M3_N40/jac",
+    "coverage": {
+      "spjac_g_z": {
+        "unknown": 0,
+        "straight": 0,
+        "dense": 369,
+        "affine": 0,
+        "table": 3120
+      }
+    }
+  },
+  {
+    "name": "chain_M3_N40/hess",
+    "coverage": {
+      "sphess_gamma_z_z": {
+        "unknown": 0,
+        "straight": 0,
+        "dense": 0,
+        "affine": 0,
+        "table": 3123
+      }
+    }
+  },
+  {
+    "name": "race_cars_N25/jac",
+    "coverage": {
+      "spjac_g_z": {
+        "unknown": 0,
+        "straight": 0,
+        "dense": 104,
+        "affine": 150,
+        "table": 425
+      }
+    }
+  },
+  {
+    "name": "race_cars_N25/hess",
+    "coverage": {
+      "sphess_gamma_z_z": {
+        "unknown": 0,
+        "straight": 0,
+        "dense": 30,
+        "affine": 299,
+        "table": 0
+      }
+    }
+  },
+  {
+    "name": "npmpc_N12/jac",
+    "coverage": {
+      "spjac_g_z": {
+        "unknown": 0,
+        "straight": 0,
+        "dense": 126,
+        "affine": 26,
+        "table": 156
+      }
+    }
+  },
+  {
+    "name": "npmpc_N12/hess",
+    "coverage": {
+      "sphess_gamma_z_z": {
+        "unknown": 0,
+        "straight": 0,
+        "dense": 0,
+        "affine": 0,
+        "table": 191
+      }
+    }
+  },
+  {
+    "name": "unbumpercars_C8/jac",
+    "coverage": {
+      "spjac_g_u_s": {
+        "unknown": 0,
+        "straight": 0,
+        "dense": 0,
+        "affine": 0,
+        "table": 236
+      }
+    }
+  },
+  {
+    "name": "unbumpercars_C8/hess",
+    "coverage": {
+      "sphess_gamma_u_s_u_s": {
+        "unknown": 0,
+        "straight": 0,
+        "dense": 0,
+        "affine": 0,
+        "table": 136
+      }
+    }
+  }
+]

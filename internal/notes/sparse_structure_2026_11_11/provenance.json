@@ -1,0 +1,26 @@
+{
+  "main_snapshot": "ce7f8f58e88470cc9baad2c56a3b45f9e3c5572a",
+  "machine": "la015",
+  "python": "3.14.3",
+  "numpy": "2.4.6",
+  "scipy": "1.18.0",
+  "compiler": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "command": [
+    "cc",
+    "-O3",
+    "-fno-math-errno",
+    "-std=c99",
+    "-c",
+    "kernel.c",
+    "-o",
+    "kernel.o"
+  ],
+  "recipe": {
+    "lanes": 1,
+    "dialect": "c",
+    "cpu": "generic",
+    "vector_libm": "none"
+  },
+  "compile_measurement": "one wall-clock duration per cc subprocess on busy la015; descriptive, no speed claim",
+  "runtime_measurements": 0
+}
