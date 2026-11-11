@@ -46,7 +46,11 @@ zero tangents/cotangents as activity. Keep select-free gradient C unchanged.
       56 skipped; all lint/type/snapshot/smoke/docs/private-name checks pass.
       Running log /tmp/scaly-434-fable-suite-t53Kwr/final.log; completion in final.exit.
       The runner path is also in /tmp/scaly-434-fable-suite.path.
-- [ ] Commit the fixed state, then one fresh Fable LOW delta on the fixes alone. No third
+- [ ] The fixed state is committed. The one Fable LOW delta hit the five-hour limit before
+      reviewing and is snoozed until Nov 11 17:20 UTC / 18:20 Europe/Zurich. Leave it
+      pending for automatic retry; do not settle, duplicate or replace it. Its title is
+      Confirm Fable select-mask fixes, launched 13:34 UTC; task ids are in the tool record.
+      No third
       Sol review and no second full Fable review. Delta base is the rebased equivalent
       of the reviewed head; exclude unrelated upstream changes.
 - [ ] Settle Fable's completed main thread once its result has been used; settle the delta
