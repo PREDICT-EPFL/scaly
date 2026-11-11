@@ -23,7 +23,7 @@ def _lower_reduce(ctx: LowerCtx, node: Expr) -> None:
   if src.type.pattern is not None and len(axes) != len(src.shape):
     _lower_stored_reduce(ctx, node)
     return
-  if len(axes) != len(src.shape) and (support := src.support) is not None and len(support) < src.size:
+  if len(axes) != len(src.shape) and (support := ctx.support_of(src)) is not None and len(support) < src.size:
     _lower_supported_reduce(ctx, node, support_indices(support))
     return
   if len(axes) == len(src.shape):

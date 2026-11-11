@@ -4973,6 +4973,14 @@ tests/passes/lowering/test_schedule.py::test_sum_of_special_values_matches_numpy
 tests/passes/lowering/test_schedule.py::test_sum_of_special_values_matches_numpy[5]
 tests/passes/lowering/test_schedule.py::test_sum_updates_a_scalar_and_stores_once
 tests/passes/lowering/test_schedule.py::test_unit_stride_reduction_has_four_independent_accumulators_and_a_tail
+tests/passes/lowering/test_seed_pairs.py::test_callee_support_variants_are_bounded_and_fallback_remains_sound
+tests/passes/lowering/test_seed_pairs.py::test_mapped_jvp_with_distinct_seed_supports_matches_numpy
+tests/passes/lowering/test_seed_pairs.py::test_mapped_partly_zero_tangents_match_numpy_and_skip_zero_pairs
+tests/passes/lowering/test_seed_pairs.py::test_perturbed_seed_list_changes_the_mapped_tangent
+tests/passes/lowering/test_seed_pairs.py::test_supported_contractions_match_numpy[False-False]
+tests/passes/lowering/test_seed_pairs.py::test_supported_contractions_match_numpy[False-True]
+tests/passes/lowering/test_seed_pairs.py::test_supported_contractions_match_numpy[True-False]
+tests/passes/lowering/test_seed_pairs.py::test_supported_contractions_match_numpy[True-True]
 tests/passes/lowering/test_sparse_boundary.py::test_large_sparse_calls_and_maps_allocate_only_stored_values
 tests/passes/lowering/test_sparse_boundary.py::test_mixed_matrix_products_match_numpy[block-False]
 tests/passes/lowering/test_sparse_boundary.py::test_mixed_matrix_products_match_numpy[block-True]
@@ -5865,6 +5873,7 @@ tests/solvers/test_stages.py::test_rejects_shared_final_time_with_builder_guidan
 tests/test_c_snapshot.py::test_baseline_holds_exactly_the_corpus
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[forward]
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[jac]
+tests/test_c_snapshot.py::test_generated_c_matches_snapshot[seed_pairs]
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[spjac]
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[vmap]
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[vmap_multi]

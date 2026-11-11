@@ -6,6 +6,8 @@ import numpy as np
 
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
+from ...ir.program import RangeKind
+from ...ir.support import support_indices
 from ..program.scalarize import AUTO_SCALAR_OPS_PER_PROC
 from .ctx import LowerCtx, lowers, _flat
 from .schedule import emit_reduction
@@ -17,6 +19,8 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
   a, b = node.args
   if a.type.pattern is not None or b.type.pattern is not None:
     _lower_stored_matmul(ctx, node)
+    return
+  if ctx.seed_pairs and len(a.shape) <= 2 and len(b.shape) <= 2 and _lower_supported_matmul(ctx, node):
     return
   out = ctx.alloc_tmp(node)
   name = out.attrs["name"]
@@ -33,6 +37,33 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
   emit_reduction(
     ctx, outputs, reductions, target, p.mul(ctx.read(a, a_coords), ctx.read(b, b_coords)), batch_axes=sum(dim != 1 for dim in node.shape[:batch_rank])
   )
+
+
+def _lower_supported_matmul(ctx: LowerCtx, node: Expr) -> bool:
+  a, b = node.args
+  supports = [ctx.support_of(arg) for arg in node.args]
+  if all(s is None or len(s) == arg.size for arg, s in zip(node.args, supports, strict=True)):
+    return False
+  ai, bi = [np.arange(arg.size, dtype=np.int64) if s is None else support_indices(s) for arg, s in zip(node.args, supports, strict=True)]
+  inner = a.shape[-1]
+  width = b.shape[-1] if len(b.shape) == 2 else 1
+  ak, bk = ai % inner, bi // width
+  left, right = [], []
+  for k in np.intersect1d(ak, bk):
+    aa, bb = ai[ak == k], bi[bk == k]
+    left.append(np.repeat(aa, len(bb)))
+    right.append(np.tile(bb, len(aa)))
+  reads_a = np.concatenate(left) if left else np.empty(0, dtype=np.int64)
+  reads_b = np.concatenate(right) if right else np.empty(0, dtype=np.int64)
+  writes = reads_a // inner * width + reads_b % width
+  out = ctx.alloc_tmp(node)
+  zero, (z,) = ctx.nest((node.size,), f"zero_{out.attrs['name']}")
+  ctx.emit(zero, [p.store(p.view(out, [z]), p.const_float(0, dtype=node.type.dtype))])
+  ranges, (k,) = ctx.nest((len(writes),), f"pairs_{out.attrs['name']}", kind=RangeKind.REDUCE)
+  target = p.view(out, [ctx.index_at(writes, k, shared=True)])
+  value = p.mul(ctx.read_stored(a, reads_a, k), ctx.read_stored(b, reads_b, k))
+  ctx.emit(ranges, [p.store(target, p.add(p.load(target), value))])
+  return True
 
 
 def _lower_stored_matmul(ctx: LowerCtx, node: Expr) -> None:

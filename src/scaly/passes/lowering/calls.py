@@ -9,6 +9,8 @@ from ...ir.expr import Expr, ExprOp, invocation_key
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.types import DType, dtypes
 from ...function.concrete import ConcreteFunction
+from ...ir.support import Support, _make_support, support_indices
+from ...ir.types import stored_indices
 from ..program.scalarize import expand_static_loop
 from .ctx import LowerCtx, LoweringError, lowers, _lower_to_proc
 
@@ -16,7 +18,7 @@ from .ctx import LowerCtx, LoweringError, lowers, _lower_to_proc
 STATIC_LOOP_BUDGET = 256
 
 
-def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction) -> None:
+def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction, arguments: tuple[Support, ...] | None = None) -> str:
   from ...solvers.graph import is_solver_function, solver_callees
 
   if is_solver_function(callee):
@@ -25,19 +27,33 @@ def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction) -> None:
     ctx.solver_fns[callee] = callee
     for oracle in solver_callees(callee):
       _ensure_callee(ctx, oracle)
-    return
-  if callee not in ctx.callees:
-    ctx.callees[callee] = _lower_to_proc(
-      callee, ctx.callees, ctx.solver_fns, ctx.program_names, ctx.symbols, ctx.residuals, observe_expr=ctx.observe_expr
+    return ctx.symbols[callee]
+  if arguments == tuple(arg.support for arg in callee.inputs):
+    arguments = None
+  key = callee if arguments is None else (callee, arguments)
+  if key not in ctx.callees and arguments is not None and sum(isinstance(k, tuple) and k[0] is callee for k in ctx.callees) >= 32:
+    return _ensure_callee(ctx, callee)
+  if key not in ctx.callees:
+    symbol = ctx.symbols[callee] if arguments is None else ctx.program_names.procedure(f"{ctx.symbols[callee]}_support")
+    ctx.callees[key] = _lower_to_proc(
+      callee,
+      ctx.callees,
+      ctx.solver_fns,
+      ctx.program_names,
+      ctx.symbols,
+      ctx.residuals,
+      observe_expr=ctx.observe_expr,
+      argument_support=arguments,
+      symbol=symbol,
     )
+  return ctx.callees[key].attrs["name"]
 
 
 @lowers(ExprOp.CALL, ExprOp.EXTERN)
 def _lower_call(ctx: LowerCtx, node: Expr) -> None:
   """Write all used siblings with one call; unused results get scratch storage."""
   callee: ConcreteFunction = node.attrs["callee"]
-  if node.op != ExprOp.EXTERN:
-    _ensure_callee(ctx, callee)
+  symbol = ctx.symbols[callee] if node.op == ExprOp.EXTERN else _ensure_callee(ctx, callee, tuple(ctx.support_of(arg) for arg in node.args))
   results = callee.results if callee in ctx.residuals else callee.outputs
   layouts = (*callee.output_tree.layouts, *(None for _ in results[len(callee.outputs) :]))
   buffers, used = _result_buffers(ctx, node)
@@ -54,7 +70,7 @@ def _lower_call(ctx: LowerCtx, node: Expr) -> None:
       ProgramOp.CALL,
       tuple(in_bufs + out_bufs),
       attrs={
-        "callee": ctx.symbols[callee],
+        "callee": symbol,
         "n_in": len(in_bufs),
         "n_out": len(out_bufs),
         "returns": (),
@@ -83,13 +99,36 @@ def _result_buffers(ctx: LowerCtx, node: Expr) -> tuple[list[ProgramNode], dict[
 
 @lowers(ExprOp.VMAP)
 def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
+  callee = node.attrs["callee"]
+  groups: dict[tuple[Support, ...], list[int]] = {}
+  windows = []
+  for actual, formal, start, stride in zip(node.args, callee.inputs, node.attrs["starts"], node.attrs["strides"], strict=True):
+    support = ctx.support_of(actual)
+    windows.append((None if support is None else support_indices(support), formal, start, stride))
+  for stage in range(node.attrs["length"]):
+    arguments = []
+    for indices, formal, start, stride in windows:
+      support = None
+      if indices is not None:
+        offset = start + stage * stride
+        lo, hi = np.searchsorted(indices, (offset, offset + formal.type.storage_size))
+        entries = indices[lo:hi] - offset
+        support = _make_support(entries if formal.type.pattern is None else stored_indices(formal.type)[entries])
+      arguments.append(support)
+    groups.setdefault(tuple(arguments), []).append(stage)
+  for arguments, stages in groups.items():
+    _lower_vmap_group(ctx, node, np.asarray(stages, dtype=np.int64), _ensure_callee(ctx, callee, arguments))
+  if not groups:
+    _result_buffers(ctx, node)
+
+
+def _lower_vmap_group(ctx: LowerCtx, node: Expr, stages: np.ndarray, symbol: str) -> None:
   """A ``length``-iteration loop calling the callee with pointer-offset VIEW args. Iteration ``it``
   reads ``outer_k[start_k + it·stride_k ...]`` and writes all used outputs into their mapped buffers."""
   callee: ConcreteFunction = node.attrs["callee"]
-  length = int(node.attrs["length"])
+  length = len(stages)
   starts = tuple(int(s) for s in node.attrs["starts"])
   strides = tuple(int(s) for s in node.attrs["strides"])
-  _ensure_callee(ctx, callee)
   results = callee.results if callee in ctx.residuals else callee.outputs
   layouts = (*callee.output_tree.layouts, *(None for _ in results[len(callee.outputs) :]))
   buffers, used = _result_buffers(ctx, node)
@@ -102,7 +141,7 @@ def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
   loop = ctx.names.allocate(f"it_{ctx.buf_of(node).attrs['name']}")
   rng = p.range_(loop, 0, length, kind=RangeKind.GLOBAL)
   rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, dtype=rng.dtype)
-  it = p.var(loop)
+  it = ctx.index_at(stages, p.var(loop), shared=True)
   in_args = []
   before = len(ctx.statements)
   for k, outer in enumerate(node.args):
@@ -121,7 +160,7 @@ def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
   call = ProgramNode(
     ProgramOp.CALL,
     tuple(in_args + out_args),
-    attrs={"callee": ctx.symbols[callee], "n_in": len(in_args), "n_out": len(out_args), "returns": ()},
+    attrs={"callee": symbol, "n_in": len(in_args), "n_out": len(out_args), "returns": ()},
     dtype=dtypes.float64,
   )
   prologue = ctx.statements[before:]

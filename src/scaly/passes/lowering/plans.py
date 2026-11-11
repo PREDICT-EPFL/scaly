@@ -10,10 +10,10 @@ import numpy as np
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
-from ...ir.support import project_entries, slice_indices, transpose_entries, _constant_condition
+from ...ir.support import project_entries, slice_indices, transpose_entries, support_indices, _constant_condition
 from ...ir.types import CanonicalPattern, dtypes, stored_indices
-from ..arith import constant
 from .ctx import LowerCtx
+from ..arith import constant, fold_program
 
 
 @dataclass(frozen=True)
@@ -189,6 +189,21 @@ def map_regions(writes: np.ndarray, reads: Sequence[np.ndarray]) -> tuple[MapReg
   return tuple(MapRegion(writes[labels == label], tuple(r[labels == label] for r in reads)) for label in range(int(labels.max()) + 1))
 
 
+def seed_regions(writes: np.ndarray, reads: Sequence[np.ndarray], width: int) -> tuple[tuple[MapRegion, int], ...]:
+  """Group entries with equally long seed lists, retaining each entry's own seed coordinates."""
+  result = []
+  for region in map_regions(writes, reads):
+    entries = region.writes % width
+    order = np.lexsort((region.writes // width, entries))
+    _, counts = np.unique(entries[order], return_counts=True)
+    offsets = np.concatenate(([0], np.cumsum(counts)))
+    for count in np.unique(counts):
+      groups = np.flatnonzero(counts == count)
+      positions = order[(offsets[groups, None] + np.arange(count)).reshape(-1)]
+      result.append((MapRegion(region.writes[positions], tuple(r[positions] for r in region.reads)), int(count)))
+  return tuple(result)
+
+
 def emit_map(
   ctx: LowerCtx,
   node: Expr,
@@ -275,3 +290,39 @@ def lower_elementwise(ctx: LowerCtx, node: Expr, program_op) -> None:
       reads[1] = np.where(chosen, reads[1], -1)
       reads[2] = np.where(chosen, -1, reads[2])
   emit_map(ctx, node, reads, lambda values: ProgramNode(program_op, values, dtype=node.type.dtype))
+
+
+def lower_supported_elementwise(ctx: LowerCtx, node: Expr, program_op) -> bool:
+  """Plan nonzero seed pairs by entry, splitting regions at known-zero operands."""
+  if not ctx.seed_pairs or len(node.shape) < 2:
+    return False
+  supports = [ctx.support_of(arg) for arg in node.args]
+  support = ctx.support_of(node)
+  if support is None and all(s is None or len(s) == arg.size for arg, s in zip(node.args, supports, strict=True)):
+    return False
+  if node.type.pattern is not None:
+    return False
+  logical = np.arange(node.size, dtype=np.int64) if support is None else support_indices(support)
+  reads = []
+  for arg, known in zip(node.args, supports, strict=True):
+    slots = project_entries(logical, arg.shape, node.shape)
+    reads.append(slots if known is None else np.where(np.isin(slots, support_indices(known)), slots, -1))
+  out = ctx.alloc_tmp(node)
+  if len(logical) < node.size:
+    ranges, (k,) = ctx.nest((node.size,), f"zero_{out.attrs['name']}")
+    ctx.emit(ranges, [p.store(p.view(out, [k]), p.const_float(0, dtype=node.type.dtype))])
+  width = int(np.prod(node.shape[1:], dtype=np.int64))
+  for region, count in seed_regions(logical, reads, width):
+    ranges, (entry, seed) = ctx.nest((len(region.writes) // count, count), f"seed_{out.attrs['name']}")
+    k = p.add(p.mul(entry, p.const_int(count)), seed)
+    values = []
+    for arg, slots in zip(node.args, region.reads, strict=True):
+      if slots[0] < 0:
+        values.append(constant(0, arg.type.dtype))
+      elif arg.op == ExprOp.CONST and arg.value is not None and np.all((sample := arg.value.reshape(-1)[slots]) == sample[0]):
+        values.append(constant(sample[0].item(), arg.type.dtype))
+      else:
+        values.append(ctx.read_stored(arg, slots, k))
+    value = fold_program(ProgramNode(program_op, tuple(values), dtype=node.type.dtype))
+    ctx.emit(ranges, [p.store(p.view(out, [ctx.index_at(region.writes, k, shared=True)]), value)])
+  return True

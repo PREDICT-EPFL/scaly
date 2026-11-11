@@ -96,6 +96,20 @@ def _workspace() -> sc.Function:
   return workspace
 
 
+def _seed_pairs() -> sc.Function:
+  mask = (np.arange(12)[:, None] % 4 == np.arange(4)).astype(float)
+
+  @sc.function(sc.arg("x", 4), sc.arg("d", (12, 4)), outputs=sc.arg("y"), name="seed_pair_stage")
+  def stage(x: sc.Expr, d: sc.Expr) -> sc.Expr:
+    return (d * x.cos()).sum(axis=1).block()
+
+  @sc.function(sc.arg("x", (3, 4)), sc.arg("d", (3, 12, 4)), outputs=sc.arg("y"), name="seed_pair_map")
+  def mapped(x: sc.Expr, d: sc.Expr) -> sc.Expr:
+    return sc.vmap(stage, 3)(x, d * sc.const(mask))
+
+  return mapped
+
+
 def _qp_host() -> sc.Function:
   """A host function whose graph reaches a solver through a nested call."""
 
@@ -115,6 +129,7 @@ CORPUS = {
   "spjac": lambda: sc.sparse_jacobian(_shooting(), "eq", "z"),
   "wide": _wide,
   "workspace": _workspace,
+  "seed_pairs": _seed_pairs,
 }
 SOLVER_CORPUS = {"solver": _qp_host}
 

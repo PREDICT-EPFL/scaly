@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable, Sequence
 import numpy as np
 
 from ...ir import program as p
-from ...ir.expr import Expr, ExprOp, callees_of, invocation_key
+from ...ir.expr import Expr, ExprOp, OP_INFO, callees_of, invocation_key
 from ...ir.match import Pattern, rewrite
 from ...function.concrete import ConcreteFunction
 from ...function.extern import _Extern
@@ -19,7 +19,7 @@ from ..program import ProgramObserver, optimize_program
 from ..program._common import rebuild_program, substitute_var, trip_count
 from ...ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
 from ...ir.program_spec import verify_program
-from ...ir.support import Support, _make_support, support_indices
+from ...ir.support import Support, _make_support, support_indices, specialize_support
 from ...ir.types import DeviceSpec, DType, dtypes, stored_indices
 from ...utils.names import NameScope
 from ..affine import affine_index_map
@@ -28,6 +28,7 @@ from ..expr import cse_many, simplify
 
 _EXACT_STORES = (dtypes.float64, dtypes.float32, dtypes.int64, dtypes.bool_)
 LowerRule = Callable[["LowerCtx", Expr], None]
+ProcKey = ConcreteFunction | tuple[ConcreteFunction, tuple[Support, ...]]
 _RULES: dict[ExprOp, LowerRule] = {}
 
 
@@ -82,7 +83,7 @@ def lower_function(
   """
   fun = as_concrete(fun)
   names, symbols, residuals = _function_names(fun)
-  callees: dict[ConcreteFunction, ProgramNode] = {}
+  callees: dict[ProcKey, ProgramNode] = {}
   solver_fns: dict[ConcreteFunction, ConcreteFunction] = {}
   from ...solvers.graph import is_solver_function, solver_callees
 
@@ -172,7 +173,7 @@ def _normalize_function(fun: ConcreteFunction, *, residuals: bool = False) -> Co
 
 def _lower_to_proc(
   fun: ConcreteFunction,
-  callees: dict[ConcreteFunction, ProgramNode],
+  callees: dict[ProcKey, ProgramNode],
   solver_fns: dict[ConcreteFunction, ConcreteFunction],
   names: NameScope,
   symbols: dict[ConcreteFunction, str],
@@ -180,13 +181,18 @@ def _lower_to_proc(
   *,
   auto_scalarize: bool = True,
   observe_expr: ExprObserver | None = None,
+  argument_support: tuple[Support, ...] | None = None,
+  symbol: str | None = None,
 ) -> ProgramNode:
   lowering = fun._effective_lowering
-  symbol = symbols[fun]
+  symbol = symbols[fun] if symbol is None else symbol
   fun = _normalize_function(fun, residuals=fun in residuals)
   if observe_expr is not None:
     observe_expr("normalized", fun)
   ctx = LowerCtx(fun, callees, solver_fns, names, symbols, residuals, observe_expr)
+  if argument_support is not None:
+    ctx.seed_pairs = True
+    ctx.support_of = specialize_support(fun, argument_support, OP_INFO)
   nodes = fun.nodes
   # Float32 constants and operations retain their rounding during scalar substitution.
   ctx.scalarize = all(n.type.dtype in _EXACT_STORES for n in (*fun.inputs, *nodes)) and (
@@ -223,7 +229,7 @@ class LowerCtx:
   def __init__(
     self,
     fun: ConcreteFunction,
-    callees: dict[ConcreteFunction, ProgramNode],
+    callees: dict[ProcKey, ProgramNode],
     solver_fns: dict[ConcreteFunction, ConcreteFunction],
     names: NameScope,
     symbols: dict[ConcreteFunction, str],
@@ -231,6 +237,8 @@ class LowerCtx:
     observe_expr: ExprObserver | None = None,
   ) -> None:
     self.fun = fun
+    self.seed_pairs = fun.role == "forward"
+    self.support_of: Callable[[Expr], Support] = lambda node: node.support
     self.scalarize = False
     self.callees = callees
     self.solver_fns = solver_fns  # identity -> solver ConcreteFunction (opaque callees; rendered by codegen/solver)
@@ -380,7 +388,7 @@ class LowerCtx:
     return buf
 
   def storage_support(self, expr: Expr, permutation: np.ndarray | None = None) -> Support:
-    support = expr.support
+    support = self.support_of(expr)
     if support is None or expr.type.pattern is None and permutation is None:
       return support
     positions = np.arange(expr.type.storage_size) if expr.type.pattern is None else stored_indices(expr.type)
