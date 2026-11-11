@@ -1,6 +1,6 @@
 /* Scaly build recipe
  * CPU baseline: generic
- * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False, frame_budget=65536
  * Math library: scalar libm
  * gcc -O3 -fno-math-errno -c seed_pair_map.c
  * clang -O3 -fno-math-errno -c seed_pair_map.c
@@ -40,6 +40,7 @@
 #define seed_pair_map_SZ_RES 1
 #define seed_pair_map_SZ_IW 0
 #define seed_pair_map_SZ_W 0
+#define seed_pair_map_FRAME_BYTES 5952
 
 // The pointer ABI for seed_pair_map.
 #ifdef __cplusplus
