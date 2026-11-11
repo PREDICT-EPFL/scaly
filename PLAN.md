@@ -5,7 +5,7 @@ Do not push until the coordinator reports #360 merged. The compiler run plan and
 `~/.scaly-suite/RULES.md` still govern tests, reviews and queueing.
 
 - [x] Rebase the task branch onto main after #320's squash merge, dropping its old commits.
-- [x] Trial-merge `pr360` into `t3code/340-trial-360`, preserving main's newer compiler work.
+- [x] Trial-merge `pr360` into `t3code/340-trial-360-c9ad`, preserving main's newer compiler work.
 - [x] Resolve the shared integer C spelling. This task owns wrapping add/subtract/multiply
   and negation. #55 owns literals, libm, integer abs/min/max and accumulators. Apply the
   wrapping rule to integer code added by #55 without changing its other decisions.
@@ -24,7 +24,7 @@ PR #360's fetched head is `pr360`. The task branch before its scratch merge is
 Existing approvals cover the signed-wrap implementation and its two fixed findings.
 Review follow-ups are #363 and #365. No new full review is needed for unchanged logic.
 
-The fetched #360 still includes the old #30 history. Its trial merge required 16 file
+The initial #360 trial included the old #30 history and required 16 file
 resolutions. Preserve main's sparse support, carried-loop verification and array-based
 fusion, combine float32 folding/libm/literals with the signed wrapping rule, and migrate
 newer ProgramNode call sites to explicit keyword dtypes. The shared reduction emitter
@@ -48,4 +48,13 @@ Opus approved the new integration logic at xhigh effort, ran all 20 integer arit
 tests successfully, and independently reproduced the block-propagation and sum-wrapping
 failures with scratch pytest plugins. No action remains from that check. Its review
 thread has been settled. The original task branch is checked out again; the reviewed
-trial and all prepared code/test changes remain on t3code/340-trial-360. No push was made.
+trial and its prepared changes remain on t3code/340-trial-360. No push was made.
+
+The coordinator subsequently queued #360 at c9ad131e. Refetched pr360 and repeated the
+trial on t3code/340-trial-360-c9ad. Only the BIT_SELECT vector hunk conflicted; preserved
+the index rendering and float32 path together. After formatting, codegen/c.py,
+passes/arith.py, lowering/schedule.py and the integer arithmetic regression file are
+byte-identical to the Opus-approved earlier trial. No new logic or review was needed.
+All 747 focused integration and import tests pass, along with Ruff, ty and collection.
+Use this newer scratch branch as the resolution reference for the final task-branch
+rebase, not the earlier trial. Do not transplant the scratch merge history.
