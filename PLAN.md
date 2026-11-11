@@ -16,7 +16,7 @@ instead of renaming or changing lowering.
 - [x] Inspect the issue, declaration emission and neighboring verification tests.
 - [x] Add regressions compared with C99 syntax checks and observe failure before the fix.
 - [x] Extend declaration scopes, prove failure when the new check is removed, and run focused checks with at most two workers.
-- [ ] Refresh test collection; run the full pre-merge hook detached through the shared runner; preserve all C snapshots.
+- [x] Refresh test collection; run the full pre-merge hook detached through the shared runner; preserve all C snapshots.
 - [ ] Push once, open and link a stacked draft PR.
 - [ ] Obtain one Opus high correctness review and one short delta check; settle both delegates.
 - [ ] After #387 squash-merges, perform the one forced rebase onto origin/main and retarget the PR to main through REST.
@@ -30,3 +30,8 @@ including the six explicit/implicit buffer-parameter cases. The focused verifier
 carried ranges and naming tests pass 224 cases. The broader focused run passes
 334 cases, including import checks and every C snapshot. All 3539 test IDs
 collect. Strict ty and Ruff pass. Logs are in `/tmp/scaly-388/`.
+
+The stacked-state shared pre-merge hook exited 0: 3487 passed, 52 skipped,
+including the unchanged snapshots, plus all non-test checks. #387 has now
+squash-merged and closed #374. Open the requested stacked draft PR, then rebase
+once onto origin/main and retarget it through REST before the correctness review.
