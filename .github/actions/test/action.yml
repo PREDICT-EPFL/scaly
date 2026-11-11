@@ -28,6 +28,9 @@ inputs:
   save-cache:
     description: Save the nightly compile and Google Benchmark caches
     default: 'false'
+  verify-key:
+    description: Restore the nightly JIT cache and diagnose its entries with key verification
+    default: 'false'
   download:
     description: Download the platform and pure distributions from this run
     default: 'true'
@@ -107,7 +110,7 @@ runs:
         EOF
 
     - name: Restore the nightly compile cache
-      if: inputs.suite == 'ci' || inputs.suite == 'smoke'
+      if: inputs.verify-key == 'true'
       uses: actions/cache/restore@v6
       with:
         path: ${{ env.SCALY_CACHE_DIR }}
@@ -144,8 +147,9 @@ runs:
       if: inputs.suite != 'benchmarks' && inputs.suite != 'smoke'
       shell: bash
       env:
-        SCALY_JIT_KEY: ${{ inputs.suite == 'verify' && 'verify' || '' }}
-      run: uv run pytest -n=auto
+        SCALY_JIT_KEY: ${{ (inputs.suite == 'verify' || inputs.verify-key == 'true') && 'verify' || '' }}
+        PYTHONPATH: ${{ inputs.verify-key == 'true' && format('{0}/.github/scripts', github.workspace) || '' }}
+      run: uv run pytest -n=auto --durations=25 ${{ inputs.verify-key == 'true' && '-p jit_cache_diagnostic' || '' }}
 
     - name: Benchmark smoke
       if: ${{ !cancelled() && (inputs.suite == 'toolchain' || inputs.suite == 'benchmarks' || inputs.suite == 'smoke') }}
@@ -156,7 +160,7 @@ runs:
       if: ${{ !cancelled() && inputs.suite == 'smoke' }}
       shell: bash
       run: |
-        uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
+        time uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
         uv run benchmarks/run.py closed-loop --smoke --problem race_cars --solver sqp --oracle scaly
         uv run benchmarks/run.py closed-loop --smoke --problem race_cars --solver ipopt --oracle casadi
         uv run benchmarks/run.py closed-loop --smoke --problem unbumpercars --solver ipopt --oracle scaly
