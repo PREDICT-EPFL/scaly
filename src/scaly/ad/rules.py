@@ -79,6 +79,8 @@ def _atan2_denominator(e: Expr) -> Expr:
 
 
 def _mul_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
+  if any(t is not None and _mask_of(t) is not None for t in tangents):
+    return _tangent_sum(e, tangents)
   (x, y), (dx, dy) = e.args, tangents
   if x is y:
     return _seed_axis(_const(2, e) * x) * dx
@@ -91,6 +93,8 @@ def _mul_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
 
 
 def _div_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
+  if any(t is not None and _mask_of(t) is not None for t in tangents):
+    return _tangent_sum(e, tangents)
   dx, db = tangents
   quotient = _seed_axis(e)
   numerator = dx if db is None else -(quotient * db) if dx is None else dx - quotient * db
@@ -99,6 +103,11 @@ def _div_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
 
 def _inactive(e: Expr) -> Local:
   raise AssertionError("a bool condition is never active")
+
+
+def _cast_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
+  assert tangents[0] is not None
+  return _masked(tangents[0], lambda t: cast(t, e.type.dtype))
 
 
 def _select_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
@@ -220,7 +229,7 @@ ELEMENTWISE: dict[ExprOp, Elementwise] = {
     c_integer="(({type})({0} ? {1} : {2}))",
   ),
   # Constant folding converts to the node's dtype, so the fold itself is the identity.
-  ExprOp.CAST: Elementwise(ProgramOp.CAST, lambda x: x, "(({type})({0}))", (lambda e: 1,), lambda e, t: cast(t[0], e.type.dtype)),
+  ExprOp.CAST: Elementwise(ProgramOp.CAST, lambda x: x, "(({type})({0}))", (lambda e: 1,), _cast_jvp),
   # NumPy's floor semantics, which C's / and % do not have; codegen/c.py defines the helpers.
   ExprOp.FLOORDIV: Elementwise(ProgramOp.FLOORDIV, np.floor_divide, "(({type})scaly_floordiv({0}, {1}))"),
   ExprOp.MOD: Elementwise(ProgramOp.FLOORMOD, np.remainder, "(({type})scaly_floormod({0}, {1}))"),
@@ -241,15 +250,15 @@ def tangent(expr: Expr, tangents: Sequence[Expr | None], nseed: int) -> Expr:
     ]
     return pack(tangent(compact, seeds, nseed), expr.type.pattern, shape=seed_type.shape)
   row = ELEMENTWISE[ExprOp(expr.op)]
-  assert row.partials is not None
   aligned = [None if t is None else _broadcast_tangent(t, arg, expr, nseed) for arg, t in zip(expr.args, tangents, strict=True)]
-  if expr.op == ExprOp.CAST:
-    assert aligned[0] is not None
-    return _masked(aligned[0], lambda t: cast(t, expr.type.dtype))
-  if row.jvp is not None and (expr.op == ExprOp.SELECT or not any(t is not None and _mask_of(t) is not None for t in aligned)):
-    return row.jvp(expr, aligned)
+  return row.jvp(expr, aligned) if row.jvp is not None else _tangent_sum(expr, aligned)
+
+
+def _tangent_sum(expr: Expr, aligned: Sequence[Expr | None]) -> Expr:
+  partials = ELEMENTWISE[ExprOp(expr.op)].partials
+  assert partials is not None
   total: Expr | None = None
-  for partial, dx in zip(row.partials, aligned, strict=True):
+  for partial, dx in zip(partials, aligned, strict=True):
     if dx is None:
       continue
     local = partial(expr)

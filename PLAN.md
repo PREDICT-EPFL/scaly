@@ -33,3 +33,9 @@ masked cast. Their failures were reproduced before their fixes. The last focused
 passed all 87 cases. Forward tangent conditions crossing call boundaries are a distinct helper
 protocol change, filed as #432 and documented as a remaining limit. An optional scope question
 was sent to the coordinator; absent an answer, keep this PR at the two locations in its brief.
+
+The first full hook ran 5,366 cases: 5,309 passed, 56 skipped, and the operation-coverage gate
+failed because the shared tangent routine named CAST and SELECT. Moved those choices into the
+existing table rules and shared their partial sum. The unchanged coverage gate, select regressions
+and C snapshots now pass together (88 cases); Ruff, types and the six-file C comparison pass too.
+The next full hook uses a fresh queue ticket because the first run consumed its slot.
