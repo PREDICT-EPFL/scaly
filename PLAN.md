@@ -9,7 +9,9 @@ on main and `~/.scaly-suite/RULES.md` still govern tests, GitHub and pushes.
       `t3code/339-trial-360-361-20261111`.
 - [x] Run the focused trial checks with two workers. 690 tests passed, plus both added
       nested-block sanitizer cases. All 96 no-select C/header artifacts match main.
-- [ ] Have Opus check the logic-changing conflict resolutions alone.
+- [x] Have Opus check the logic-changing conflict resolutions alone. Approved with
+      no act-on findings. The reviewer also passed 309 focused tests and eight
+      integer-sum sanitizer probes across both widths and lowering modes.
 - [ ] Wait for the coordinator's confirmation that #361 merged.
 - [ ] Fetch and rebase this task branch onto main, resolve any remaining overlap,
       remove this plan and run the full pre-merge check through the shared runner.
