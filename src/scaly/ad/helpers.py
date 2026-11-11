@@ -20,8 +20,8 @@ class HelperKey:
   otherwise. ``constants`` holds, per active input, the dtype and bytes of a seed baked into the
   body, or ``None`` for a seed passed at run time. ``members`` are the helpers a pack concatenates.
   ``rules`` names the callee's custom rules, so its helpers and those of the function it was made
-  from are named apart. ``masked`` distinguishes a helper that accepts select conditions from
-  one that accepts only numerical tangents or cotangents.
+  from are named apart. ``masked`` distinguishes an adjoint that accepts a select condition from
+  one that accepts only a cotangent.
   """
 
   role: Role

@@ -423,6 +423,9 @@ among tied extrema. `abs` has slope `sign(x)`, with slope zero at zero.
 in forward and reverse mode. A branch that is not chosen contributes zero
 even when its local derivative is NaN or infinite.
 
+A selected zero also guards later partial derivatives within the same function
+body. For example, `sqrt(maximum(x, 0))` has derivative zero at `x = -1` in both modes.
+
 `argmin` and `argmax` return integer indices and have no derivative.
 Quadratic-program backends refuse variable-dependent nonsmooth operations,
 even when the chosen derivative has a zero Hessian. Express control limits as
@@ -437,11 +440,6 @@ raises `NotImplementedError`, including when the solve is inside an ordinary
 or mapped function. A solve independent of the differentiated input does not
 block its derivative. See [solver sensitivities](solvers.md#nesting-a-solver-in-a-graph)
 for the limits of dependency analysis.
-
-Forward and reverse mode can differ when a selected zero reaches a singular
-operation. For example, `sqrt(maximum(x, 0))` at `x = -1` gives a NaN tangent
-and a zero gradient. Placing the selection around `sqrt`, as in
-`sc.where(x > 0, x.sqrt(), 0)`, guards its singular derivative in both modes.
 
 Derivatives of `reduce_min` and `reduce_max` on sparse inputs currently
 materialize masks and tie counts over the full logical shape. Their temporary

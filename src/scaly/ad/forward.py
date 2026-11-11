@@ -25,7 +25,17 @@ from ..ir.expr import (
 from ..ir.types import TensorType, stored_indices
 from ..passes.expr import simplify_cse_fixpoint
 from .calls import _call_jvp_many, _cond_jvp_many, _is_zero_const, _vmap_jvp_many, read_args
-from .rules import ELEMENTWISE, Mask, _masked, carry_masks, cotangent_mask, move_mask, reduction_partial, times_partial, tangent as _elementwise_tangent
+from .rules import (
+  ELEMENTWISE,
+  Mask,
+  _masked,
+  carry_masks,
+  cotangent_mask,
+  move_mask,
+  reduction_partial,
+  times_partial,
+  tangent as _elementwise_tangent,
+)
 from .sparsity import _check_wrt, _prunable_support
 
 

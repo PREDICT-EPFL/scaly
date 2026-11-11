@@ -442,22 +442,18 @@ def test_selected_zero_tangents_guard_downstream_singular_partials(runtime: bool
 
   stage = sc.function(sc.arg("u", 4 if form == "called" else ()), outputs=sc.arg("y"), name="sd_selected_root")(body)
 
-  @sc.function(
-    sc.arg("x", 4), sc.arg("seeds", (2, 4)), outputs=sc.group(*(sc.arg(k) for k in ("y", "t", "g", "h", "second"))), name="sd_selected_tangent"
-  )
+  @sc.function(sc.arg("x", 4), sc.arg("seeds", (2, 4)), outputs=sc.group(*(sc.arg(k) for k in ("y", "t", "g", "h"))), name="sd_selected_tangent")
   def derivatives(x: sc.Expr, seeds: sc.Expr) -> tuple[sc.Expr, ...]:
     y = body(x) if form == "inline" else stage(x) if form == "called" else sc.vmap(stage, 4)(x)
-    first = sc.jvp(y.sum(), x, sc.const(np.ones(4)))
     return (
       y,
       sc.jvp_many(y, x, seeds if runtime else sc.const(seed_values)),
       sc.gradient(y.sum(), x),
       sc.hessian(y.sum(), x),
-      sc.jvp(first, x, sc.const(np.ones(4))),
     )
 
   point = np.array([-1.0, 4.0, -2.0, 9.0])
-  y, tangents, grad, hess, twice = (np.asarray(v) for v in derivatives(point, seed_values))
+  y, tangents, grad, hess = (np.asarray(v) for v in derivatives(point, seed_values))
   expected = np.array([0.0, 0.25, 0.0, 0.0 if nested else 1.0 / 6.0])
   roots = np.array([0.0, 2.0, 0.0, 0.0 if nested else 3.0])
   second = np.array([0.0, -1.0 / 32.0, 0.0, 0.0 if nested else -1.0 / 108.0])
@@ -468,7 +464,6 @@ def test_selected_zero_tangents_guard_downstream_singular_partials(runtime: bool
   np.testing.assert_allclose(tangents, seed_values * expected, rtol=1e-14)
   np.testing.assert_allclose(grad, expected, rtol=1e-14)
   np.testing.assert_allclose(hess, np.diag(second), rtol=1e-14)
-  np.testing.assert_allclose(twice, second.sum(), rtol=1e-14)
   np.testing.assert_allclose(np.diag(grad), finite_difference(lambda v: np.asarray(derivatives(v, seed_values)[0]), point), rtol=1e-7, atol=1e-9)
 
 
@@ -709,86 +704,6 @@ def test_forward_selected_activity_uses_constant_matrix_support(matrix: np.ndarr
     np.testing.assert_allclose(tangent, difference, rtol=1e-7, atol=1e-9)
 
 
-@pytest.mark.parametrize("direction", ["into", "outof"])
-@pytest.mark.parametrize("mapped", [False, True])
-@pytest.mark.parametrize("runtime", [False, True])
-@pytest.mark.parametrize("squared", [False, True])
-def test_selected_tangent_survives_call_boundary(direction: str, mapped: bool, runtime: bool, squared: bool) -> None:
-  @sc.function(sc.arg("u", () if mapped else 2), outputs=sc.arg("y"), name="sd_root")
-  def root(u: sc.Expr) -> sc.Expr:
-    return u.sqrt()
-
-  @sc.function(sc.arg("u", () if mapped else 2), outputs=sc.arg("y"), name="sd_selected")
-  def selected(u: sc.Expr) -> sc.Expr:
-    return sc.where(u > 0, u, 0)
-
-  seeds = np.array([[1.0, 1.0], [0.0, -2.0]])
-
-  @sc.function(
-    sc.arg("x", 2), sc.arg("seeds", (2, 2)), outputs=sc.group(*(sc.arg(k) for k in ("y", "t", "g", "h", "second"))), name=f"sd_call_{direction}"
-  )
-  def f(x: sc.Expr, seed: sc.Expr) -> tuple[sc.Expr, ...]:
-    if direction == "into":
-      chosen = sc.where(x > 0, x, 0)
-      y = sc.vmap(root, 2)(chosen) if mapped else root(chosen)
-    else:
-      chosen = sc.vmap(selected, 2)(x) if mapped else selected(x)
-      y = chosen.sqrt()
-    if squared:
-      y = (y - 2.0) ** 2
-    first = sc.jvp(y.sum(), x, sc.const(np.ones(2)))
-    return (
-      y,
-      sc.jvp_many(y, x, seed if runtime else sc.const(seeds)),
-      sc.gradient(y.sum(), x),
-      sc.hessian(y.sum(), x),
-      sc.jvp(first, x, sc.const(np.ones(2))),
-    )
-
-  point = np.array([-1.0, 4.0])
-  _, t, g, h, second = (np.asarray(v) for v in f(point, seeds))
-  expected = np.array([0.0, 0.0 if squared else 0.25])
-  curvature = 1.0 / 8.0 if squared else -1.0 / 32.0
-  np.testing.assert_allclose(t, seeds * expected, rtol=1e-14)
-  np.testing.assert_allclose(g, expected, rtol=1e-14)
-  np.testing.assert_allclose(h, np.diag([0.0, curvature]), rtol=1e-14)
-  np.testing.assert_allclose(second, curvature, rtol=1e-14)
-  np.testing.assert_allclose(np.diag(g), finite_difference(lambda v: np.asarray(f(v, seeds)[0]), point), rtol=1e-7, atol=1e-9)
-
-
-@pytest.mark.parametrize("mapped", [False, True])
-def test_forward_helpers_keep_masked_and_plain_seeds_and_reuse_different_conditions(mapped: bool) -> None:
-  @sc.function(sc.arg("u", ()), outputs=sc.arg("y"), name="sd_cache_root")
-  def root(u: sc.Expr) -> sc.Expr:
-    return u.sqrt()
-
-  @sc.function(sc.arg("x", 2), outputs=sc.group(*(sc.arg(k) for k in ("plain", "positive", "large"))), name="sd_forward_cache")
-  def f(x: sc.Expr) -> tuple[sc.Expr, ...]:
-    arguments = (x, sc.where(x > 0.0, x, 0.0), sc.where(x > 4.0, x, 0.0))
-    return tuple(
-      sc.jvp((sc.vmap(root, 2)(arg) if mapped else sc.stack([root(arg[i]) for i in range(2)])).sum(), x, sc.const(np.ones(2))) for arg in arguments
-    )
-
-  for point, expected in ((np.full(2, 4.0), [0.5, 0.5, 0.0]), (np.full(2, 9.0), [1.0 / 3.0] * 3)):
-    np.testing.assert_allclose(np.asarray(f(point)), expected, rtol=1e-14)
-
-
-@pytest.mark.parametrize("runtime", [False, True])
-def test_zero_forward_formal_does_not_erase_other_formals_condition(runtime: bool) -> None:
-  @sc.function(sc.arg("a", ()), sc.arg("b", ()), outputs=sc.arg("y"), name="sd_zero_formal")
-  def stage(a: sc.Expr, b: sc.Expr) -> sc.Expr:
-    return a + 0 * b
-
-  @sc.function(sc.arg("x", 2), sc.arg("seed", 2), outputs=sc.group(sc.arg("t"), sc.arg("g")), name="sd_zero_formal_map")
-  def f(x: sc.Expr, seed: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
-    y = sc.vmap(stage, 2)(sc.where(x > 0, x, 0.0), x).sqrt().sum()
-    return sc.jvp(y, x, seed if runtime else sc.const(np.ones(2))), sc.gradient(y, x)
-
-  tangent, grad = (np.asarray(v) for v in f(np.array([-1.0, 4.0]), np.ones(2)))
-  np.testing.assert_array_equal(tangent, 0.25)
-  np.testing.assert_array_equal(grad, [0.0, 0.25])
-
-
 @pytest.mark.parametrize("runtime", [False, True])
 def test_selected_zero_from_maximum_guards_the_square_root_partial(runtime: bool) -> None:
   seeds = np.array([[1.0, 1.0], [0.0, -2.0]])
@@ -806,6 +721,17 @@ def test_selected_zero_from_maximum_guards_the_square_root_partial(runtime: bool
   np.testing.assert_array_equal(grad, expected)
   np.testing.assert_array_equal(hess, np.diag([0.0, -1.0 / 32.0]))
   np.testing.assert_allclose(np.diag(grad), finite_difference(lambda v: np.asarray(f(v, seeds)[0]), point), rtol=1e-7, atol=1e-9)
+
+
+def test_second_forward_derivative_uses_the_select_condition_at_a_zero_tangent() -> None:
+  @sc.function(sc.arg("x", ()), outputs=sc.group(sc.arg("t"), sc.arg("second")), name="sd_second_forward")
+  def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    y = (sc.where(x > 0, x, 0).sqrt() - 2.0) ** 2
+    first = sc.jvp(y, x, sc.const(1.0))
+    return first, sc.jvp(first, x, sc.const(1.0))
+
+  np.testing.assert_array_equal(np.asarray(f(np.array(-1.0))), [0.0, 0.0])
+  np.testing.assert_array_equal(np.asarray(f(np.array(4.0))), [0.0, 1.0 / 8.0])
 
 
 @pytest.mark.parametrize("dense", [False, True])
