@@ -72,7 +72,12 @@ def _prunable_support(expr: Expr) -> Support:
       object.__setattr__(node, "_custom_derivative_cache", False)
       continue
     children = node.args
-    if callees_of(node):
+    if node.op == ExprOp.LOOP:
+      if not visited and node.attrs["callee"].rules is not None:
+        object.__setattr__(node, "_custom_derivative_cache", True)
+        continue
+      children = (*children, *node.attrs["callee"].results)
+    elif callees_of(node):
       callee, output = node.attrs["callee"], node.attrs["output"]
       if not visited and _declared(callee, output):
         object.__setattr__(node, "_custom_derivative_cache", True)
@@ -226,7 +231,7 @@ def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.coo_arra
       stack.append((node, variable, 1, context))
       if node.op != ExprOp.STOP_GRADIENT and (node.op != ExprOp.VMAP or node.attrs["length"]):
         stack.extend((arg, variable, 0, context) for arg in reversed(node.args) if (arg.id, variable.id) not in masks)
-    elif phase == 1 and callees_of(node) and node.op != ExprOp.EXTERN:
+    elif phase == 1 and callees_of(node) and node.op not in (ExprOp.EXTERN, ExprOp.LOOP):
       stack.append((node, variable, 2, context))
       callee = node.attrs["callee"]
       callee_out = callee.results[node.attrs["output"]]
@@ -319,6 +324,8 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_a
       dense = _incidence((expr.size, arg.size), np.repeat(rows, len(cols)), np.tile(cols, len(rows)))
       ret = _or(ret, _compose(dense, mask))
     return ret
+  if expr.op == ExprOp.LOOP:
+    return _loop_mask(expr, wrt, memo)
   if expr.op == ExprOp.SOLVER_CALL:
     if any(_jac_mask(arg, wrt, memo).nnz for arg in expr.args):
       raise NotImplementedError("active derivative through SOLVER_CALL is not implemented")
@@ -503,6 +510,68 @@ def _vmap_mask(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_array:
       )
       ret = _or(ret, _compose(windows, outer_dep))
   return ret
+
+
+def _loop_mask(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_array:
+  """A boolean fixed point over the carries, each step reading the union of its slices over all steps.
+
+  Stacked outputs read the converged carries and their own step's slices; trajectories repeat the
+  converged carries at every slot.
+  """
+  callee, n_carry, length, output = expr.attrs["callee"], expr.attrs["n_carry"], expr.attrs["length"], expr.attrs["output"]
+  n_ys, skip = len(callee.outputs) - n_carry, n_carry + expr.attrs["index"]
+  support_of = specialize_support(callee, (None,) * len(callee.inputs), OP_INFO)
+  child = memo.specializations.setdefault(support_of, _JacContext({}, support_of, memo.specializations))
+  steps = np.arange(length, dtype=np.int64)[:, None]
+  outers = []
+  for k, (outer, formal, start, stride) in enumerate(
+    zip(expr.args[n_carry:], callee.inputs[skip:], expr.attrs["starts"], expr.attrs["strides"], strict=False)
+  ):
+    mask = _jac_mask(outer, wrt, memo)
+    if mask.nnz and length:
+      outers.append((skip + k, formal, start, stride, outer.size, mask))
+
+  def windows(
+    size: int, rows: np.ndarray, formal: Expr, start: int, stride: int, cols: np.ndarray, outer_size: int, mask: sparse.coo_array
+  ) -> sparse.coo_array:
+    """Compose ``mask`` with the reads of formal entries ``cols`` at every step, landing in ``rows``."""
+    at = start + steps * stride + _stored_slots(formal.type, cols)
+    return _compose(_incidence((size, outer_size), np.broadcast_to(rows, at.shape).reshape(-1), at.reshape(-1)), mask)
+
+  union = {
+    k: windows(formal.size, (e := stored_indices(formal.type)), formal, start, stride, e, size, mask)
+    for k, formal, start, stride, size, mask in outers
+  }
+  carries = [_jac_mask(init, wrt, memo) for init in expr.args[:n_carry]]
+
+  def step(out: int, inputs: dict[int, sparse.coo_array]) -> sparse.coo_array:
+    result = _empty((callee.results[out].size, wrt.size))
+    for k, mask in inputs.items():
+      if mask.nnz:
+        result = _or(result, _compose(_callee_mask(callee, out, k, child), mask))
+    return result
+
+  for _ in range(length):
+    grown = [_or(carry, step(j, {**dict(enumerate(carries)), **union})) for j, carry in enumerate(carries)]
+    if all(new.nnz == old.nnz for new, old in zip(grown, carries, strict=True)):
+      break
+    carries = grown
+  if n_carry <= output < n_carry + n_ys:
+    out_type = callee.results[output].type
+    own = step(output, dict(enumerate(carries)))
+    rows = steps * out_type.storage_size + _stored_slots(out_type, own.row)
+    result = _incidence((expr.size, wrt.size), rows.reshape(-1), np.broadcast_to(own.col, rows.shape).reshape(-1))
+    for k, formal, start, stride, size, mask in outers:
+      local = _callee_mask(callee, output, k, child)
+      result = _or(
+        result, windows(expr.size, steps * out_type.storage_size + _stored_slots(out_type, local.row), formal, start, stride, local.col, size, mask)
+      )
+    return result
+  if output < n_carry:
+    return carries[output]
+  carry, carry_type = carries[output - n_carry - n_ys - 1], callee.inputs[output - n_carry - n_ys - 1].type
+  rows = steps * carry_type.storage_size + _stored_slots(carry_type, carry.row)
+  return _incidence((expr.size, wrt.size), rows.reshape(-1), np.broadcast_to(carry.col, rows.shape).reshape(-1))
 
 
 def star_coloring(sparsity: SparsityPattern) -> tuple[int, ...]:

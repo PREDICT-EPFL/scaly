@@ -97,12 +97,13 @@ class ExprOp(StrEnum):
   CALL = "call"
   VMAP = "vmap"
   EXTERN = "extern"
+  LOOP = "loop"
   SOLVER_CALL = "solver_call"
   PRINT = "print"
   STOP_GRADIENT = "stop_gradient"
 
 
-CALLEE_OPS = {ExprOp.CALL, ExprOp.VMAP, ExprOp.EXTERN}
+CALLEE_OPS = {ExprOp.CALL, ExprOp.VMAP, ExprOp.LOOP, ExprOp.EXTERN}
 
 
 COMMON_ELEMENTWISE_UNARY = {
@@ -166,6 +167,7 @@ COMMON_STRUCTURAL = {
   ExprOp.CALL,
   ExprOp.VMAP,
   ExprOp.EXTERN,
+  ExprOp.LOOP,
   ExprOp.SOLVER_CALL,
   ExprOp.PRINT,
   ExprOp.STOP_GRADIENT,
@@ -204,6 +206,7 @@ class OpInfo:
       "concat",
       "call",
       "vmap",
+      "loop",
     ]
     | None
   ) = None
@@ -270,6 +273,7 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.CALL: OpInfo(ExprOp.CALL, None, support_rule="call"),
   ExprOp.VMAP: OpInfo(ExprOp.VMAP, None, support_rule="vmap"),
   ExprOp.EXTERN: OpInfo(ExprOp.EXTERN, None),
+  ExprOp.LOOP: OpInfo(ExprOp.LOOP, None, support_rule="loop"),
   ExprOp.SOLVER_CALL: OpInfo(ExprOp.SOLVER_CALL, None, False),
   ExprOp.PRINT: OpInfo(ExprOp.PRINT, None, support_rule="preserve"),
   ExprOp.STOP_GRADIENT: OpInfo(ExprOp.STOP_GRADIENT, 1, pattern_rule="preserve"),
@@ -940,6 +944,8 @@ def _attrs_key(attrs: Mapping[str, Any]) -> tuple[tuple[str, Any], ...]:
 
 def callees_of(node: Expr) -> tuple[Any, ...]:
   """The concrete functions invoked by ``node``, or an empty tuple for other operations."""
+  if node.op == ExprOp.LOOP and node.attrs["cond"] is not None:
+    return node.attrs["callee"], node.attrs["cond"]
   return (node.attrs["callee"],) if node.op in CALLEE_OPS else ()
 
 
@@ -1595,6 +1601,17 @@ def format_expr(outputs: Expr | Iterable[Expr]) -> str:
       slice_size = e.attrs["slice_size"]
       bindings = ", ".join(f"%{loc[a.id]}[{s}::{st}]" for a, s, st in zip(e.args, e.attrs["starts"], e.attrs["strides"], strict=True))
       rhs = f"vmap[{length}x{slice_size}] {callee.name}[{e.attrs['output']}]({bindings})"
+    elif e.op == ExprOp.LOOP:
+      cond = e.attrs["cond"]
+      n_carry = e.attrs["n_carry"]
+      outers = e.args[n_carry : n_carry + len(e.attrs["starts"])]
+      bindings = ", ".join(
+        [f"%{loc[a.id]}" for a in e.args[:n_carry]]
+        + [f"%{loc[a.id]}[{s}::{st}]" for a, s, st in zip(outers, e.attrs["starts"], e.attrs["strides"], strict=True)]
+      )
+      trip = f" trip=%{loc[e.args[-1].id]}" if len(e.args) > n_carry + len(outers) else ""
+      head = f"loop[{e.attrs['length']}{', reverse' if e.attrs['reverse'] else ''}{', index' if e.attrs['index'] else ''}]"
+      rhs = f"{head} {e.attrs['callee'].name}[{e.attrs['output']}]({bindings}){trip}" + (f" while {cond.name}" if cond is not None else "")
     else:
       rhs = f"{ExprOp(e.op).value}({', '.join(f'%{loc[a.id]}' for a in e.args)})"
     lines.append(f"{lhs} = {rhs} : {_type_text(e.type)}")

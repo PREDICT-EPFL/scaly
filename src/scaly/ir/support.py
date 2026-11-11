@@ -141,7 +141,10 @@ def _walk_support(roots: Sequence[Expr], rules: Mapping[ExprOp, OpInfo], context
       stack.append((node, True))
       stack.extend((arg, False) for arg in reversed(node.args))
       continue
-    result = (yield from _call_support(node, rule, support_of)) if rule in {"call", "vmap"} else _rule(node, rule, support_of)
+    if rule == "loop":
+      result = yield from _loop_support(node, support_of)
+    else:
+      result = (yield from _call_support(node, rule, support_of)) if rule in {"call", "vmap"} else _rule(node, rule, support_of)
     result = _bound_support(node, result)
     if context is None:
       object.__setattr__(node, "_support_cache", (result,))
@@ -204,6 +207,55 @@ def _call_support(node: Expr, op: str, support_of: Callable[[Expr], Support]):
       ]
     )
   )
+
+
+def _tile(support: Support, type_: Any, length: int) -> Support:
+  """Repeat a logical support as the stored slots of ``length`` stacked values of ``type_``."""
+  if support is None:
+    return None
+  slots = support_indices(support) if type_.pattern is None else np.flatnonzero(np.isin(stored_indices(type_), support_indices(support)))
+  return _make_support((np.arange(length)[:, None] * type_.storage_size + slots).reshape(-1))
+
+
+def _loop_support(node: Expr, support_of: Callable[[Expr], Support]):
+  """Iterate the body on the union of the carries' supports until it stops growing or ``length`` steps.
+
+  Every step reads the union of its slices' supports, so stacked outputs and trajectories get the
+  converged support at every slot. Each iteration specializes the body once, so a support still
+  growing after the specialization limit becomes unknown.
+  """
+  callee, n_carry, length, output = node.attrs["callee"], node.attrs["n_carry"], node.attrs["length"], node.attrs["output"]
+  n_ys = len(callee.outputs) - n_carry
+  carries = [support_of(arg) for arg in node.args[:n_carry]]
+  slices: list[Support] = []
+  formals = callee.inputs[n_carry + node.attrs["index"] :]
+  for arg, formal, start, stride in zip(node.args[n_carry:], formals, node.attrs["starts"], node.attrs["strides"], strict=False):
+    support, width = support_of(arg), formal.type.storage_size
+    if support is not None:
+      indices = support_indices(support)
+      local = [indices[(indices >= start + k * stride) & (indices < start + k * stride + width)] - start - k * stride for k in range(length)]
+      entries = np.unique(np.concatenate(local)) if local else np.empty(0, dtype=np.int64)
+      support = _make_support(entries if formal.type.pattern is None else stored_indices(formal.type)[entries])
+    slices.append(support)
+  index = (None,) * node.attrs["index"]
+  context = None
+  for _ in range(length):
+    context = yield callee, (*carries, *index, *slices)
+    grown = [_combine(carry, context(out), intersection=False) for carry, out in zip(carries, callee.results, strict=False)]
+    if grown == carries:
+      break
+    carries = grown
+  if output < n_carry:
+    return carries[output]
+  if output < n_carry + n_ys:
+    if context is None:
+      return frozenset()
+    context = yield callee, (*carries, *index, *slices)
+    return _tile(context(callee.results[output]), callee.outputs[output].type, length)
+  if output == n_carry + n_ys:
+    return None
+  j = output - n_carry - n_ys - 1
+  return _tile(carries[j], callee.inputs[j].type, length)
 
 
 def _cached(node: Expr) -> Support:

@@ -1,5 +1,6 @@
 """Check lowering-rule registration at the compiler boundary."""
 
+import numpy as np
 import pytest
 
 from scaly.ir.expr import ExprOp
@@ -33,13 +34,12 @@ def test_non_float64_leaves_refused(dtype, side) -> None:
     ctx.lower_function(fn)
 
 
-def test_non_float64_callee_leaf_refused() -> None:
+def test_non_float64_callee_leaves_are_typed_parameters() -> None:
   from scaly.function.concrete import ConcreteFunction
   from scaly.ir.expr import Expr
 
   x = Expr.sym("x", ())
   z = Expr.sym("z", (), dtype="int64")
-  child = ConcreteFunction._from_exprs("typed_child", [z], [Expr.const(1.0)], ["z"], ["y"])
-  fn = ConcreteFunction._from_exprs("typed_parent", [x], [child(Expr.const(1, dtype="int64")) + x], ["x"], ["y"])
-  with pytest.raises(ctx.LoweringError, match="typed_child.*input.*int64.*float64"):
-    ctx.lower_function(fn)
+  child = ConcreteFunction._from_exprs("typed_child", [z], [z > 2], ["z"], ["y"])
+  fn = ConcreteFunction._from_exprs("typed_parent", [x], [child(Expr.const(3, dtype="int64")).cast("float64") + x], ["x"], ["y"])
+  assert fn(np.array(1.0)) == 2.0

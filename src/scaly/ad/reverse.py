@@ -139,6 +139,8 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
     return _call_vjp(expr, cot, active, pullback=vjp)
   if expr.op == ExprOp.EXTERN:
     raise NotImplementedError(f"active derivative through extern {expr.attrs['callee'].name!r} needs sc.custom_derivative on a wrapping Function")
+  if expr.op == ExprOp.LOOP:
+    raise NotImplementedError("derivatives through scan and while_loop are not implemented yet")
   if expr.op == ExprOp.SOLVER_CALL:
     if cot.op == ExprOp.CONST and cot.value is not None and not np.any(cot.value):
       return tuple(zeros_like(arg) for arg in args)

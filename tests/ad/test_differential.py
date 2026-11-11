@@ -414,8 +414,9 @@ def test_baked_seeds_differences_and_duality(evaluated):
 def test_every_expr_op_is_accounted_for():
   assert set(UNARY) | {ExprOp.FLOOR, ExprOp.CEIL} | WITHOUT_TANGENT & COMMON_ELEMENTWISE_UNARY == COMMON_ELEMENTWISE_UNARY
   assert set(BINARY) | {ExprOp.MINIMUM, ExprOp.MAXIMUM} | WITHOUT_TANGENT & COMMON_ELEMENTWISE_BINARY == COMMON_ELEMENTWISE_BINARY
-  # STOP_GRADIENT has a held-fixed reference, covered by test_stop_gradient rather than finite differences.
-  assert {case.op for case in CASES} | set(REFUSED) | WITHOUT_TANGENT | {ExprOp.EXTERN, ExprOp.SOLVER_CALL, ExprOp.STOP_GRADIENT} == set(ExprOp)
+  # STOP_GRADIENT has a held-fixed reference, covered by test_stop_gradient rather than finite differences. LOOP refuses
+  # derivatives, tested in tests/function/test_loop.py.
+  assert {case.op for case in CASES} | set(REFUSED) | WITHOUT_TANGENT | {ExprOp.EXTERN, ExprOp.SOLVER_CALL, ExprOp.STOP_GRADIENT, ExprOp.LOOP} == set(ExprOp)
 
 
 @pytest.mark.parametrize(

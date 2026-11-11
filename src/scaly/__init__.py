@@ -2,7 +2,7 @@
 
 from .codegen.abi import C_API_SIGNATURE, c_api_signature
 from .ad import jvp, jvp_many, vjp
-from .function.sugar import vmap, broadcast, window
+from .function.sugar import vmap, broadcast, window, scan, while_loop
 from .function.api import (
   adjoint,
   custom_derivative,
@@ -163,6 +163,8 @@ __all__ = [
   "vmap",
   "broadcast",
   "window",
+  "scan",
+  "while_loop",
   "maximum",
   "minimum",
   "problem",

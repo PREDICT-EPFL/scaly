@@ -1,4 +1,4 @@
-"""Typed mapped callables, argument markers, affine views, and the internal VMAP builder."""
+"""Typed mapped callables, carried loops, argument markers, affine views, and the internal VMAP and LOOP builders."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import numpy as np
 from scipy import sparse
 
 from ..ir.expr import Expr, ExprOp, as_expr, common_lowering, stop_gradient, pack, values
+from ..ir.expr_spec import loop_result_type
 from ..ir.layout import bind_sparse
 from ..ir.types import SparsityPattern, TensorType
 from .model import Function, _Derived, _traced, as_concrete
@@ -46,11 +47,13 @@ def _mapped_call(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr
   )
 
 
-def _mapped_output(callee: ConcreteFunction, length: int, specs: Any, output: int) -> Expr:
-  result = _mapped_call(callee, length, specs, output)
-  out = callee.outputs[output]
+def _stacked(result: Expr, out: Expr, length: int) -> Expr:
   shape = (length, *out.shape)
   return result.reshape(shape) if out.type.pattern is None else pack(result.reshape((length, *out.type.storage_shape)), out.type.pattern, shape=shape)
+
+
+def _mapped_output(callee: ConcreteFunction, length: int, specs: Any, output: int) -> Expr:
+  return _stacked(_mapped_call(callee, length, specs, output), callee.outputs[output], length)
 
 
 @dataclass(frozen=True)
@@ -134,112 +137,117 @@ def _view_window(value: Expr, length: int, width: int, *, repeated: bool = False
   return value if len(value.shape) == 1 else value.vec(), 0, 0 if repeated else width
 
 
+def _map_arguments(source: Function, length: int, name: str, args: tuple[Any, ...]) -> tuple[ConcreteFunction, list[Any], list[tuple[int, int]], Any]:
+  """Bind ``source`` to per-iteration slices of ``args`` and return each slice's flat outer, start and stride."""
+  actuals = []
+  layouts = []
+  canonical_inputs: dict[int, np.ndarray] = {}
+
+  def resolve(tree: Tree | None, value: Any) -> Any:
+    if isinstance(tree, _G) or (tree is None and isinstance(value, tuple)):
+      parts = tree.parts if isinstance(tree, _G) else (None,) * len(value)
+      if not isinstance(value, tuple) or len(value) != len(parts):
+        raise ValueError(f"{name}: arguments do not match the declared parameter trees")
+      return tuple(resolve(part, item) for part, item in zip(parts, value, strict=True))
+    decl = None if tree is None else tree.decls[0]
+    marker = value if isinstance(value, (_Broadcast, _Window)) else None
+    value = marker.value if marker is not None else value
+    if tree is None and not isinstance(value, (Expr, np.ndarray)) and not sparse.issparse(value):
+      raise TypeError("bare mapped function leaves must be Expr, ndarray or SciPy sparse")
+    is_expr = isinstance(value, Expr)
+    actual: Any = value if is_expr or sparse.issparse(value) else np.asarray(value)
+    if tree is None and (sparse.issparse(actual) or is_expr and actual.type.pattern is not None):
+      decl = _PatternHole(shape_hole=True)
+    repeated = isinstance(marker, _Broadcast)
+    canonical = None
+    if isinstance(decl, _PatternHole):
+      if isinstance(marker, _Window):
+        raise TypeError("window cannot bind a pattern hole; instantiate the callee first")
+      pattern, canonical = bind_sparse(actual) if sparse.issparse(actual) else (actual.type.pattern if is_expr else None, None)
+      if decl.shape_hole and pattern is None:
+        decl = None
+      else:
+        shape = (
+          actual.shape[1:]
+          if decl.shape_hole and not repeated and len(actual.shape) > 2 and actual.shape[0] == length
+          else actual.shape
+          if decl.shape_hole
+          else decl.shape
+        )
+        decl = TensorType(shape, decl.dtype, decl.diff, pattern)
+      if canonical is not None:
+        canonical_inputs[len(actuals)] = canonical
+        actual = cast(Any, canonical)
+    pattern = None if decl is None else decl.pattern
+    if isinstance(marker, _Window):
+      if decl is None:
+        raise TypeError("window needs a declared slice shape; instantiate the callee or use a leading-axis view")
+      if len(actual.shape) != 1:
+        raise ValueError("window needs a rank-1 outer tensor")
+      shape, start, stride = decl.shape, marker.start, marker.stride
+    else:
+      actual_size = actual.type.storage_size if is_expr else actual.size
+      if repeated:
+        shape = decl.shape if decl is not None and pattern is not None and actual.shape == decl.storage_shape else actual.shape
+      elif actual.shape and actual.shape[0] == length and (decl is None or actual.shape[1:] == decl.shape):
+        shape = actual.shape[1:]
+      elif decl is not None and pattern is not None and actual.shape == (length, *decl.storage_shape):
+        shape = decl.shape
+      elif decl is not None and len(actual.shape) == 1 and actual_size == length * decl.storage_size:
+        shape = decl.shape
+      elif decl is not None and (actual.shape == decl.shape or actual.shape == decl.storage_shape):
+        shape, repeated = decl.shape, True
+      elif decl is not None and actual_size == decl.storage_size:
+        shape, repeated = decl.shape, True
+      else:
+        raise ValueError(f"{name}: cannot map shape {actual.shape}; use leading axis {length}, broadcast, or window")
+      width = decl.storage_size if decl is not None else int(np.prod(shape, dtype=int))
+      if is_expr:
+        if actual.type.pattern is not pattern:
+          raise ValueError(f"{name}: different stored pattern")
+        outer = values(actual) if pattern is not None else actual.reshape(shape if repeated else (length, *shape))
+        actual, start, stride = _view_window(outer, length, width, repeated=repeated)
+      else:
+        if pattern is not None and canonical is None:
+          layout = cast(_Leaf, tree).layouts[0]
+          assert layout is not None
+          actual = layout.numerical_values(actual, shape if repeated else (length, *shape))
+        actual = actual.reshape(-1)
+        start, stride = 0, 0 if repeated else width
+    if decl is not None and shape != decl.shape:
+      raise ValueError(f"{name}: expected slice shape {decl.shape}, got {shape}")
+    width = decl.storage_size if decl is not None else int(np.prod(shape, dtype=int))
+    if length > 0 and start + (length - 1) * stride + width > actual.size:
+      raise ValueError("vmap window reads past outer tensor")
+    expected_dtype = TensorType(()).dtype if decl is None else decl.dtype
+    if isinstance(actual, Expr) and actual.type.dtype != expected_dtype:
+      raise ValueError(f"{name}: expected dtype {expected_dtype}, got {actual.type.dtype}")
+    if isinstance(marker, _Window) and isinstance(actual, Expr) and pattern is not None:
+      layout = cast(_Leaf, tree).layouts[0]
+      assert layout is not None and decl is not None
+      if not np.array_equal(layout.permutation, np.arange(pattern.nnz)):
+        slots = np.arange(width).reshape(decl.storage_shape)[..., layout.inverse_permutation].reshape(-1)
+        actual = actual.gather(start + np.arange(length)[:, None] * stride + slots).vec()
+        start, stride = 0, width
+    actuals.append(actual)
+    layouts.append((start, stride))
+    return TensorType(shape, expected_dtype, True if decl is None else decl.diff, pattern)
+
+  skeleton = resolve(source.inputs, args)
+  concrete = source._bind(skeleton, name)
+  for index, canonical in canonical_inputs.items():
+    layout = concrete.input_tree.layouts[index]
+    assert layout is not None
+    actuals[index] = canonical[..., layout.permutation].reshape(-1)
+  return concrete, actuals, layouts, skeleton
+
+
 @dataclass(frozen=True, eq=False, repr=False)
 class _Mapped(_Derived):
   _length: int
 
   def _arguments(self, args: tuple[Any, ...]) -> tuple[ConcreteFunction, list[Any], list[tuple[int, int]], Any]:
-    actuals = []
-    layouts = []
-    canonical_inputs: dict[int, np.ndarray] = {}
-
-    def resolve(tree: Tree | None, value: Any) -> Any:
-      if isinstance(tree, _G) or (tree is None and isinstance(value, tuple)):
-        parts = tree.parts if isinstance(tree, _G) else (None,) * len(value)
-        if not isinstance(value, tuple) or len(value) != len(parts):
-          raise ValueError(f"{self.name}: arguments do not match the declared parameter trees")
-        return tuple(resolve(part, item) for part, item in zip(parts, value, strict=True))
-      decl = None if tree is None else tree.decls[0]
-      marker = value if isinstance(value, (_Broadcast, _Window)) else None
-      value = marker.value if marker is not None else value
-      if tree is None and not isinstance(value, (Expr, np.ndarray)) and not sparse.issparse(value):
-        raise TypeError("bare mapped function leaves must be Expr, ndarray or SciPy sparse")
-      is_expr = isinstance(value, Expr)
-      actual: Any = value if is_expr or sparse.issparse(value) else np.asarray(value)
-      if tree is None and (sparse.issparse(actual) or is_expr and actual.type.pattern is not None):
-        decl = _PatternHole(shape_hole=True)
-      repeated = isinstance(marker, _Broadcast)
-      canonical = None
-      if isinstance(decl, _PatternHole):
-        if isinstance(marker, _Window):
-          raise TypeError("window cannot bind a pattern hole; instantiate the callee first")
-        pattern, canonical = bind_sparse(actual) if sparse.issparse(actual) else (actual.type.pattern if is_expr else None, None)
-        if decl.shape_hole and pattern is None:
-          decl = None
-        else:
-          shape = (
-            actual.shape[1:]
-            if decl.shape_hole and not repeated and len(actual.shape) > 2 and actual.shape[0] == self._length
-            else actual.shape
-            if decl.shape_hole
-            else decl.shape
-          )
-          decl = TensorType(shape, decl.dtype, decl.diff, pattern)
-        if canonical is not None:
-          canonical_inputs[len(actuals)] = canonical
-          actual = cast(Any, canonical)
-      pattern = None if decl is None else decl.pattern
-      if isinstance(marker, _Window):
-        if decl is None:
-          raise TypeError("window needs a declared slice shape; instantiate the callee or use a leading-axis view")
-        if len(actual.shape) != 1:
-          raise ValueError("window needs a rank-1 outer tensor")
-        shape, start, stride = decl.shape, marker.start, marker.stride
-      else:
-        actual_size = actual.type.storage_size if is_expr else actual.size
-        if repeated:
-          shape = decl.shape if decl is not None and pattern is not None and actual.shape == decl.storage_shape else actual.shape
-        elif actual.shape and actual.shape[0] == self._length and (decl is None or actual.shape[1:] == decl.shape):
-          shape = actual.shape[1:]
-        elif decl is not None and pattern is not None and actual.shape == (self._length, *decl.storage_shape):
-          shape = decl.shape
-        elif decl is not None and len(actual.shape) == 1 and actual_size == self._length * decl.storage_size:
-          shape = decl.shape
-        elif decl is not None and (actual.shape == decl.shape or actual.shape == decl.storage_shape):
-          shape, repeated = decl.shape, True
-        elif decl is not None and actual_size == decl.storage_size:
-          shape, repeated = decl.shape, True
-        else:
-          raise ValueError(f"{self.name}: cannot map shape {actual.shape}; use leading axis {self._length}, broadcast, or window")
-        width = decl.storage_size if decl is not None else int(np.prod(shape, dtype=int))
-        if is_expr:
-          if actual.type.pattern is not pattern:
-            raise ValueError(f"{self.name}: different stored pattern")
-          outer = values(actual) if pattern is not None else actual.reshape(shape if repeated else (self._length, *shape))
-          actual, start, stride = _view_window(outer, self._length, width, repeated=repeated)
-        else:
-          if pattern is not None and canonical is None:
-            layout = cast(_Leaf, tree).layouts[0]
-            assert layout is not None
-            actual = layout.numerical_values(actual, shape if repeated else (self._length, *shape))
-          actual = actual.reshape(-1)
-          start, stride = 0, 0 if repeated else width
-      if decl is not None and shape != decl.shape:
-        raise ValueError(f"{self.name}: expected slice shape {decl.shape}, got {shape}")
-      width = decl.storage_size if decl is not None else int(np.prod(shape, dtype=int))
-      if self._length > 0 and start + (self._length - 1) * stride + width > actual.size:
-        raise ValueError("vmap window reads past outer tensor")
-      expected_dtype = TensorType(()).dtype if decl is None else decl.dtype
-      if isinstance(actual, Expr) and actual.type.dtype != expected_dtype:
-        raise ValueError(f"{self.name}: expected dtype {expected_dtype}, got {actual.type.dtype}")
-      if isinstance(marker, _Window) and isinstance(actual, Expr) and pattern is not None:
-        layout = cast(_Leaf, tree).layouts[0]
-        assert layout is not None and decl is not None
-        if not np.array_equal(layout.permutation, np.arange(pattern.nnz)):
-          slots = np.arange(width).reshape(decl.storage_shape)[..., layout.inverse_permutation].reshape(-1)
-          actual = actual.gather(start + np.arange(self._length)[:, None] * stride + slots).vec()
-          start, stride = 0, width
-      actuals.append(actual)
-      layouts.append((start, stride))
-      return TensorType(shape, expected_dtype, True if decl is None else decl.diff, pattern)
-
-    skeleton = resolve(self._source.inputs, args)
-    concrete = self._source._bind(skeleton, self.name)
-    for index, canonical in canonical_inputs.items():
-      layout = concrete.input_tree.layouts[index]
-      assert layout is not None
-      actuals[index] = canonical[..., layout.permutation].reshape(-1)
-    return concrete, actuals, layouts, skeleton
+    return _map_arguments(self._source, self._length, self.name, args)
 
   @overload
   def __call__[*Ns](self: Function[Any, tuple[*Ns], Any, Any], *args: *Ns) -> Any: ...
@@ -345,3 +353,118 @@ def vmap[SI, NI, SO, NO](callee: Function[SI, NI, SO, NO] | ConcreteFunction[SI,
     length,
   )
   return cast(Function[SI, NI, SO, NO], _traced(mapped))
+
+
+def _loop_node(callee: ConcreteFunction, cond: ConcreteFunction | None, args: tuple[Expr, ...], attrs: dict[str, Any], output: int) -> Expr:
+  """Create result ``output`` of an ``ExprOp.LOOP`` node; ``attrs`` holds every attribute but the functions and ``output``."""
+  attrs = {**attrs, "callee": callee, "cond": cond, "output": output}
+  type_ = loop_result_type(attrs, output)
+  assert type_ is not None
+  diff = type_.dtype.is_floating and any(arg.type.diff for arg in args)
+  return Expr(ExprOp.LOOP, args, replace(type_, diff=diff), attrs=attrs, lowering=common_lowering(*args) if args else "auto")
+
+
+def _whole(item: Any) -> Any:
+  """Mark every leaf of a tree to be read whole by each step."""
+  return tuple(_whole(part) for part in item) if isinstance(item, tuple) else broadcast(item)
+
+
+def _symbolic(item: Any) -> Any:
+  """Make every leaf of a tree of loop slices an expression, keeping its marker."""
+  if isinstance(item, tuple):
+    return tuple(_symbolic(part) for part in item)
+  if isinstance(item, _Broadcast):
+    return _Broadcast(_symbolic(item.value))
+  if isinstance(item, _Window):
+    return _Window(_symbolic(item.value), item.start, item.stride)
+  return item if isinstance(item, Expr) else Expr.const(item)
+
+
+def _loop(
+  body: Any, cond: Any, init: Any, xs: tuple[Any, ...], length: int, trip: Any, index: bool, reverse: bool, what: str
+) -> tuple[Any, Any, Expr]:
+  if not isinstance(body, Function | ConcreteFunction) or cond is not None and not isinstance(cond, Function | ConcreteFunction):
+    raise TypeError(f"{what} body and condition must be scaly Functions")
+  length = int(length)
+  if length < 0:
+    raise ValueError(f"{what}: {'max_iter' if cond is not None else 'length'} must be non-negative")
+  inits = init if isinstance(init, tuple) else (init,)
+  leaves = [as_expr(leaf) for leaf in _leaves(inits)]
+  step = (broadcast(Expr.const(np.int64(0))),) if index else ()
+  source = Function._from_instance(body) if isinstance(body, ConcreteFunction) else body
+  callee, actuals, layouts, _ = _map_arguments(source, length, what, (*_whole(inits), *step, *_symbolic(xs)))
+  n_carry, skip = len(leaves), len(leaves) + int(index)
+  outers = tuple(actuals[skip:])
+  trips = () if trip is None else (trip if isinstance(trip, Expr) else Expr.const(np.int64(trip)),)
+  if cond is not None:
+    cond = Function._from_instance(cond) if isinstance(cond, ConcreteFunction) else cond
+    cond = cond._bind(callee.input_tree.unflatten(callee.input_tree.types), what)
+  attrs = {
+    "n_carry": n_carry,
+    "length": length,
+    "starts": tuple(start for start, _ in layouts[skip:]),
+    "strides": tuple(stride for _, stride in layouts[skip:]),
+    "index": bool(index),
+    "reverse": bool(reverse),
+    "in_place": (),
+  }
+  args = (*leaves, *outers, *trips)
+  parts = callee.output_tree.parts if isinstance(callee.output_tree, _G) else (callee.output_tree,)
+  if sum(part.size for part in parts[: len(inits)]) != n_carry:
+    parts = (callee.output_tree,)
+  if sum(part.size for part in parts[: len(inits)]) != n_carry:
+    raise ValueError(f"{what}: the body must return its {n_carry} carry leaves first")
+  n_ys = len(callee.outputs) - n_carry
+  finals = tuple(_loop_node(callee, cond, args, attrs, i) for i in range(n_carry))
+  ys = tuple(_stacked(_loop_node(callee, cond, args, attrs, n_carry + i), callee.outputs[n_carry + i], length) for i in range(n_ys))
+  carry = _G(cast(_G, callee.input_tree).parts[: len(inits)], public=False).unflatten(finals)
+  stacked = _G(tuple(parts[len(inits) :]), public=False).unflatten(ys)
+  return carry if isinstance(init, tuple) else carry[0], stacked, _loop_node(callee, cond, args, attrs, n_carry + n_ys)
+
+
+def scan(
+  body: Any,
+  init: Any,
+  xs: tuple[Any, ...] = (),
+  *,
+  length: int,
+  trip: Any = None,
+  index: bool = False,
+  reverse: bool = False,
+  in_place: tuple[int, ...] = (),
+) -> tuple[Any, Any]:
+  """Run ``body`` for ``length`` steps, threading a carry and stacking per-step outputs.
+
+  ``body`` takes one parameter per entry of ``init`` (one carry when ``init`` is not a tuple),
+  then the step number as an int64 scalar when ``index`` is true, then one parameter per entry of
+  ``xs``. It returns the new carries first, each with its input's shape and dtype, followed by
+  any per-step outputs. Each entry of ``xs`` is sliced per step as ``vmap`` slices its arguments:
+  a leading axis of ``length``, ``broadcast`` for a value shared by every step, or ``window``.
+
+  Returns ``(carry, ys)``: the final carry, shaped like ``init``, and a tuple of the per-step
+  outputs, each with a leading axis of ``length``. ``trip``, an int64 scalar, runs only the first
+  ``min(trip, length)`` steps; the unused entries of the stacked outputs are zero. With ``reverse``
+  the steps run from the last to the first, and step ``k`` still reads slice ``k`` and writes
+  output ``k``. ``in_place`` must be empty. Differentiating through the loop raises
+  ``NotImplementedError``.
+  """
+  if in_place:
+    raise NotImplementedError("scan does not support in_place carries yet")
+  carry, ys, _ = _loop(body, None, init, tuple(xs), length, trip, index, reverse, "scan")
+  return carry, ys
+
+
+def while_loop(cond: Any, body: Any, init: Any, *, max_iter: int, params: tuple[Any, ...] = (), index: bool = False) -> tuple[Any, Expr]:
+  """Apply ``body`` to a carry while ``cond`` holds, at most ``max_iter`` times.
+
+  ``body`` and ``cond`` take the same parameters: one per entry of ``init`` (one carry when
+  ``init`` is not a tuple), then the step number as an int64 scalar when ``index`` is true, then
+  one per entry of ``params``, which every step reads whole. ``cond`` returns a bool scalar and is
+  evaluated before each step; ``body`` returns the new carries, each with its input's shape and
+  dtype. Returns ``(carry, count)``: the final carry, shaped like ``init``, and the number of
+  steps taken as an int64 scalar. Differentiating through the loop raises ``NotImplementedError``.
+  """
+  carry, ys, count = _loop(body, cond, init, _whole(tuple(params)), max_iter, None, index, False, "while_loop")
+  if ys:
+    raise ValueError("while_loop: the body must return only its carries")
+  return carry, count

@@ -268,8 +268,9 @@ Why this order:
   [#46] as a prerequisite of [#69] was considered and rejected: fusion would be written twice.
 - Control flow comes last, with the dense linear algebra and the solvers built on it, so that
   generated solvers test a finished compiler instead of being its first user. [#31] adds the loop
-  rules to [#40]'s support, [#69]'s fusion and [#71]'s lanes; those analyses are written against
-  [#27]'s plans and [#29]'s carried ranges, so this is an addition, not a redesign.
+  rules to [#40]'s support, and [#69]'s fusion and [#71]'s lanes add theirs (see [#31]); those
+  analyses are written against [#27]'s plans and [#29]'s carried ranges, so this is an addition,
+  not a redesign.
 - [#221] and [#225] joined the sparse lane on 2026-10-27, from the chain study in [#220]. Array
   lowering computes every (seed, entry) pair of a tangent. At chain M=9 that is 270,299 operations
   per stage, about 95% of them structural zeros, where a hand-built loop over the nonzero pairs
@@ -1166,10 +1167,15 @@ against NumPy loops and Python-unrolled graphs: lengths 0 and 1, exit at step 0,
 reached, a run-time trip count, index, reverse, parameters, mixed-dtype carries, nested loops, a
 loop inside a map body.
 
-`LOOP` lands after the sparse IR and the loop compiler (the 2026-10-22 order), so it also adds the
-loop rules to analyses written before it: [#40]'s support gets its fixed point over the carries,
-and [#69]'s fusion and [#71]'s lanes get their rules for loop bodies. A carried range is never
-split, widened or fused across trips; [#29] already guards today's passes, so these are additions.
+`LOOP` lands after the sparse IR (the 2026-10-22 order), so it also adds the loop rules to analyses
+written before it: [#40]'s support gets its fixed point over the carries. [#69]'s fusion and
+[#71]'s lanes get their rules for loop bodies in those items. A carried range is never split,
+widened or fused across trips; [#29] already guards today's passes, so these are additions.
+*Replaced in the compiler run, 2026-11-11: "[#69]'s fusion and [#71]'s lanes get their rules for
+loop bodies" as part of [#31], because [#31] landed before [#69] and [#71].* *Also applied by
+[#31]: a `LOOP` with a condition cannot be `reverse` (its trip count is unknown before the loop),
+and a negative `trip` counts as 0, so `T = clamp(trip, 0, length)`. Both are verifier or lowering
+rules that a later item can lift.*
 
 A scan is a `LOOP` with no condition and no `trip` operand, so its trip count is the static
 `length` and every pass can read that from the attributes. The carried range has constant bounds,
