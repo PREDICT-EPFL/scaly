@@ -36,7 +36,7 @@ import tempfile
 import sys
 import threading
 from contextlib import ExitStack
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -220,6 +220,13 @@ def _solver_directory_fingerprint(directory: Path) -> bytes:
   return h.digest()
 
 
+def _hash_parts(*parts: str) -> str:
+  h = hashlib.sha256()
+  for part in parts:
+    h.update(part.encode() + b"\0")
+  return h.hexdigest()
+
+
 def _compute_cache_key(source: str, *, fun_name: str, command: list[str], toolchain: str, solver_inputs: str = "") -> str:
   """SHA-256 over the rendered C source plus the cache-version and ABI signature.
 
@@ -230,11 +237,7 @@ def _compute_cache_key(source: str, *, fun_name: str, command: list[str], toolch
   compiler, a changed one at the same path, or another CPU misses the cache. ``solver_inputs``
   identifies the native headers and libraries used to build a solver module.
   """
-  h = hashlib.sha256()
-  for part in (_JIT_CACHE_VERSION, C_API_SIGNATURE, fun_name, source, toolchain, solver_inputs, *command):
-    h.update(part.encode())
-    h.update(b"\0")
-  return h.hexdigest()
+  return _hash_parts(_JIT_CACHE_VERSION, C_API_SIGNATURE, fun_name, source, toolchain, solver_inputs, *command)
 
 
 def _toolchain(fun: ConcreteFunction, compiler: Compiler) -> str:
@@ -271,9 +274,7 @@ def _index_key(fun: ConcreteFunction, compiler: Compiler) -> str | None:
     return None
   if any(begin(fun) is not None for begin in _RENDER_OBSERVERS):
     return None
-  graph = graph_digest(fun)
-  source = source_digest() if graph is not None else None
-  if graph is None or source is None:
+  if (graph := graph_digest(fun)) is None or (source := source_digest()) is None:
     return None
   recipe = _host_recipe(compiler.command)
   backends = solver_backends_used(fun)
@@ -284,30 +285,8 @@ def _index_key(fun: ConcreteFunction, compiler: Compiler) -> str | None:
   command = _compile_command(compiler.command, recipe, link_flags, "module.c", "module" + shared_lib_ext())
   solver_inputs = solver_inputs_fingerprint(link_flags) if backends else ""
   libc = platform.libc_ver() if recipe.vector_libm == "glibc" else ()
-  h = hashlib.sha256()
-  for part in (
-    _JIT_CACHE_VERSION,
-    C_API_SIGNATURE,
-    _scaly_version(),
-    source,
-    graph,
-    repr(recipe),
-    _toolchain(fun, compiler),
-    solver_inputs,
-    *libc,
-    *command,
-  ):
-    h.update(part.encode())
-    h.update(b"\0")
-  return h.hexdigest()
-
-
-def key_mode() -> str:
-  """``SCALY_JIT_KEY``: ``verify`` renders on every index hit, unset trusts the index."""
-  mode = env("SCALY_JIT_KEY") or "index"
-  if mode not in ("index", "verify"):
-    raise JitError(f"SCALY_JIT_KEY must be unset or 'verify', got {mode!r}")
-  return mode
+  toolchain = _toolchain(fun, compiler)
+  return _hash_parts(_JIT_CACHE_VERSION, C_API_SIGNATURE, _scaly_version(), source, graph, repr(recipe), toolchain, solver_inputs, *libc, *command)
 
 
 @dataclass(frozen=True, slots=True)
@@ -347,15 +326,8 @@ def _index_read(index: str) -> _Artifact | None:
   """The artifact the index names for ``index``, or None when it has no entry."""
   try:
     entry = json.loads(_index_path(index).read_text())
-    return _Artifact(
-      lib_path=cache_root() / entry["library"],
-      key=entry["key"],
-      flags=tuple(entry["flags"]),
-      workspace_size=entry["workspace_size"],
-      solver_library=entry["solver_library"],
-      prints=entry["prints"],
-    )
-  except (OSError, ValueError, KeyError, TypeError):
+    return _Artifact(lib_path=cache_root() / entry.pop("library"), flags=tuple(entry.pop("flags")), **entry)
+  except (OSError, ValueError, KeyError, TypeError, AttributeError):
     return None
 
 
@@ -365,14 +337,8 @@ def _index_write(index: str, artifact: _Artifact) -> None:
   root = cache_root()
   if not artifact.lib_path.is_relative_to(root):
     return
-  entry = {
-    "library": artifact.lib_path.relative_to(root).as_posix(),
-    "key": artifact.key,
-    "flags": artifact.flags,
-    "workspace_size": artifact.workspace_size,
-    "solver_library": artifact.solver_library,
-    "prints": artifact.prints,
-  }
+  entry = asdict(artifact)
+  entry["library"] = entry.pop("lib_path").relative_to(root).as_posix()
   path = _index_path(index)
   path.parent.mkdir(parents=True, exist_ok=True)
   temporary = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
@@ -398,7 +364,10 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
   compiler = find_c_compiler()
   if compiler is None:
     raise JitUnavailable("no C compiler found (set SCALY_CC or install cc)")
-  verify = key_mode() == "verify"
+  mode = env("SCALY_JIT_KEY") or "index"
+  if mode not in ("index", "verify"):
+    raise JitError(f"SCALY_JIT_KEY must be unset or 'verify', got {mode!r}")
+  verify = mode == "verify"
   index = _index_key(fun, compiler)
   indexed = None if index is None else _index_read(index)
   if indexed is not None and not verify and indexed.lib_path.exists():
@@ -408,10 +377,20 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
     module, key = _render_and_key(fun, compiler)
   except NotImplementedError as exc:
     raise JitUnavailable(f"codegen does not support function {fun.name!r}: {exc}") from exc
-  if verify and index is not None and indexed is not None:
-    rendered = (key, module.workspace_size, module.link_flags, bool(module.backends), prints(module.program))
-    if (indexed.key, indexed.workspace_size, indexed.flags, indexed.solver_library, indexed.prints) != rendered:
-      raise JitError(f"the index entry {_index_path(index)} for {fun.name!r} names a library built from other C than {fun.name!r} renders")
+  symbol = c_ident(fun.name)
+  cache_dir = cache_root() / key
+  source_path = cache_dir / f"{symbol}.c"
+  lib_path = cache_dir / f"lib{symbol}{shared_lib_ext()}"
+  artifact = _Artifact(
+    lib_path=lib_path,
+    key=key,
+    flags=module.link_flags,
+    workspace_size=module.workspace_size,
+    solver_library=bool(module.backends),
+    prints=prints(module.program),
+  )
+  if verify and index is not None and indexed is not None and replace(indexed, lib_path=lib_path) != artifact:
+    raise JitError(f"the index entry {_index_path(index)} for {fun.name!r} names a library built from other C than {fun.name!r} renders")
   with _artifact_lock:
     cached = _artifact_cache.get(key)
   if cached is not None and cached.lib_path.exists():
@@ -419,12 +398,7 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
       _index_write(index, cached)
     return cached
 
-  symbol = c_ident(fun.name)
-  cache_dir = cache_root() / key
   cache_dir.mkdir(parents=True, exist_ok=True)
-  source_path = cache_dir / f"{symbol}.c"
-  lib_path = cache_dir / f"lib{symbol}{shared_lib_ext()}"
-
   if not lib_path.exists():
     _write_cached_text(source_path, module.body)
     if sys.platform == "win32":
@@ -456,14 +430,6 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
       raise JitError(f"failed to compile {fun.name!r}: {exc.stderr or exc.stdout}") from exc
     _publish(tmp_lib, lib_path)
 
-  artifact = _Artifact(
-    lib_path=lib_path,
-    key=key,
-    flags=module.link_flags,
-    workspace_size=module.workspace_size,
-    solver_library=bool(module.backends),
-    prints=prints(module.program),
-  )
   with _artifact_lock:
     _artifact_cache[key] = artifact
   if index is not None and indexed != artifact:
