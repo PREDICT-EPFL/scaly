@@ -334,8 +334,9 @@ energy.compile()
 print(f"compile() took {1e3 * (time.perf_counter() - start):.0f} ms")
 ```
 
-On a fresh cache the first process prints 42 ms and a second process 9 ms.
-Running it again with `SCALY_CC_OPT=-O3` prints 41 ms, because the new flag
+On a fresh cache the first process prints 42 ms. A second process loads the
+library the first one built, as [What a new process reuses](#what-a-new-process-reuses)
+explains. Running it again with `SCALY_CC_OPT=-O3` prints 41 ms, because the new flag
 gives a new cache key and a new compilation. The cache root then holds one
 directory per key, each with `energy.c` and `libenergy.so`.
 
@@ -402,15 +403,39 @@ half-written library.
 
 ### What a new process reuses
 
-Nothing about tracing or rendering is cached on disk. A new process runs the
-Python body again when the decorator executes, lowers and renders the C again,
-and hashes it. Solver modules also read every readable file beneath their
-native include and library directories, once per directory per process,
-even when several solver backends use the same directories. Only the C
-compiler call is skipped when the library exists.
-That is the difference between the 42 ms and 9 ms runs above. Within a process,
-a second `Function` with the same generated source finds the artifact in an
-in-memory table and does not touch the compiler either.
+A new process runs the Python body again when the decorator executes, which
+traces the graph. It does not lower or render the graph when the cache already
+holds its library. An index under the cache root maps a second key to each
+library, computed from the traced graph instead of the rendered C. That key is
+a SHA-256 hash over:
+
+- a digest of the `Function`: its name, its input and output names, and every
+  node's operation, type, name, lowering hint, constant values and attributes,
+  with each called `Function` taken by its own digest
+- a digest of the installed source of Scaly and of its solver plugins, which
+  are the code that renders the C, with the Scaly, Python and NumPy versions
+- the cache version, the ABI signature, the host recipe, the compiler
+  fingerprint, a solver module's native file digest and the compile command, as
+  in the cache key above, and the glibc version when glibc vector math is
+  selected
+
+A process that finds an entry loads the library it names, without lowering,
+rendering or compiling. Solver modules still read every readable file beneath
+their native include and library directories, once per directory per process,
+even when several solver backends use the same directories. A miss renders the C, compiles it when the library is
+not there yet, and records the library in the index. An entry names its library
+by its path inside the cache root, so the cache can be moved, and a library
+deleted behind an entry is rendered and compiled again. Entries are written
+like the libraries, to a temporary file renamed into place.
+
+A graph the digest cannot encode has no index key and is rendered as before.
+So is a function that a [`scaly.viz`](../api/viz.md) recording watches, and a
+function this process recompiled. A process whose Scaly or plugin source files
+changed after Scaly was imported, or less than two seconds before, renders
+every graph, because the files on disk may then not be the code that runs.
+Python writing bytecode into those directories does not count as a change.
+Within a process, a second `Function` with the same generated source finds the
+artifact in an in-memory table and does not touch the compiler either.
 
 `compile()` does all of this and loads the library without evaluating. It
 opens the library with `ctypes`, resolves the entry and any `_stats`
@@ -421,7 +446,8 @@ collide with libraries already loaded by Python packages.
 
 `recompile()` drops the handle and advances a process-local counter. It does
 not compile. The next call or `compile()` uses another cache path whose key
-includes the process ID and counter. Existing directories remain available
+includes the process ID and counter. That build renders the C, and leaves the
+index entry other processes use as it was. Existing directories remain available
 to processes still building or loading the library, and existing handles stay callable.
 Scaly does not prune these files. Delete them only when no process uses the cache.
 

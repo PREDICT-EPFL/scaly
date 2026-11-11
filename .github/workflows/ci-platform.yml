@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       suite:
-        description: ci or smoke
+        description: ci, smoke or verify
         type: string
         default: ci
       environments:

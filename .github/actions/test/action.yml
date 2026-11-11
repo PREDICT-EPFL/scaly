@@ -11,7 +11,7 @@ inputs:
     description: Platform name used in artifact names and cache keys
     required: true
   suite:
-    description: ci, smoke, toolchain, python or benchmarks
+    description: ci, smoke, verify, toolchain, python or benchmarks
     default: ci
   python:
     description: Python version, or the repository default
@@ -143,6 +143,8 @@ runs:
     - name: Pytest
       if: inputs.suite != 'benchmarks' && inputs.suite != 'smoke'
       shell: bash
+      env:
+        SCALY_JIT_KEY: ${{ inputs.suite == 'verify' && 'verify' || '' }}
       run: uv run pytest -n=auto
 
     - name: Benchmark smoke

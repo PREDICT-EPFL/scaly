@@ -116,6 +116,7 @@ int solver_cache_inputs_with_options(const double** arg, double** res, int* iw, 
 '''
 render = jit._render_native
 jit._render_native = lambda fun, compiler: replace(render(fun, compiler), body=body, backends=(backend.name,))
+jit.solver_backends_used = lambda fun: (backend.name,)  # what the index key reads of a solver graph
 compiles = []
 run = jit.subprocess.run
 jit.subprocess.run = lambda command, **kwargs: (compiles.append("-fPIC" in command), run(command, **kwargs))[1]
@@ -574,7 +575,11 @@ def test_native_recipe_render_policies_separate_cache_entries(monkeypatch):
     module = jit._render_native(fun, ("unused",))
     assert module.recipe == recipe
     assert "-lmvec" in module.link_flags if vector_libm == "glibc" else "-lmvec" not in module.link_flags
-    keys.append(jit._compute_cache_key(module.body, fun_name=fun.name, command=jit._compile_command(("cc",), module, "m.c", "m.so"), toolchain=""))
+    keys.append(
+      jit._compute_cache_key(
+        module.body, fun_name=fun.name, command=jit._compile_command(("cc",), module.recipe, module.link_flags, "m.c", "m.so"), toolchain=""
+      )
+    )
   assert len(set(keys)) == 3
 
 

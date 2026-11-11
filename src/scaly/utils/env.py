@@ -9,7 +9,12 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
+
+
+LOADED_AT_NS = time.time_ns()
+"""When this process loaded scaly: a source file changed since may not be the code it runs."""
 
 
 class ToolchainError(RuntimeError):

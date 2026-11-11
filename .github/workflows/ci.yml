@@ -133,9 +133,18 @@ jobs:
       suite: smoke
       environments: '[{"platform":"linux-x86_64","runner":"ubuntu-latest"}]'
 
+  # The suite again, with every JIT index hit rendered and checked against the library it names.
+  verify:
+    needs: queue
+    if: needs.queue.outputs.tested != 'true'
+    uses: ./.github/workflows/ci-platform.yml
+    with:
+      suite: verify
+      environments: '[{"platform":"linux-x86_64","runner":"ubuntu-latest"}]'
+
   # A skipped required check counts as passed, so this runs whatever happened before it.
   ci:
-    needs: [queue, lint, docs, platforms, smoke]
+    needs: [queue, lint, docs, platforms, smoke, verify]
     if: always() && needs.queue.outputs.tested != 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -163,7 +172,7 @@ jobs:
               echo "| $platform | $native | $(step "platforms / $platform" Install) | $(step "platforms / $platform" Test) | $smoke |"
             done
             echo
-            echo "lint: $(result lint), docs: $(result docs)"
+            echo "lint: $(result lint), docs: $(result docs), JIT index verified: $(step "verify / linux-x86_64" Test)"
           } | tee -a "$GITHUB_STEP_SUMMARY"
           failed=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"$NEEDS")
           if [ -n "$failed" ]; then

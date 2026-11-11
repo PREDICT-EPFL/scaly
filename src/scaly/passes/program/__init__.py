@@ -43,6 +43,8 @@ PASS_PIPELINE: tuple[tuple[str, PassFn], ...] = (
   ("coalesce_stores", coalesce_stores),
   ("prepare_scalar", prepare_scalar_expressions),
 )
+SHIPPED_PIPELINE = PASS_PIPELINE
+"""The pipeline as scaly ships it. The JIT index holds libraries built by this one only."""
 
 
 def optimize_program(

@@ -10,6 +10,12 @@ rendering decisions of its own.
 - ``SCALY_CC_OPT`` overrides the optimization flag (default: ``-O2``). Benchmark harnesses that
   compile a baseline at ``-O3`` should set it, so both sides of a comparison get the same level.
 - ``SCALY_VECTOR_LIBM`` selects ``none`` or ``glibc``; unset uses the native recipe.
+- ``SCALY_JIT_KEY=verify`` renders a Function even when the index names its library, and raises
+  when that library was built from other C, workspace size or link flags than the render gives.
+
+A warm process finds a library without lowering: an index in the cache maps a key over the
+Function's graph (``function/digest.py``), the installed source and the toolchain to the library
+built for it. A Function the digest cannot encode is rendered to find its library.
 
 The JIT compiles for the machine it runs on, so it also passes the host CPU target and
 ``-fno-math-errno``; the distributed solver plugin wheels stay at the portable baseline.
@@ -20,7 +26,10 @@ from __future__ import annotations
 import ctypes
 import functools
 import hashlib
+import importlib.metadata
+import json
 import os
+import platform
 import shlex
 import subprocess
 import tempfile
@@ -34,18 +43,21 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from .abi import C_API_SIGNATURE, c_ident
-from .aot import CModule, render_c_module
+from .aot import _RENDER_OBSERVERS, CModule, render_c_module
 from .solver import solver_stats_symbols, solver_functions
 from ..ir.layout import DenseLayout, SparseLayout
+from ..passes import program
 from ..passes.program._common import prints
 from ..solvers.model import CSolverOption
-from ..solvers.paths import solver_paths
+from ..solvers.graph import solver_backends_used
+from ..solvers.paths import SolverLibraryError, backend_compile_flags, solver_paths
 from ..solvers.stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats
 from .toolchain import BuildRecipe, Compiler, cache_root, compiler_fingerprint, find_c_compiler, native_recipe, no_gather_flags, vector_libm_flags
 from ..utils.env import ToolchainError, env, shared_lib_ext, shared_lib_flag
 
 if TYPE_CHECKING:
   from ..function.concrete import ConcreteFunction
+from ..function.digest import graph_digest, source_digest
 from ..function.model import Function, as_concrete
 
 
@@ -132,7 +144,7 @@ def compile_flags(recipe: BuildRecipe | None = None) -> tuple[str, ...]:
   return (opt_flag(), *(HOST_CFLAGS if recipe is None else (*recipe.cpu_flags, "-fno-math-errno")))
 
 
-def _render_native(fun: ConcreteFunction, compiler: tuple[str, ...]) -> CModule:
+def _host_recipe(compiler: tuple[str, ...]) -> BuildRecipe:
   try:
     recipe = native_recipe(compiler)
   except (OSError, subprocess.CalledProcessError) as exc:
@@ -142,26 +154,31 @@ def _render_native(fun: ConcreteFunction, compiler: tuple[str, ...]) -> CModule:
     if override not in {"none", "glibc"}:
       raise ToolchainError(f"SCALY_VECTOR_LIBM must be 'none' or 'glibc', got {override!r}")
     recipe = replace(recipe, vector_libm=override)
+  return recipe
+
+
+def _render_native(fun: ConcreteFunction, compiler: tuple[str, ...]) -> CModule:
+  recipe = _host_recipe(compiler)
   return render_c_module(
     fun, cpu=recipe.cpu, lanes=recipe.lanes, dialect=recipe.dialect, vector_libm=recipe.vector_libm, reciprocal=recipe.reciprocal
   )
 
 
-def _compile_command(compiler: tuple[str, ...], module: CModule, source: str, output: str) -> list[str]:
+def _compile_command(compiler: tuple[str, ...], recipe: BuildRecipe, link_flags: tuple[str, ...], source: str, output: str) -> list[str]:
   # Link libraries (-l in link_flags) MUST come after the source: ld defaults to --as-needed on
   # Linux, so a -lpiqpc/-lipopt placed before the object that references it is dropped (no
   # DT_NEEDED -> "undefined symbol" at dlopen of solver functions).
   exports = (Path(source).with_suffix(".def").as_posix(),) if sys.platform == "win32" else ()
   return [
     *compiler,
-    *compile_flags(module.recipe),
+    *compile_flags(recipe),
     *no_gather_flags(compiler),
-    *vector_libm_flags(compiler, module.recipe.vector_libm),
+    *vector_libm_flags(compiler, recipe.vector_libm),
     "-fPIC",
     shared_lib_flag(),
     source,
     *exports,
-    *module.link_flags,
+    *link_flags,
     "-lm",
     "-o",
     output,
@@ -220,18 +237,77 @@ def _compute_cache_key(source: str, *, fun_name: str, command: list[str], toolch
   return h.hexdigest()
 
 
-def _render_and_key(fun: ConcreteFunction, compiler: Compiler) -> tuple[CModule, str]:
-  """Render ``fun`` for the host and derive its cache key, which hashes exactly the text handed to the compiler."""
-  module = _render_native(fun, compiler.command)
+def _toolchain(fun: ConcreteFunction, compiler: Compiler) -> str:
   try:
     toolchain = compiler_fingerprint(compiler.command)
   except (OSError, subprocess.CalledProcessError) as exc:
     raise JitError(f"failed to identify C compiler {shlex.join(compiler.command)!r}: {exc}") from exc
   if epoch := _cache_epochs.get(fun.name, 0):
     toolchain += f":{os.getpid()}:{epoch}"
-  command = _compile_command(compiler.command, module, "module.c", "module" + shared_lib_ext())
+  return toolchain
+
+
+def _render_and_key(fun: ConcreteFunction, compiler: Compiler) -> tuple[CModule, str]:
+  """Render ``fun`` for the host and derive its cache key, which hashes exactly the text handed to the compiler."""
+  module = _render_native(fun, compiler.command)
+  command = _compile_command(compiler.command, module.recipe, module.link_flags, "module.c", "module" + shared_lib_ext())
   solver_inputs = solver_inputs_fingerprint(module.link_flags) if module.backends else ""
-  return module, _compute_cache_key(module.body, fun_name=fun.name, command=command, toolchain=toolchain, solver_inputs=solver_inputs)
+  return module, _compute_cache_key(module.body, fun_name=fun.name, command=command, toolchain=_toolchain(fun, compiler), solver_inputs=solver_inputs)
+
+
+@functools.cache
+def _scaly_version() -> str:
+  return importlib.metadata.version("scaly")
+
+
+def _index_key(fun: ConcreteFunction, compiler: Compiler) -> str | None:
+  """The key of ``fun``'s index entry, from everything rendering and compiling read, without lowering.
+
+  None when there is none to trust: the digest cannot encode the graph, the source on disk may not
+  be the code this process runs, a render observer watches ``fun``, or this process
+  invalidated ``fun`` and builds it apart from the entry other processes use. A pass put in the
+  pipeline is code the source digest does not see."""
+  if _cache_epochs.get(fun.name, 0) or program.PASS_PIPELINE is not program.SHIPPED_PIPELINE:
+    return None
+  if any(begin(fun) is not None for begin in _RENDER_OBSERVERS):
+    return None
+  graph = graph_digest(fun)
+  source = source_digest() if graph is not None else None
+  if graph is None or source is None:
+    return None
+  recipe = _host_recipe(compiler.command)
+  backends = solver_backends_used(fun)
+  try:
+    link_flags = (*backend_compile_flags(backends), *recipe.link_flags)
+  except SolverLibraryError:
+    return None  # rendering says what is missing
+  command = _compile_command(compiler.command, recipe, link_flags, "module.c", "module" + shared_lib_ext())
+  solver_inputs = solver_inputs_fingerprint(link_flags) if backends else ""
+  libc = platform.libc_ver() if recipe.vector_libm == "glibc" else ()
+  h = hashlib.sha256()
+  for part in (
+    _JIT_CACHE_VERSION,
+    C_API_SIGNATURE,
+    _scaly_version(),
+    source,
+    graph,
+    repr(recipe),
+    _toolchain(fun, compiler),
+    solver_inputs,
+    *libc,
+    *command,
+  ):
+    h.update(part.encode())
+    h.update(b"\0")
+  return h.hexdigest()
+
+
+def key_mode() -> str:
+  """``SCALY_JIT_KEY``: ``verify`` renders on every index hit, unset trusts the index."""
+  mode = env("SCALY_JIT_KEY") or "index"
+  if mode not in ("index", "verify"):
+    raise JitError(f"SCALY_JIT_KEY must be unset or 'verify', got {mode!r}")
+  return mode
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,6 +339,47 @@ def _publish(temporary: Path, path: Path) -> None:
     temporary.unlink()
 
 
+def _index_path(index: str) -> Path:
+  return cache_root() / "index" / f"{index}.json"
+
+
+def _index_read(index: str) -> _Artifact | None:
+  """The artifact the index names for ``index``, or None when it has no entry."""
+  try:
+    entry = json.loads(_index_path(index).read_text())
+    return _Artifact(
+      lib_path=cache_root() / entry["library"],
+      key=entry["key"],
+      flags=tuple(entry["flags"]),
+      workspace_size=entry["workspace_size"],
+      solver_library=entry["solver_library"],
+      prints=entry["prints"],
+    )
+  except (OSError, ValueError, KeyError, TypeError):
+    return None
+
+
+def _index_write(index: str, artifact: _Artifact) -> None:
+  """Record ``artifact`` under ``index``, its library by its path inside the cache so the cache can move.
+  A library this process built under another cache root is not recorded in this one."""
+  root = cache_root()
+  if not artifact.lib_path.is_relative_to(root):
+    return
+  entry = {
+    "library": artifact.lib_path.relative_to(root).as_posix(),
+    "key": artifact.key,
+    "flags": artifact.flags,
+    "workspace_size": artifact.workspace_size,
+    "solver_library": artifact.solver_library,
+    "prints": artifact.prints,
+  }
+  path = _index_path(index)
+  path.parent.mkdir(parents=True, exist_ok=True)
+  temporary = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
+  temporary.write_text(json.dumps(entry))
+  _publish(temporary, path)
+
+
 def _write_cached_text(path: Path, text: str) -> None:
   if path.exists():
     return
@@ -281,14 +398,25 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
   compiler = find_c_compiler()
   if compiler is None:
     raise JitUnavailable("no C compiler found (set SCALY_CC or install cc)")
+  verify = key_mode() == "verify"
+  index = _index_key(fun, compiler)
+  indexed = None if index is None else _index_read(index)
+  if indexed is not None and not verify and indexed.lib_path.exists():
+    return indexed
 
   try:
     module, key = _render_and_key(fun, compiler)
   except NotImplementedError as exc:
     raise JitUnavailable(f"codegen does not support function {fun.name!r}: {exc}") from exc
+  if verify and index is not None and indexed is not None:
+    rendered = (key, module.workspace_size, module.link_flags, bool(module.backends), prints(module.program))
+    if (indexed.key, indexed.workspace_size, indexed.flags, indexed.solver_library, indexed.prints) != rendered:
+      raise JitError(f"the index entry {_index_path(index)} for {fun.name!r} names a library built from other C than {fun.name!r} renders")
   with _artifact_lock:
     cached = _artifact_cache.get(key)
   if cached is not None and cached.lib_path.exists():
+    if index is not None and indexed != cached:
+      _index_write(index, cached)
     return cached
 
   symbol = c_ident(fun.name)
@@ -317,7 +445,7 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
     # directory longer than 260 characters.
     try:
       subprocess.run(
-        _compile_command(compiler.command, module, source_path.as_posix(), tmp_lib.as_posix()),
+        _compile_command(compiler.command, module.recipe, module.link_flags, source_path.as_posix(), tmp_lib.as_posix()),
         cwd=tempfile.gettempdir(),
         check=True,
         capture_output=True,
@@ -338,6 +466,8 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
   )
   with _artifact_lock:
     _artifact_cache[key] = artifact
+  if index is not None and indexed != artifact:
+    _index_write(index, artifact)
   return artifact
 
 
