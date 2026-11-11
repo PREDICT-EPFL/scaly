@@ -1,10 +1,14 @@
-# Sparsity
+# Sparse derivatives
 
 Sparse derivative functions evaluate a compact vector of potentially nonzero
 entries, accompanied by a fixed matrix pattern. This is useful for multistage
 optimal control models, where each dynamics constraint depends on only a small
 part of the decision vector. The pattern comes from symbolic dependencies, not
 from numerical values observed during evaluation.
+
+Matrices whose type declares the entries they store, such as a constant built
+from a SciPy sparse array, are a separate feature described in
+[Sparse matrices](sparse_matrices.md).
 
 ## Structural and numerical zeros
 
@@ -259,12 +263,13 @@ grows. Evaluation work, stored values, and the
 that horizon. [Scalability results](../benchmarks/scalability.md) measure these
 costs separately.
 
-## No sparse arithmetic
+## Sparse derivatives as matrices
 
-Compact derivatives and sparse solver matrices do not provide general sparse
-arithmetic inside an `Expr` graph. A `SparseJacobian` holds a pattern and an
-expression for its values. It does not support matrix multiplication directly.
-Converting it with `to_dense()` creates a dense matrix expression:
+A `SparseJacobian` holds a pattern and an expression for its values in the
+pattern's order. It is not a [sparse matrix](sparse_matrices.md) and does not
+support matrix multiplication directly. `to_dense()` creates a dense matrix
+expression, and `sc.pack` creates a sparse matrix from the values and the
+pattern:
 
 ```python
 def chain(x: sc.Expr) -> sc.Expr:
@@ -275,25 +280,22 @@ def via_matrix(x: sc.Expr, v: sc.Expr) -> sc.Expr:
     return sc.sparse_jacobian(chain(x), x).to_dense() @ v
 
 @sc.function(sc.arg("x", 6), sc.arg("v", 6), outputs=sc.arg("jv"))
+def via_sparse_matrix(x: sc.Expr, v: sc.Expr) -> sc.Expr:
+    jac = sc.sparse_jacobian(chain(x), x)
+    return sc.pack(jac.values, jac.sparsity) @ v
+
+@sc.function(sc.arg("x", 6), sc.arg("v", 6), outputs=sc.arg("jv"))
 def via_product(x: sc.Expr, v: sc.Expr) -> sc.Expr:
     return sc.jvp(chain(x), x, v)
 
 data = (np.linspace(0.1, 0.6, 6), np.arange(1.0, 7.0))
 np.testing.assert_allclose(via_matrix(*data), via_product(*data))
+np.testing.assert_allclose(via_sparse_matrix(*data), via_product(*data))
 ```
 
-Both compute \(J(x)v\). The second requests a Jacobian-vector product directly,
-without constructing the matrix. The
+All three compute \(J(x)v\). The first multiplies a dense matrix, the second
+multiplies only the stored entries, and the third requests a Jacobian-vector
+product directly, without constructing the matrix. The
 [sparse JVP example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/sparse_jvp.py)
-exports both versions for comparison. Compiler simplification can remove some
-intermediates, but `to_dense() @ v` is not a sparse matrix multiplication API.
-
-!!! warning "Sparse constants"
-
-    `sc.const` does not accept SciPy sparse matrices. A sparse matrix accepted
-    by a numerical solver call cannot automatically be embedded in a symbolic
-    call. The [fixed-matrix control example](solvers.md#fixed-sparse-matrices-without-sparse-constants)
-    shows how to express such a problem without sparse constants.
-
-Scaly has no general sparse arithmetic. Sparse derivative construction and the
-solver interfaces still support complete optimal control workflows, including the [benchmark problems](../benchmarks/index.md).
+exports the first and the last for comparison. Compiler simplification can
+remove some intermediates, but `to_dense() @ v` is a dense product.

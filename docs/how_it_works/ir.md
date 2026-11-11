@@ -94,9 +94,9 @@ The flag is metadata. Whether a derivative exists is decided by the
 differentiation rules, and differentiating through `floor`, `ceil`, `minimum` or
 `maximum` raises `NotImplementedError`.
 
-Expression types are dense. A sparse derivative is a one-dimensional `Expr` of nonzero values, and
-its pattern lives on the owning `Function` in `output_sparsities`, as the
-[sparsity guide](../guide/sparsity.md) shows.
+A [sparse matrix](../guide/sparse_matrices.md) also carries its stored pattern in its type. A sparse
+derivative is instead a one-dimensional `Expr` of nonzero values, and its pattern lives on the
+owning `Function` in `output_sparsities`, as the [sparse derivatives guide](../guide/sparsity.md) shows.
 
 ### Operations
 

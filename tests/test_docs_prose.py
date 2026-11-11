@@ -1,5 +1,6 @@
-"""Check punctuation in published user prose."""
+"""Check punctuation in published user prose, and run the examples of the guide pages listed in ``RUNNABLE``."""
 
+import builtins
 from pathlib import Path
 import re
 
@@ -11,6 +12,7 @@ PAGES = [
   ROOT / "docs/index.md",
   *sorted(path for directory in ("guide", "how_it_works", "benchmarks") for path in (ROOT / "docs" / directory).rglob("*.md")),
 ]
+RUNNABLE = [ROOT / "docs/guide/sparse_matrices.md"]
 
 
 def prose_violations(source: str) -> list[tuple[int, str]]:
@@ -56,3 +58,17 @@ def test_published_prose(path: Path) -> None:
   relative = path.relative_to(ROOT).as_posix()
   violations = [f"{relative}:{line}: {kind}: end the sentence or use a comma" for line, kind in prose_violations(path.read_text(encoding="utf-8"))]
   assert not violations, "\n".join(violations)
+
+
+@pytest.mark.parametrize("path", RUNNABLE, ids=lambda path: path.relative_to(ROOT).as_posix())
+def test_guide_examples_run(path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.chdir(tmp_path)
+  namespace: dict[str, object] = {}
+  for code in re.findall(r"^```python\n(.*?)^```", path.read_text(encoding="utf-8"), re.MULTILINE | re.DOTALL):
+    # A fence ending in "# SomeError: message" shows a failure: it must raise exactly that.
+    error = re.search(r"^# (\w+Error): (.*)\Z", code.rstrip(), re.MULTILINE)
+    if error is None:
+      exec(code, namespace)
+      continue
+    with pytest.raises(getattr(builtins, error[1]), match=f"^{re.escape(error[2])}$"):
+      exec(code, namespace)
