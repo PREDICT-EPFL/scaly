@@ -489,7 +489,9 @@ def test_inner_mapped_masks_accumulate_shared_and_overlapping_inputs(stride: int
   np.testing.assert_allclose(hess, np.diag(second), rtol=1e-14)
 
 
-@pytest.mark.parametrize("operation", ["mul", "div", "neg", "cast", "reshape", "sum", "other_branch", "merged", "nested_active"])
+@pytest.mark.parametrize(
+  "operation", ["mul", "div", "neg", "cast", "reshape", "sum", "other_branch", "merged", "nested_active", "broadcast", "stack", "concat"]
+)
 def test_forward_mask_survives_operations_before_a_singular_partial(operation: str) -> None:
   @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("t"), sc.arg("g")), name=f"sd_forward_mask_{operation}")
   def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
@@ -510,6 +512,12 @@ def test_forward_mask_survives_operations_before_a_singular_partial(operation: s
       y = sc.where(x <= 0.0, 0.0, x).sqrt().sum()
     elif operation == "nested_active":
       y = sc.where(x > 0.0, sc.where(x > 1.0, x, 0.0), sc.where(x < -1.0, -x, 0.0)).sqrt().sum()
+    elif operation == "broadcast":
+      y = (selected + np.zeros((2, 2))).sqrt().sum() / 2.0
+    elif operation == "stack":
+      y = sc.stack([selected, selected]).sqrt().sum() / 2.0
+    elif operation == "concat":
+      y = sc.concat([selected, selected]).sqrt().sum() / 2.0
     else:
       y = (selected + sc.where(x > 1.0, x, 0.0)).sqrt().sum()
     return sc.jvp(y, x, sc.const(np.ones(2))), sc.gradient(y, x)

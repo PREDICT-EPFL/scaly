@@ -412,13 +412,16 @@ def _seed_axis(expr: Expr, output: Expr | None = None) -> Expr:
 
 def _broadcast_tangent(tangent: Expr, operand: Expr, output: Expr, nseed: int) -> Expr:
   missing = len(output.shape) - len(operand.shape)
-  if missing and tangent.type.pattern is not None:
-    return pack(
-      values(tangent).reshape((nseed, *(1,) * missing, *operand.type.storage_shape)),
-      tangent.type.pattern,
-      shape=(nseed, *(1,) * missing, *operand.shape),
-    )
-  return tangent if missing == 0 else tangent.reshape((nseed, *(1,) * missing, *operand.shape))
+  if not missing:
+    return tangent
+
+  def reshape(t: Expr) -> tuple[Expr]:
+    compact = values(t).reshape((nseed, *(1,) * missing, *operand.type.storage_shape))
+    return (compact if t.type.pattern is None else pack(compact, t.type.pattern, shape=(nseed, *(1,) * missing, *operand.shape)),)
+
+  (result,) = carry_mask(tangent, reshape)
+  assert result is not None
+  return result
 
 
 def _unbroadcast(cot: Expr, in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> Expr:

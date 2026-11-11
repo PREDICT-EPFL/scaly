@@ -6,11 +6,28 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _uniform, callees_of, concat, from_dense, gather, matmul, pack, scatter, stack, to_dense, values
+from ..ir.expr import (
+  Expr,
+  ExprOp,
+  _full_like,
+  _uniform,
+  callees_of,
+  concat,
+  from_dense,
+  gather,
+  matmul,
+  pack,
+  scatter,
+  stack,
+  to_dense,
+  values,
+  where,
+  zeros_like,
+)
 from ..ir.types import TensorType, stored_indices
 from ..passes.expr import simplify_cse_fixpoint
 from .calls import _call_jvp_many, _cond_jvp_many, _is_zero_const, _vmap_jvp_many, read_args
-from .rules import ELEMENTWISE, Mask, _masked, carry_mask, reduction_partial, times_partial, tangent as _elementwise_tangent
+from .rules import ELEMENTWISE, Mask, _masked, carry_mask, cotangent_mask, reduction_partial, times_partial, tangent as _elementwise_tangent
 from .sparsity import _check_wrt, _prunable_support
 
 
@@ -120,6 +137,10 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
           assert tangent is not None
         else:
           tangent = _pushforward_rule(expr, d, nseed, callee)
+          if expr.op in {ExprOp.STACK, ExprOp.CONCAT} and any(cotangent_mask(t) is not None for t in d):
+            weights = [zeros_like(t) if _is_zero_const(t) else _masked(t, lambda inner: _full_like(1, inner)) for t in d]
+            activity = _pushforward_rule(expr, weights, nseed, callee)
+            tangent = where(activity > 0, tangent, zeros_like(tangent))
         if expr.op in {
           ExprOp.REDUCE,
           ExprOp.RESHAPE,
