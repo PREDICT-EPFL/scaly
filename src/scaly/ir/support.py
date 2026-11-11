@@ -211,10 +211,6 @@ def _cached(node: Expr) -> Support:
   return node._support_cache[0]
 
 
-def _entries(mask: np.ndarray) -> frozenset[int] | _SupportSet:
-  return _make_support(np.flatnonzero(mask))
-
-
 def _broadcast_support(node: Expr, shape: tuple[int, ...], support: Support) -> Support:
   if support is None or node.shape == shape:
     return support
@@ -252,7 +248,7 @@ def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> 
     assert node.value is not None
     if (value := _uniform_value(node.value)) is not None:
       return frozenset() if value == 0 else _make_support(np.arange(node.size)) if node.size <= 1024 else None
-    return _entries(node.value != 0)
+    return _make_support(np.flatnonzero(node.value != 0))
   if op == "preserve":
     return support_of(node.args[0])
   if op == "union":
@@ -279,10 +275,9 @@ def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> 
   if op == "sum":
     return frozenset() if support_of(node.args[0]) == frozenset() else frozenset({0})
   if op in {"transpose", "slice", "gather"}:
-    if support_of(node.args[0]) is None:
-      return None
     support = support_of(node.args[0])
-    assert support is not None
+    if support is None:
+      return None
     entries = support_indices(support)
     if op == "transpose":
       entries = transpose_entries(entries, node.args[0].shape, node.attrs["axes"])

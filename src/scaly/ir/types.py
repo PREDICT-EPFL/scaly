@@ -249,10 +249,10 @@ _PATTERN_LOCK = Lock()
 
 @dataclass(frozen=True, slots=True, weakref_slot=True, eq=False, init=False)
 class CanonicalPattern:
-  """Immutable stored coordinates, interned by content and compared by identity.
+  """The stored coordinates of a sparse matrix, in row-major order.
 
-  Coordinates have row-major order. The digest describes the shape and coordinates and is
-  computed once per interned instance. Physical buffer order belongs to lowering.
+  Equal coordinates give the same object, so ``is`` compares two patterns. Build one with
+  ``SparsityPattern.canonicalize``. The digest identifies the shape and coordinates.
   """
 
   shape: tuple[int, int]
@@ -277,10 +277,6 @@ class CanonicalPattern:
   @property
   def nnz(self) -> int:
     return len(self.rows)
-
-  def to_mask(self) -> np.ndarray:
-    """Return a Boolean matrix of the stored coordinates."""
-    return SparsityPattern(self.shape, self.rows, self.cols).to_mask()
 
   def union(self, other: CanonicalPattern) -> CanonicalPattern:
     """Return the coordinates stored in either pattern."""

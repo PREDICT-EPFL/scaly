@@ -395,11 +395,15 @@ def group(*parts: Tree[Any, Any]) -> Tree[Any, Any]:
   return _G(parts)
 
 
-def flat_tree(names: tuple[str, ...], types: tuple[LeafDecl, ...], *, layouts: tuple[LeafLayout, ...] | None = None) -> Tree[Any, Any]:
-  """Build the private flat tree used by dynamic ``Function.factory`` results."""
+def _flat_leaves(names: tuple[str, ...], types: tuple[LeafDecl, ...], layouts: tuple[LeafLayout, ...] | None) -> tuple[Tree[Any, Any], ...]:
   if len(names) != len(types):
     raise ValueError(f"expected {len(types)} names, got {len(names)}")
-  leaves = tuple(arg(name, type_, layout=layout) for name, type_, layout in zip(names, types, layouts or (None,) * len(types), strict=True))
+  return tuple(arg(name, type_, layout=layout) for name, type_, layout in zip(names, types, layouts or (None,) * len(types), strict=True))
+
+
+def flat_tree(names: tuple[str, ...], types: tuple[LeafDecl, ...], *, layouts: tuple[LeafLayout, ...] | None = None) -> Tree[Any, Any]:
+  """Build the private flat tree used by dynamic ``Function.factory`` results."""
+  leaves = _flat_leaves(names, types, layouts)
   return leaves[0] if len(leaves) == 1 else _G(leaves, public=False)
 
 
@@ -430,8 +434,4 @@ def append_parameter(params: Tree[Any, Any], tree: Tree[Any, Any], /) -> _G:
 
 def flat_parameters(names: tuple[str, ...], types: tuple[TensorType, ...], *, layouts: tuple[LeafLayout, ...] | None = None) -> _G:
   """Build a parameter list with one tensor per parameter."""
-  if len(names) != len(types):
-    raise ValueError(f"expected {len(types)} names, got {len(names)}")
-  return parameter_list(
-    tuple(arg(name, type_, layout=layout) for name, type_, layout in zip(names, types, layouts or (None,) * len(types), strict=True))
-  )
+  return parameter_list(_flat_leaves(names, types, layouts))
