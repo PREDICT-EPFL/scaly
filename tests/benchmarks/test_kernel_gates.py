@@ -50,3 +50,13 @@ def test_npmpc_lagrangian_hessian_source_is_independent_of_horizon_and_width(tmp
   assert large["source_lines"] < 1.2 * small["source_lines"]
   assert small["nnz"] < large["nnz"], "the Hessian pattern must grow with the horizon even though its source does not"
   assert wide["source_lines"] < 1.2 * small["source_lines"]
+
+
+def test_chain_hessian_workspace_reads_its_transposed_blocks_in_place(tmp_path: Path) -> None:
+  # The stacked stage Hessians are scattered into the dense assembly through a transpose; read in
+  # place, that transpose holds no copy (109,944 doubles before #69, 66,744 after).
+  assert int(_build(tmp_path, "chain", 5)["w_size"]) < 100_000
+
+
+def test_race_cars_lagrangian_hessian_needs_no_workspace(tmp_path: Path) -> None:
+  assert int(_build(tmp_path, "race_cars", 5)["w_size"]) == 0
