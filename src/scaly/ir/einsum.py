@@ -27,7 +27,7 @@ def einsum(spec: str, *operands: Any) -> Expr:
     raise ValueError("einsum spec has multiple output arrows")
   terms = parts[0].split(",")
   xs = [as_expr(x) for x in operands]
-  if not xs or len(terms) != len(xs):
+  if len(terms) != len(xs):
     raise ValueError("einsum operand count does not match subscripts")
 
   def parse(term: str) -> list[str]:
@@ -49,7 +49,7 @@ def einsum(spec: str, *operands: Any) -> Expr:
     output = [v for c in output for v in (ell if c == "@" else [c])]
     if len(set(output)) != len(output) or any(c not in counts and c not in ell for c in output):
       raise ValueError("einsum output labels must be unique and present in inputs")
-    if ell and not all(c in output for c in ell):
+    if not all(c in output for c in ell):
       raise ValueError("einsum output must retain ellipsis axes")
   else:
     output = ell + sorted(c for c, n in counts.items() if n == 1)

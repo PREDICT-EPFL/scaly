@@ -298,7 +298,9 @@ def _movement_entries(op: ExprOp | str, types: tuple[TensorType, ...], shape: tu
   offset = 0
   for i, type_ in enumerate(types):
     entries = stored_indices(type_)
-    if op == ExprOp.TRANSPOSE:
+    if op == ExprOp.REDUCE:
+      entries = reduce_entries(entries, type_.shape, attrs["axes"])
+    elif op == ExprOp.TRANSPOSE:
       entries = transpose_entries(entries, type_.shape, attrs["axes"])
     elif op == ExprOp.SLICE:
       entries, _ = slice_entries(entries, type_.shape, attrs["index"])
@@ -335,15 +337,11 @@ def stored_pattern(
       return None
     if all(axis < types[0].ndim - 2 for axis in attrs["axes"]) and all(types[0].shape[axis] for axis in attrs["axes"]):
       return types[0].pattern
-    entries = reduce_entries(stored_indices(types[0]), types[0].shape, attrs["axes"])
-    width = shape[-2] * shape[-1]
-    local = np.unique(entries % width) if width else np.empty(0, dtype=np.int64)
-    return CanonicalPattern((shape[-2], shape[-1]), tuple(map(int, local // shape[-1])), tuple(map(int, local % shape[-1])))
   if op == ExprOp.RESHAPE and shape == types[0].shape:
     return types[0].pattern
   if op == ExprOp.TRANSPOSE and attrs is not None and attrs["axes"] == tuple(range(types[0].ndim)):
     return types[0].pattern
-  if op in (ExprOp.RESHAPE, ExprOp.TRANSPOSE, ExprOp.SLICE, ExprOp.GATHER, ExprOp.SCATTER, ExprOp.STACK, ExprOp.CONCAT):
+  if op in (ExprOp.REDUCE, ExprOp.RESHAPE, ExprOp.TRANSPOSE, ExprOp.SLICE, ExprOp.GATHER, ExprOp.SCATTER, ExprOp.STACK, ExprOp.CONCAT):
     if len(shape) < 2:
       return None
     entries = _movement_entries(op, types, shape, attrs or {})
@@ -1289,8 +1287,6 @@ def matmul(x: Expr, y: Expr) -> Expr:
 
 
 def _reduce(x: Expr, kind: str, axis: int | tuple[int, ...] | None = None) -> Expr:
-  if kind not in {"add", "max", "min"}:
-    raise ValueError(f"unknown reduction kind {kind!r}")
   if axis is not None and not isinstance(axis, int | np.integer | tuple):
     raise TypeError("reduction axis must be an integer or a tuple of integers")
   axes = tuple(range(len(x.shape))) if axis is None else (axis,) if isinstance(axis, int | np.integer) else axis
