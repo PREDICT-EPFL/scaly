@@ -10,7 +10,7 @@ and `~/.scaly-suite/RULES.md` govern validation and merging. #369 owns sparse-sp
 - [x] Prove region and mask gates fail under perturbation. Keep dense C snapshots byte-identical.
 - [x] Run pre-merge through the detached suite runner and commit the candidate.
 - [x] Push once and open a draft on #367: PR #406.
-- [ ] Obtain cross-review, address findings and confirm any fixes.
+- [x] Obtain cross-review, address findings and confirm any fixes.
 - [ ] After #367 merges, rebase only this task's commits onto main, retarget, rerun the full suite,
       push once and queue once when green. Report the guide correction to #382's owner.
 
@@ -44,6 +44,7 @@ passed 195 tests. The final full pre-merge rerun passed, with 3,908 tests, 55 sk
 smoke and docs build clean. Log: `/tmp/scaly-359-review-premerge.log`, exit zero. A separate
 100,000-square constant-condition case with six stored entries lowered values, gradient,
 Jacobian and sparse Hessian under a 4 GB memory limit, with at most 36 private entries.
-Ask both reviewers for short delta checks on fixes only.
-Do not push the rebase separately. The guide examples in #382 must account for a dense zero branch
+Both short delta checks approved the fixes. Sol ran 38 focused cases and Opus ran 186; no findings
+remain open. Push the combined notes-only rebase and all fixes once, retaining the draft base on
+#367 until it merges. The guide examples in #382 must account for a dense zero branch
 giving a full pattern, and sparse predicates still requiring an explicit packed values predicate.
