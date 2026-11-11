@@ -83,7 +83,7 @@ def test_factory_specs_are_frozen_and_hessian_names_are_doubled() -> None:
 
 
 def test_forward_convenience_api_matches_factory() -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"))
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", 2))
   def f(x):
     return sc.stack([x[0] * x[1], x[0].sin()])
 

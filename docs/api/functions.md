@@ -55,6 +55,8 @@ name, and an input name.
 ::: scaly.function.api.jacobian
 
 ::: scaly.function.api.gradient
+    options:
+      show_overloads: false
 
 ::: scaly.function.api.hessian
 
@@ -63,8 +65,12 @@ name, and an input name.
 ::: scaly.function.api.sparse_hessian
 
 ::: scaly.function.api.forward
+    options:
+      show_overloads: false
 
 ::: scaly.function.api.adjoint
+    options:
+      show_overloads: false
 
 ::: scaly.function.api.lagrangian_hessian
 

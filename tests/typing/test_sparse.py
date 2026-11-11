@@ -1,6 +1,6 @@
 """Static sparse numerical declarations, inferred results, calls and maps."""
 
-from typing import TYPE_CHECKING, assert_type
+from typing import TYPE_CHECKING, Any, assert_type
 
 import numpy as np
 from scipy import sparse
@@ -169,3 +169,102 @@ if TYPE_CHECKING:
   needs_dense(hole_concrete(matrix))  # ty: ignore[invalid-argument-type]
   needs_dense(sc.vmap(hole, 2)(sc.broadcast(matrix)))  # ty: ignore[invalid-argument-type]
   needs_dense(nested_holes(matrix)[1][0])  # ty: ignore[invalid-argument-type]
+
+
+if TYPE_CHECKING:
+
+  @sc.function(diagonal_input, outputs=sc.arg("cost", ()))
+  def sparse_cost(x: sc.Expr) -> sc.Expr:
+    return (x * x).sum()
+
+  grad = sc.gradient(sparse_cost)
+  fwd = sc.forward(hole)
+  adj = sc.adjoint(hole)
+  assert_type(grad, sc.Function[tuple[sc.Expr], tuple[NumericalArray], sc.Expr, NumericalArray])
+  assert_type(fwd, sc.Function[tuple[sc.Expr, sc.Expr], tuple[NumericalArray, NumericalArray], sc.Expr, NumericalArray])
+  assert_type(adj, sc.Function[tuple[sc.Expr, sc.Expr], tuple[NumericalArray, NumericalArray], sc.Expr, NumericalArray])
+  assert_type(grad(matrix), NumericalArray)
+  assert_type(fwd(matrix, matrix), NumericalArray)
+  assert_type(adj(matrix, matrix), NumericalArray)
+  assert_type(grad.numerical_call(matrix), NumericalArray)
+  assert_type(fwd.numerical_call(matrix, matrix), NumericalArray)
+  assert_type(adj.numerical_call(matrix, matrix), NumericalArray)
+  assert_type(grad(expr), sc.Expr)
+  assert_type(fwd.symbolic_call(expr, expr), sc.Expr)
+  assert_type(adj(expr, expr), sc.Expr)
+  assert_type(grad.instantiate(), ConcreteFunction[tuple[sc.Expr], tuple[NumericalArray], sc.Expr, NumericalArray])
+  assert_type(grad.instantiate()(matrix), NumericalArray)
+  assert_type(fwd.instantiate().numerical_call(matrix, matrix), NumericalArray)
+  assert_type(adj.instantiate()(matrix, matrix), NumericalArray)
+  assert_type(sc.gradient(sparse_cost.instantiate())(matrix), NumericalArray)
+  assert_type(sc.forward(hole_concrete)(matrix, matrix), NumericalArray)
+  assert_type(sc.adjoint(hole_concrete)(matrix, matrix), NumericalArray)
+  assert_type(sc.forward(none_hole)(matrix, matrix), NumericalArray)
+  assert_type(sc.adjoint(inferred_diagonal)(matrix, matrix), NumericalArray)
+  assert_type(sc.vmap(grad, 2)(sc.broadcast(matrix)), NumericalArray)
+  assert_type(sc.vmap(fwd, 2)(sc.broadcast(matrix), sc.broadcast(matrix)), NumericalArray)
+  assert_type(sc.vmap(adj.instantiate(), 2).numerical_call(sc.broadcast(matrix), sc.broadcast(matrix)), NumericalArray)
+  assert_type(sc.vmap(sc.vmap(grad, 2), 3)(sc.broadcast(matrix)), NumericalArray)
+  needs_dense(grad(matrix))  # ty: ignore[invalid-argument-type]
+  needs_dense(fwd(matrix, matrix))  # ty: ignore[invalid-argument-type]
+  needs_dense(adj(matrix, matrix))  # ty: ignore[invalid-argument-type]
+  needs_dense(sc.vmap(grad, 2)(sc.broadcast(matrix)))  # ty: ignore[invalid-argument-type]
+  needs_dense(fwd.instantiate()(matrix, matrix))  # ty: ignore[invalid-argument-type]
+  fwd.numerical_call(expr, matrix)  # ty: ignore[invalid-argument-type]
+  adj.symbolic_call(expr, matrix)  # ty: ignore[invalid-argument-type]
+  grad(matrix, matrix)  # ty: ignore[no-matching-overload]
+
+  packed_fwd = sc.forward(sparse_from_dense)
+  packed_adj = sc.adjoint(sparse_from_dense)
+  assert_type(packed_fwd, sc.Function[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray], sc.Expr, NumericalArray])
+  assert_type(packed_adj, sc.Function[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, NumericalArray], sc.Expr, np.ndarray])
+  assert_type(packed_fwd(np.ones(2), np.ones(2)), NumericalArray)
+  assert_type(packed_fwd.instantiate()(np.ones(2), np.ones(2)), NumericalArray)
+  assert_type(sc.vmap(packed_fwd, 2)(np.ones((2, 2)), np.ones((2, 2))), NumericalArray)
+  assert_type(packed_adj(np.ones(2), matrix), np.ndarray)
+  needs_dense(packed_fwd(np.ones(2), np.ones(2)))  # ty: ignore[invalid-argument-type]
+
+  @sc.function(sc.group(diagonal_input, sc.group(sc.arg("scale", ()))), outputs=sc.arg("cost", ()))
+  def mixed_cost(inputs: tuple[sc.Expr, tuple[sc.Expr]]) -> sc.Expr:
+    x, (scale,) = inputs
+    return (x * x).sum() * scale
+
+  mixed = (matrix, (np.ones(()),))
+  mixed_grad = sc.gradient(mixed_cost, wrt="x")
+  assert_type(mixed_grad(mixed), NumericalArray)
+  assert_type(mixed_grad.instantiate().numerical_call(mixed), NumericalArray)
+  assert_type(sc.vmap(mixed_grad, 2)((sc.broadcast(matrix), (np.ones(2),))), NumericalArray)
+  assert_type(sc.forward(mixed_cost, wrt="x")(mixed, matrix), np.ndarray)
+  assert_type(sc.adjoint(mixed_cost, wrt="x")(mixed, np.ones(())), NumericalArray)
+  assert_type(sc.gradient(mixed_cost, wrt="scale")(mixed), NumericalArray)
+  assert_type(sc.forward(nested_holes, of="other")(matrix, matrix), NumericalArray)
+  assert_type(sc.adjoint(nested_holes, of="other")(matrix, matrix), NumericalArray)
+  needs_dense(mixed_grad(mixed))  # ty: ignore[invalid-argument-type]
+
+  assert_type(sc.jacobian(hole)(matrix), np.ndarray)
+  assert_type(sc.hessian(sparse_cost)(matrix), np.ndarray)
+  assert_type(sc.sparse_jacobian(hole)(matrix), np.ndarray)
+  assert_type(sc.sparse_hessian(sparse_cost)(matrix), np.ndarray)
+  assert_type(sc.lagrangian_hessian(hole)(matrix, matrix), np.ndarray)
+  assert_type(sc.sparse_lagrangian_hessian(hole)(matrix, matrix), np.ndarray)
+
+
+if TYPE_CHECKING:
+
+  @sc.function()
+  def bare_cost(x: sc.Expr) -> sc.Expr:
+    return (x * x).sum()
+
+  @sc.function(sc.arg("x", 2))
+  def packed_pair(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    return sc.pack(x, diagonal), x
+
+  # Any trees can still select a dense overload; #381 owns preserving their uncertainty.
+  assert_type(bare_cost, sc.Function[tuple[sc.Expr], Any, sc.Expr, Any])
+  assert_type(sc.gradient(bare_cost), sc.Function[tuple[sc.Expr], Any, sc.Expr, np.ndarray])
+  assert_type(sc.gradient(bare_cost)(matrix), np.ndarray)
+  assert_type(packed_pair, sc.Function[tuple[sc.Expr], tuple[np.ndarray], tuple[sc.Expr, sc.Expr], Any])
+  assert_type(sc.forward(packed_pair, of="out0")(np.ones(2), np.ones(2)), np.ndarray)
+  assert_type(sc.forward(packed_pair.instantiate(), of="out0").numerical_call(np.ones(2), np.ones(2)), np.ndarray)
+  assert_type(sc.vmap(sc.forward(packed_pair, of="out0"), 2)(np.ones((2, 2)), np.ones((2, 2))), np.ndarray)
+  assert_type(sc.adjoint(packed_pair, of="out0"), sc.Function[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray], sc.Expr, np.ndarray])

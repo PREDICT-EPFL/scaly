@@ -111,7 +111,9 @@ def test_dense_layout_with_pattern_holes_in_factories_maps_and_adjoints(sparse_o
   for evaluate in (fun, factory):
     np.testing.assert_allclose(evaluate(x, s), expected)
   seed = x + 2
-  np.testing.assert_allclose(sc.adjoint(fun, of="y", wrt="x")(x, s, seed), np.cos(x + s.toarray()) * seed)
+  result = sc.adjoint(fun, of="y", wrt="x")(x, s, seed)
+  assert isinstance(result, np.ndarray)
+  np.testing.assert_allclose(result, np.cos(x + s.toarray()) * seed)
   adjoint = fun.factory("mixed_layout_adj_factory", ["x", "s", "lam:y"], [sc.factory.Adj("y", "x")])
   np.testing.assert_allclose(adjoint(x, s, seed), np.cos(x + s.toarray()) * seed)
   batch = np.stack([x, x + 1])
