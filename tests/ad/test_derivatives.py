@@ -509,7 +509,6 @@ def test_ad_skips_nonsmooth_parameter_terms_independent_of_wrt() -> None:
   np.testing.assert_allclose(gradv, 2 * xv)
 
 
-
 @pytest.mark.parametrize("shapes", SHAPES)
 @pytest.mark.parametrize("nseed", [1, 3])
 def test_batched_matmul_derivatives(shapes, nseed):

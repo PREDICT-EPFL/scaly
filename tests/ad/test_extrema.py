@@ -228,3 +228,24 @@ def test_outer_where_mask_survives_extremum_reduction(kind, sparse):
   t, g = map(np.asarray, f(np.zeros(2), np.array(-1.0)))
   np.testing.assert_equal(t, 0)
   np.testing.assert_equal(g, np.zeros(2))
+
+
+@pytest.mark.parametrize("kind", ["max", "min"])
+def test_outer_sparse_where_mask_survives_leading_axis_extremum(kind):
+  pattern = CanonicalPattern((2, 3), (0, 1), (0, 2))
+  build = sc.reduce_max if kind == "max" else sc.reduce_min
+
+  @sc.function(sc.arg("x", (2, 2)), sc.arg("p", (2, 1)), outputs=sc.group(sc.arg("t"), sc.arg("g")))
+  def f(x, p):
+    source = sc.pack(x, pattern, shape=(2, 2, 3))
+    y = build(source.sqrt(), 0)
+    cost = sc.where(p > 0, y, 0).sum()
+    return sc.jvp(cost, x, sc.const(np.ones(x.shape))), sc.gradient(cost, x)
+
+  tangent, gradient = map(np.asarray, f(np.zeros((2, 2)), -np.ones((2, 1))))
+  np.testing.assert_equal(tangent, 0)
+  np.testing.assert_equal(gradient, np.zeros((2, 2)))
+  tangent, gradient = map(np.asarray, f(np.array([[0.0, 4.0], [0.0, 9.0]]), np.array([[-1.0], [1.0]])))
+  expected = [[0, 0], [0, 1 / 6]] if kind == "max" else [[0, 1 / 4], [0, 0]]
+  np.testing.assert_allclose(gradient, expected)
+  np.testing.assert_allclose(tangent, np.sum(expected))

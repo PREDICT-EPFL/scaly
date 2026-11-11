@@ -2302,6 +2302,8 @@ tests/ad/test_extrema.py::test_exact_partials[<lambda>3]
 tests/ad/test_extrema.py::test_exact_partials[<lambda>4]
 tests/ad/test_extrema.py::test_nonzero_ties_in_composed_extrema
 tests/ad/test_extrema.py::test_norms_nan_and_zero
+tests/ad/test_extrema.py::test_outer_sparse_where_mask_survives_leading_axis_extremum[max]
+tests/ad/test_extrema.py::test_outer_sparse_where_mask_survives_leading_axis_extremum[min]
 tests/ad/test_extrema.py::test_outer_where_mask_survives_extremum_reduction[False-max]
 tests/ad/test_extrema.py::test_outer_where_mask_survives_extremum_reduction[False-min]
 tests/ad/test_extrema.py::test_outer_where_mask_survives_extremum_reduction[True-max]
