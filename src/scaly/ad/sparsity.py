@@ -24,6 +24,7 @@ from ..ir.support import (
   support_indices,
   project_entries,
   specialize_support,
+  _constant_condition,
 )
 from ..ir.types import SparsityPattern, TensorType, broadcast_shape, stored_indices
 
@@ -270,8 +271,16 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_a
     ym = _broadcast_mask(_jac_mask(y, wrt, memo), y.shape, expr.shape, xs, memo.support_of(xs) if xs is not None else None)
     return _or(xm, ym)
   if expr.op in COMMON_ELEMENTWISE_TERNARY:
-    _, x, y = expr.args
-    return _or(_broadcast_mask(_jac_mask(x, wrt, memo), x.shape, expr.shape), _broadcast_mask(_jac_mask(y, wrt, memo), y.shape, expr.shape))
+    condition, x, y = expr.args
+    masks = []
+    for branch, arg in ((True, x), (False, y)):
+      mask = _broadcast_mask(_jac_mask(arg, wrt, memo), arg.shape, expr.shape)
+      chosen = _constant_condition(condition, mask.row, expr.shape)
+      if chosen is not None:
+        keep = chosen == branch
+        mask = _incidence(mask.shape, mask.row[keep], mask.col[keep])
+      masks.append(mask)
+    return _or(*masks)
   if expr.op == ExprOp.REDUCE:
     child = _jac_mask(expr.args[0], wrt, memo)
     rows = reduce_entries(child.row, expr.args[0].shape, expr.attrs["axes"])

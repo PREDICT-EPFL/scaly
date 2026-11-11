@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, cast, gather, not_equal, pack, scatter, values, where
+from ..ir.expr import Expr, ExprOp, _full_like, cast, gather, not_equal, pack, scatter, values, where, zeros_like
 from ..ir.program import ProgramOp
 from ..ir.support import project_entries
 from ..ir.types import TensorType, stored_indices
@@ -57,6 +57,10 @@ class Elementwise:
 
 def _const(value: float, like: Expr) -> Expr:
   return Expr.const(value, dtype=like.type.dtype)
+
+
+def _zero(like: Expr) -> Expr:
+  return zeros_like(like) if like.type.pattern is not None else _const(0, like)
 
 
 def _sqrt_one_minus_square(e: Expr) -> Expr:
@@ -205,17 +209,24 @@ def cotangent(expr: Expr, cot: Expr, position: int) -> Expr:
     compact = _compact_elementwise(expr)
     partials = ELEMENTWISE[ExprOp(expr.op)].partials
     assert partials is not None
-    contribution = _times_partial(partials[position](compact), _sample_stored(cot, expr.type))
+    local = partials[position](compact)
+    contribution = _masked(_sample_stored(cot, expr.type), lambda t: _times_partial(local, t))
     operand = expr.args[position]
     projected = project_entries(stored_indices(expr.type), operand.shape, expr.shape)
-    if operand.type.pattern is None:
-      return scatter(contribution, projected, operand.shape)
-    entries = stored_indices(operand.type)
-    slots = np.searchsorted(entries, projected)
-    keep = slots < len(entries)
-    keep[keep] &= entries[slots[keep]] == projected[keep]
-    result = scatter(gather(contribution, np.flatnonzero(keep)), slots[keep], operand.type.storage_shape)
-    return pack(result, operand.type.pattern, shape=operand.shape)
+
+    def transpose(c: Expr) -> tuple[Expr]:
+      if operand.type.pattern is None:
+        return (scatter(c, projected, operand.shape),)
+      entries = stored_indices(operand.type)
+      slots = np.searchsorted(entries, projected)
+      keep = slots < len(entries)
+      keep[keep] &= entries[slots[keep]] == projected[keep]
+      result = scatter(gather(c, np.flatnonzero(keep)), slots[keep], operand.type.storage_shape)
+      return (pack(result, operand.type.pattern, shape=operand.shape),)
+
+    (result,) = carry_mask(contribution, transpose)
+    assert result is not None
+    return result
   partials = ELEMENTWISE[ExprOp(expr.op)].partials
   assert partials is not None
   local = partials[position](expr)
@@ -235,12 +246,18 @@ def carry_mask(cot: Expr, transpose: Callable[[Expr], tuple[Expr | None, ...]]) 
   mask = _mask_of(cot)
   if mask is None:
     return results
-  ones = Expr.const(np.ones(cot.shape, dtype=cot.type.dtype.numpy()), dtype=cot.type.dtype)
-  weights = transpose(where(mask[0], ones, _const(0, cot)))
+  ones = _full_like(1, cot) if cot.type.pattern is not None else Expr.const(np.ones(cot.shape, dtype=cot.type.dtype.numpy()), dtype=cot.type.dtype)
+  weights = transpose(_masked(cot, lambda inner: ones))
   return tuple(
-    r if r is None or w is None or r.op == ExprOp.CONST or _mask_of(r) is not None else where(not_equal(w, 0), r, _const(0, r))
+    r if r is None or w is None or r.op == ExprOp.CONST or _mask_of(r) is not None else where(_nonzero_mask(w), r, _zero(r))
     for r, w in zip(results, weights, strict=True)
   )
+
+
+def _nonzero_mask(expr: Expr) -> Expr:
+  if expr.type.pattern is not None:
+    return pack(not_equal(values(expr), 0), expr.type.pattern, shape=expr.shape)
+  return not_equal(expr, 0)
 
 
 def accumulate(total: Expr, cot: Expr) -> Expr:
@@ -249,7 +266,10 @@ def accumulate(total: Expr, cot: Expr) -> Expr:
   if a is None or b is None:
     return total + cot
   if a[0] is b[0]:
-    return where(a[0], a[1] + b[1], _const(0, total))
+    return where(a[0], a[1] + b[1], _zero(total))
+  if total.type.pattern is not None:
+    combined = pack(_sample_stored(a[0], total.type) | _sample_stored(b[0], total.type), total.type.pattern, shape=total.shape)
+    return where(combined, total + cot, zeros_like(total))
   return where(a[0] | b[0], total + cot, _const(0, total))
 
 
@@ -258,7 +278,8 @@ def _mask_of(cot: Expr) -> tuple[Expr, Expr] | None:
   if ExprOp(cot.op) != ExprOp.SELECT:
     return None
   condition, inner, other = cot.args
-  if other.op == ExprOp.CONST and other.value is not None and not np.any(other.value) and inner.shape == cot.shape:
+  zero = other.args[0] if other.op == ExprOp.PACK else other
+  if zero.op == ExprOp.CONST and zero.value is not None and not np.any(zero.value) and inner.shape == cot.shape:
     return condition, inner
   return None
 
@@ -268,7 +289,7 @@ def _masked(cot: Expr, product: Callable[[Expr], Expr]) -> Expr:
   if mask is None:
     return product(cot)
   inner = _masked(mask[1], product)
-  return where(mask[0], inner, _const(0, inner))
+  return where(mask[0], inner, _zero(inner))
 
 
 def _compact_elementwise(expr: Expr) -> Expr:
@@ -281,6 +302,12 @@ def _compact_elementwise(expr: Expr) -> Expr:
 
 
 def _sample_stored(expr: Expr, output: TensorType) -> Expr:
+  (sampled,) = carry_mask(expr, lambda e: (_sample_stored_unmasked(e, output),))
+  assert sampled is not None
+  return sampled
+
+
+def _sample_stored_unmasked(expr: Expr, output: TensorType) -> Expr:
   if expr.shape == output.shape and expr.type.pattern is output.pattern:
     return values(expr)
   logical = project_entries(stored_indices(output), expr.shape, output.shape)

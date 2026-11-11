@@ -1036,7 +1036,7 @@ skips them even where `0 * inf` would be NaN; documented and tested. The first k
 - `SUM` over stored entries.
 
 Moved max and min over stored entries to [#66] because `REDUCE` with `kind` is introduced there.
-Moved sparse `SELECT` to [#359] while its prerequisite [#30] was unmerged.
+[#359] delivered sparse `SELECT`, which moved out of this item while its prerequisite [#30] was unmerged.
 
 Each region takes one of four forms: straight-line code when small, a loop over constant tables when
 irregular, an affine loop when `LowerCtx.index_at` recovers the index (regular runs, repeated stage

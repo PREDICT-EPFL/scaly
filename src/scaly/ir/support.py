@@ -136,7 +136,7 @@ def _walk_support(roots: Sequence[Expr], rules: Mapping[ExprOp, OpInfo], context
       context[node] = _cached(node)
       continue
     info = rules[cast("ExprOp", node.op)]
-    rule = info.pattern_rule or info.support_rule
+    rule = info.support_rule or info.pattern_rule
     if not visited:
       stack.append((node, True))
       stack.extend((arg, False) for arg in reversed(node.args))
@@ -234,6 +234,24 @@ def _combine(a: Support, b: Support, *, intersection: bool) -> Support:
   return a if result == a else b if result == b else result
 
 
+def _constant_condition(condition: Expr, entries: np.ndarray, shape: tuple[int, ...]) -> np.ndarray | None:
+  """Read a constant condition only at the requested broadcast coordinates."""
+  source = condition.args[0] if condition.op == "pack" else condition
+  if source.op != "const":
+    return None
+  assert source.value is not None
+  logical = project_entries(entries, condition.shape, shape)
+  if condition.type.pattern is None:
+    return source.value.reshape(-1)[logical]
+  stored = stored_indices(condition.type)
+  slots = np.searchsorted(stored, logical)
+  keep = slots < len(stored)
+  keep[keep] &= stored[slots[keep]] == logical[keep]
+  selected = np.zeros(len(entries), dtype=bool)
+  selected[keep] = source.value.reshape(-1)[slots[keep]]
+  return selected
+
+
 def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> Support:
   if op == "pack":
     support = support_of(node.args[0])
@@ -272,7 +290,27 @@ def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> 
     return _make_support(entries[keep])
   if op == "select":
     a, b = (_broadcast_support(arg, node.shape, support_of(arg)) for arg in node.args[1:])
-    return _combine(a, b, intersection=False)
+    if a is None and b is None:
+      return None
+    condition = node.args[0]
+    if condition.op == "const":
+      assert condition.value is not None
+      if (uniform := _uniform_value(condition.value)) is not None:
+        return a if uniform else b
+    combined = _combine(a, b, intersection=False)
+    source = condition.args[0] if condition.op == "pack" else condition
+    if source.op != "const":
+      return combined
+    entries = np.arange(node.size) if combined is None else support_indices(combined)
+    chosen = _constant_condition(condition, entries, node.shape)
+    if chosen is not None:
+      return _make_support(
+        entries[
+          (chosen & (True if a is None else np.isin(entries, support_indices(a))))
+          | (~chosen & (True if b is None else np.isin(entries, support_indices(b))))
+        ]
+      )
+    return combined
   if op == "numerator":
     return _broadcast_support(node.args[0], node.shape, support_of(node.args[0]))
   if op == "reduce":

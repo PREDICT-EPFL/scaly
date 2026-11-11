@@ -23,7 +23,7 @@ import scaly as sc
 from scaly.ir.expr import Expr, ExprOp
 from scaly.ir.expr_spec import verify_expr
 from scaly.ir.spec import VerifyError
-from scaly.ir.types import TensorType, dtypes
+from scaly.ir.types import CanonicalPattern, TensorType, dtypes
 
 
 def _forge_negative_shape(expr: Expr, shape: tuple[int, ...]) -> Expr:
@@ -73,6 +73,15 @@ def test_select_and_cast_dtypes_caught() -> None:
   bad_cast = Expr(ExprOp.CAST, (x,), TensorType((3,), dtype=dtypes.bool_, diff=False))
   with pytest.raises(VerifyError, match="x != 0"):
     verify_expr(bad_cast)
+
+
+def test_dense_select_requires_a_dense_condition_in_the_ir() -> None:
+  pattern = CanonicalPattern((2, 3), (0, 1), (1, 2))
+  condition = sc.pack(sc.const(np.array([True, False])), pattern)
+  x = sc.sym("sparse_condition_dense_branch", pattern.shape)
+  with pytest.raises(ValueError, match="sparse condition with dense branches; use to_dense"):
+    Expr(ExprOp.SELECT, (condition, x, -x), x.type)
+  verify_expr(sc.where(condition, x, -x))
 
 
 def test_reshape_size_mismatch_caught() -> None:

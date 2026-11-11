@@ -10,7 +10,7 @@ from ..ir.expr import Expr, ExprOp, _uniform, gather, pack, scatter, topo, to_de
 from ..ir.support import slice_indices, support_indices
 from ..ir.types import stored_indices
 from .calls import _call_vjp, _vmap_vjp
-from .rules import ELEMENTWISE, accumulate, carry_mask, cotangent
+from .rules import ELEMENTWISE, _masked, accumulate, carry_mask, cotangent
 from .sparsity import _check_wrt, _depends_on, _prunable_support
 
 
@@ -64,7 +64,8 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
         if arg.type.pattern is not None and arg_cot.type.pattern is not arg.type.pattern:
           arg_cot = _on_pattern(arg_cot, arg)
         elif arg.type.pattern is None and arg_cot.type.pattern is not None:
-          arg_cot = to_dense(arg_cot)
+          (arg_cot,) = carry_mask(arg_cot, lambda c: (to_dense(c),))
+          assert arg_cot is not None
         adjoints[arg.id] = arg_cot if arg.id not in adjoints else accumulate(adjoints[arg.id], arg_cot)
 
   return tuple(adjoints.get(wrt.id, zeros_like(wrt)) for wrt in wrts)
@@ -72,6 +73,8 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
 
 # Structural ops whose transposes weigh each entry by 0 or 1, so a select's mask passes through them.
 _SELECTIONS = {
+  ExprOp.PACK,
+  ExprOp.VALUES,
   ExprOp.REDUCE,
   ExprOp.RESHAPE,
   ExprOp.TRANSPOSE,
@@ -144,8 +147,13 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
 
 
 def _on_pattern(value: Expr, primal: Expr) -> Expr:
-  assert primal.type.pattern is not None
-  return pack(gather(value, stored_indices(primal.type)).reshape(primal.type.storage_shape), primal.type.pattern, shape=primal.shape)
+  pattern = primal.type.pattern
+  assert pattern is not None
+  (result,) = carry_mask(
+    value, lambda c: (pack(gather(c, stored_indices(primal.type)).reshape(primal.type.storage_shape), pattern, shape=primal.shape),)
+  )
+  assert result is not None
+  return result
 
 
 def _stored_movement_vjp(expr: Expr, cot: Expr) -> Expr:
@@ -175,22 +183,28 @@ def _stored_matmul_vjp(x: Expr, y: Expr, cot: Expr, active: tuple[int, ...] | No
   sparse_cot = dense_cot = None
   if len(dense.shape) == 1:
     outer, inner = (row, col) if left else (col, row)
-    sampled = gather(cot, outer)
+    (sampled,) = carry_mask(cot, lambda c: (gather(c, outer),))
+    assert sampled is not None
     if (0 if left else 1) in active:
-      sparse_cot = pack(sampled * gather(dense, inner), pattern)
+      contribution = _masked(sampled, lambda c: c * gather(dense, inner))
+      (sparse_cot,) = carry_mask(contribution, lambda c: (pack(c, pattern),))
     if (1 if left else 0) in active:
-      dense_cot = scatter(values(src) * sampled, inner, dense.shape)
+      contribution = _masked(sampled, lambda c: values(src) * c)
+      (dense_cot,) = carry_mask(contribution, lambda c: (scatter(c, inner, dense.shape),))
   else:
     width = dense.shape[1] if left else dense.shape[0]
     axis = np.arange(width, dtype=np.int64)
     cot_indices = row[:, None] * width + axis if left else col[:, None] + axis * src.shape[1]
     dense_indices = col[:, None] * width + axis if left else row[:, None] + axis * dense.shape[1]
-    sampled = gather(cot, cot_indices.reshape(-1)).reshape((pattern.nnz, width))
+    (sampled,) = carry_mask(cot, lambda c: (gather(c, cot_indices.reshape(-1)).reshape((pattern.nnz, width)),))
+    assert sampled is not None
     if (0 if left else 1) in active:
       coefficients = gather(dense, dense_indices.reshape(-1)).reshape((pattern.nnz, width))
-      sparse_cot = pack((sampled * coefficients) @ _uniform(1, (width,), dtype=cot.type.dtype), pattern)
+      contribution = _masked(sampled, lambda c: c * coefficients)
+      (sparse_cot,) = carry_mask(contribution, lambda c: (pack(c @ _uniform(1, (width,), dtype=cot.type.dtype), pattern),))
     if (1 if left else 0) in active:
-      dense_cot = scatter((values(src).reshape((pattern.nnz, 1)) * sampled).vec(), dense_indices.reshape(-1), dense.shape)
+      contribution = _masked(sampled, lambda c: values(src).reshape((pattern.nnz, 1)) * c)
+      (dense_cot,) = carry_mask(contribution, lambda c: (scatter(c.vec(), dense_indices.reshape(-1), dense.shape),))
   return (sparse_cot, dense_cot) if left else (dense_cot, sparse_cot)
 
 
