@@ -2293,6 +2293,11 @@ tests/codegen/test_external.py::test_an_included_header_changes_library_and_jit_
 tests/codegen/test_external.py::test_aot_cli_exports_without_a_compiler_or_jit_cache[backends0]
 tests/codegen/test_external.py::test_aot_cli_exports_without_a_compiler_or_jit_cache[backends1]
 tests/codegen/test_external.py::test_changed_linked_binary_changes_key_and_linux_namespace
+tests/codegen/test_external.py::test_compatible_linker_namespaces[exhaustion]
+tests/codegen/test_external.py::test_compatible_linker_namespaces[independent]
+tests/codegen/test_external.py::test_compatible_linker_namespaces[path]
+tests/codegen/test_external.py::test_compatible_linker_namespaces[soname]
+tests/codegen/test_external.py::test_compatible_linker_namespaces[transitive]
 tests/codegen/test_external.py::test_external_and_generated_prints_survive_redirected_stdout
 tests/codegen/test_external.py::test_include_header_edit_misses_the_index_in_another_process[extra.h-index]
 tests/codegen/test_external.py::test_include_header_edit_misses_the_index_in_another_process[extra.h-verify]

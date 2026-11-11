@@ -32,6 +32,7 @@ import os
 import platform
 import shlex
 import subprocess
+import struct
 import tempfile
 import sys
 import threading
@@ -82,12 +83,79 @@ _C_DOUBLE_P = ctypes.POINTER(ctypes.c_double)
 _C_INT_P = ctypes.POINTER(ctypes.c_int)
 _LM_ID_NEWLM = -1
 _RTLD_DI_LMID = 1
-_LINKER_NAMESPACES: dict[tuple[str, ...], tuple[int, ctypes.CDLL, ctypes.c_void_p | None]] = {}
+
+
+@dataclass
+class _LinkerNamespace:
+  id: int
+  external: bool
+  libraries: list[ctypes.CDLL]
+  dependencies: dict[str, str]
+  environ: ctypes.c_void_p | None = None
+
+
+_LINKER_NAMESPACES: list[_LinkerNamespace] = []
 _LINKER_NAMESPACE_LOCK = threading.Lock()
 
 
+def _elf_identity(path: Path) -> tuple[str | None, str]:
+  data = path.read_bytes()
+  endian = "<" if data[5] == 1 else ">"
+  wide = data[4] == 2
+  header = struct.unpack_from(endian + ("16sHHIQQQIHHHHHH" if wide else "16sHHIIIIIHHHHHH"), data)
+  segments = []
+  dynamic = {}
+  for i in range(header[10]):
+    segment = struct.unpack_from(endian + ("IIQQQQQQ" if wide else "IIIIIIII"), data, header[5] + i * header[9])
+    kind = segment[0]
+    offset, address, size = (segment[2], segment[3], segment[5]) if wide else (segment[1], segment[2], segment[4])
+    if kind == 1:  # PT_LOAD translates the dynamic string table's virtual address to a file offset.
+      segments.append((offset, address, size))
+    if kind == 2:  # PT_DYNAMIC, including stripped libraries without section headers.
+      step = 16 if wide else 8
+      for pos in range(offset, offset + size, step):
+        tag, value = struct.unpack_from(endian + ("qQ" if wide else "iI"), data, pos)
+        if tag == 0:
+          break
+        dynamic[tag] = value
+  soname = None
+  if 14 in dynamic:  # DT_SONAME, relative to DT_STRTAB.
+    strings = dynamic[5]
+    offset, address, _ = next(segment for segment in segments if segment[1] <= strings < segment[1] + segment[2])
+    start = offset + strings - address + dynamic[14]
+    soname = os.fsdecode(data[start : data.index(b"\0", start)])
+  return soname, hashlib.sha256(data).hexdigest()
+
+
+def _namespace_dependencies(path: Path) -> dict[str, str]:
+  # ldd asks the platform loader to resolve the full closure without running initializers.
+  result = subprocess.run(["ldd", str(path)], capture_output=True, text=True, env={**os.environ, "LC_ALL": "C"})
+  if result.returncode and "statically linked" not in result.stdout:
+    raise OSError(f"cannot inspect dependencies of {path}: {result.stderr or result.stdout}")
+  paths = [(str(path), path)]
+  for line in result.stdout.splitlines():
+    name, _, resolved = line.strip().rpartition(" => ")
+    resolved = resolved.rsplit(" (", 1)[0].strip()
+    if resolved.startswith("/"):
+      paths.append((name or resolved, Path(resolved)))
+  dependencies = {}
+  for requested, library in paths:
+    soname, identity = _elf_identity(library.resolve())
+    for name in (requested, str(library), str(library.resolve()), *((soname,) if soname else ())):
+      if name in dependencies and dependencies[name] != identity:
+        raise OSError(f"conflicting dependencies for {name} in {path}")
+      dependencies[name] = identity
+  return dependencies
+
+
 def load_library(path: Path, *, isolated: bool, namespace: tuple[str, ...] = ()) -> ctypes.CDLL:
-  """Load a shared library, isolating incompatible Linux dependency builds from one another."""
+  """Load a shared library, isolating incompatible Linux dependency builds from one another.
+
+  External kernels reuse a namespace when all shared paths and SONAMEs have identical content,
+  including transitive dependencies. The solver namespace stays separate. Loaded handles and
+  namespaces live until process exit, so old compiled handles remain callable after a rebuild.
+  Environment changes after the last load remain subject to the limitation tracked in #159.
+  """
   if isolated and sys.platform == "win32":
     with ExitStack() as stack:
       for directory in solver_paths(required=False).lib_dirs:
@@ -103,35 +171,54 @@ def load_library(path: Path, *, isolated: bool, namespace: tuple[str, ...] = ())
   dlerror.argtypes = []
   dlerror.restype = ctypes.c_char_p
   with _LINKER_NAMESPACE_LOCK:
-    previous = _LINKER_NAMESPACES.get(namespace)
-    namespace_id, anchor, environ = previous if previous is not None else (_LM_ID_NEWLM, None, None)
+    dependencies = _namespace_dependencies(path) if namespace else {}
+    previous = next(
+      (
+        candidate
+        for candidate in _LINKER_NAMESPACES
+        if candidate.external == bool(namespace)
+        and all(name not in candidate.dependencies or candidate.dependencies[name] == identity for name, identity in dependencies.items())
+      ),
+      None,
+    )
+    namespace_id = previous.id if previous is not None else _LM_ID_NEWLM
+    environ = previous.environ if previous is not None else None
     # A namespace's libc retains the process environment array from its first load. Refresh it
     # before another initializer calls getenv, since Python may have replaced that array.
     if environ is not None:
       environ.value = ctypes.c_void_p.in_dll(libc, "environ").value
     dlerror()
-    handle = dlmopen(namespace_id, os.fsencode(path), os.RTLD_NOW | os.RTLD_LOCAL)
+    # Prefer this kernel's own dependencies over the namespace anchor's exported symbols.
+    mode = os.RTLD_NOW | os.RTLD_LOCAL | (os.RTLD_DEEPBIND if namespace else 0)
+    handle = dlmopen(namespace_id, os.fsencode(path), mode)
     if not handle:
       error = dlerror()
-      raise OSError(f"dlmopen failed for {path}: {error.decode(errors='replace') if error else 'unknown loader error'}")
+      reason = error.decode(errors="replace") if error else "unknown loader error"
+      advice = (
+        ". Use a fresh process with fewer incompatible dependency versions." if "no more namespaces" in reason or "static TLS" in reason else ""
+      )
+      raise OSError(f"dlmopen failed for {path}: {reason}{advice}")
     # Python 3.14 reopens a path even when CDLL receives a handle, so bind it directly.
     lib = ctypes.CDLL(None)
     lib._handle = handle
     lib._name = str(path)
-    if anchor is None:
+    if previous is None:
       dlinfo = libc.dlinfo
       dlinfo.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
       dlinfo.restype = ctypes.c_int
       resolved = ctypes.c_long()
       if dlinfo(handle, _RTLD_DI_LMID, ctypes.byref(resolved)) != 0:
         raise OSError(f"dlinfo failed for {path}")
-      namespace_id, anchor = resolved.value, lib
+      previous = _LinkerNamespace(resolved.value, bool(namespace), [], {})
+      _LINKER_NAMESPACES.append(previous)
     if environ is None:
       try:
         environ = ctypes.c_void_p.in_dll(lib, "environ")
       except ValueError:
         pass  # A self-contained external kernel need not link libc.
-    _LINKER_NAMESPACES[namespace] = namespace_id, anchor, environ
+    previous.libraries.append(lib)
+    previous.dependencies.update(dependencies)
+    previous.environ = environ
   return lib
 
 

@@ -75,9 +75,26 @@ over a system copy. A custom derivative attaches to a wrapping Function, and pas
 itself reports that requirement. Flatten order, NULL workspace and the current float64 boundary
 are explicit in the extern docstring.
 
-#357 owns reuse of compatible Linux linker namespaces. The operating system limits the number
-of live namespaces, so many linked-binary rebuilds in one process can exhaust them. The loader now
-reports its actual error. Source-only builds share one namespace. Both the graph index and the rendered key reuse the library build fingerprint. It hashes every
+#357 makes compatible external kernels share Linux linker namespaces. Before loading, the JIT
+uses glibc's `ldd` to resolve transitive dependencies without running initializers, and reads ELF
+shared-object names and content identities. A namespace is compatible when every common requested
+name, path and shared-object name identifies the same binary. Independent dependencies can join
+it. Conflicting versions use separate namespaces, even when their files live in different
+directories. `RTLD_DEEPBIND` makes each kernel resolve symbols through its own dependencies before
+the namespace's first kernel, whose dependencies otherwise take precedence. The solver namespace
+remains separate and keeps its existing load flags. #342 should preserve this rule when moving
+solver libraries onto externs.
+
+Loaded handles, namespace records and their accumulated dependency identities stay alive until
+process exit. Dropping a Python compiled handle does not unload its code or free a namespace.
+This preserves old callables after rebuilds and avoids reusing a namespace that still contains an
+incompatible binary. Reclamation is unnecessary for compatible-library reuse and remains outside
+this change. When incompatible live versions exhaust glibc's namespaces or static thread-local
+storage, the error includes the loader's reason and advises using a fresh process with fewer
+versions. #159 still owns environment changes after the last isolated load.
+
+The namespace choice does not enter either cache key or change the artifact/index schema.
+Both the graph index and the rendered key reuse the library build fingerprint. It hashes every
 readable file below declared include directories, preprocessed sources and resolved linked-library
 contents/versions, so changes between processes miss the index. An unchanged index hit does not
 lower the graph. The key still preprocesses each source when a graph is looked up. `_Extern` supplies the

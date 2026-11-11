@@ -2,7 +2,9 @@
 
 import ctypes
 import json
+import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 
@@ -149,6 +151,87 @@ def test_changed_linked_binary_changes_key_and_linux_namespace(isolated_cache, m
   assert first.cache_key != second.cache_key
   np.testing.assert_allclose(first.run([np.array(3.0)]), [15])
   np.testing.assert_allclose(second.run([np.array(3.0)]), [21])
+
+
+def _namespace_libraries(root, kind):
+  compiler = find_c_compiler()
+  assert compiler is not None
+  source = root / "dependency.c"
+  source.write_text(SOURCE)
+
+  def build(directory, name, scale, *, soname=None, nested=False):
+    directory.mkdir(exist_ok=True)
+    target = directory / f"lib{name}.so"
+    temporary = directory / "new.so"
+    inputs = [str(source), f"-DLOCAL_ONLY={scale}"]
+    if nested:
+      wrapper = directory / "wrapper.c"
+      wrapper.write_text(
+        "double nested_scale(void);\n"
+        "void external_double(const double* x, double* y, double* w) { y[0] = nested_scale()*x[0]; }\n"
+        "void external_triple(const double* x, double* y, double* w) { y[0] = (nested_scale()+1)*x[0]; }\n"
+      )
+      dependency = directory / "nested.c"
+      dependency.write_text(f"double nested_scale(void) {{ return {scale}; }}\n")
+      subprocess.run(
+        [*compiler.command, "-shared", "-fPIC", str(dependency), "-Wl,-soname,libnested.so", "-o", str(directory / "libnested.so")],
+        capture_output=True,
+        check=True,
+      )
+      inputs = [str(wrapper), "-L" + str(directory), "-lnested", "-Wl,-rpath," + str(directory)]
+    subprocess.run(
+      [*compiler.command, "-shared", "-fPIC", *inputs, "-Wl,-soname," + (soname or target.name), "-o", str(temporary)],
+      capture_output=True,
+      check=True,
+    )
+    temporary.replace(target)
+    os.environ["SCALY_CC"] = shlex.join((*compiler.command, "-L" + str(directory)))
+    host = library_host(sc.CLibrary(name, link=(name,)))
+    handle = get_compiled(host)
+    cached = get_compiled(host)
+    assert handle.cache_key == cached.cache_key
+    np.testing.assert_allclose(cached.run([np.array(3.0)]), [(2 * scale + 1) * 3])
+    return handle
+
+  handles = []
+  if kind != "exhaustion":
+    for i in range(24):
+      handles.append((build(root, f"independent{i}", i + 2), (2 * i + 5) * 3))
+  if kind in ("path", "soname", "transitive"):
+    for i in range(2):
+      directory = root if kind == "path" else root / f"version{i}"
+      name = f"versioned{i}" if kind == "transitive" else "versioned"
+      soname = None if kind == "transitive" else "libversioned.so"
+      handles.append((build(directory, name, i + 2, soname=soname, nested=kind == "transitive"), (2 * i + 5) * 3))
+  if kind == "exhaustion":
+    for i in range(32):
+      try:
+        handle = build(root, "versioned", i + 2)
+      except OSError as exc:
+        message = str(exc)
+        assert "dlmopen failed" in message
+        assert "no more namespaces" in message or "static TLS" in message, message
+        assert "fresh process" in message and "versions" in message, message
+        break
+      handles.append((handle, (2 * i + 5) * 3))
+    else:
+      raise AssertionError("32 incompatible live dependencies unexpectedly fit")
+  for handle, expected in reversed(handles):
+    np.testing.assert_allclose(handle.run([np.array(3.0)]), [expected])
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="glibc linker namespaces")
+@pytest.mark.parametrize("kind", ["independent", "path", "soname", "transitive", "exhaustion"])
+def test_compatible_linker_namespaces(tmp_path, kind):
+  script = "from pathlib import Path; import sys; from tests.codegen.test_external import _namespace_libraries; _namespace_libraries(Path(sys.argv[1]), sys.argv[2])"
+  result = subprocess.run(
+    [sys.executable, "-c", script, str(tmp_path), kind],
+    env={**os.environ, "SCALY_CACHE_DIR": str(tmp_path / "cache")},
+    capture_output=True,
+    text=True,
+    timeout=300,
+  )
+  assert result.returncode == 0, result.stderr
 
 
 def test_external_and_generated_prints_survive_redirected_stdout():
