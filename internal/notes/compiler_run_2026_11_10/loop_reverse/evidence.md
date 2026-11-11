@@ -51,3 +51,15 @@ This needs no relaxation of #31's ban on conditional reverse loops. No roadmap
 departure was needed. Stacked-output sparsity remains conservative. Per-step
 Jacobian compression, checked builds, in-place carries and unrolling stay outside
 this change.
+
+## Validation before review
+
+The detached `~/.scaly-suite/run` completed successfully: 4,818 passed and 56 skipped,
+benchmark smoke passed, documentation built without warnings, and the private-name
+check passed. Ruff formatting, lint and ty passed. C snapshots passed unchanged.
+The complete collection contains 4,874 tests. Focused loop/map/snapshot runs passed,
+including all 28 new reverse-loop cases.
+
+README Python fences and the function_composition, mapped_derivatives and
+function_with_print examples ran successfully. A separate finite-difference check
+of a while loop inside a map also passed, with different trip counts per entry.

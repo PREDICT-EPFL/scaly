@@ -10,6 +10,6 @@ and ~/.scaly-suite/RULES.md apply. No queue until instructed.
 - [x] Implement shared backward loop, trajectory differentiation and max_trajectory.
 - [x] Check higher derivatives, edge cases and RK4 sizes/counts/compile times.
 - [x] Publish scan/while_loop guide and API; publish cond only if merged.
-- [ ] Focused checks, byte-identical C snapshots, detached full suite.
+- [x] Focused checks, byte-identical C snapshots, detached full suite.
 - [ ] Commit, push review state, open/link stacked PR; Opus and sol review.
 - [ ] Fix findings, short delta checks, final checks and ready-to-queue report.
