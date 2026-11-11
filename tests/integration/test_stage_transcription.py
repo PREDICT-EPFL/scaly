@@ -204,13 +204,10 @@ def test_sparse_jacobian_metadata_matches_dense(horizon: int) -> None:
   spjf = fn.factory(f"bicycle_eq_spjac_N{horizon}", ["z", "p"], [sc.factory.SpJac("eq", "z")])
   jf = fn.factory(f"bicycle_eq_jac_dense_N{horizon}", ["z", "p"], [sc.factory.Jac("eq", "z")])
   zv, pv = _sample(horizon, 1)
-  sparsity = as_concrete(spjf).output_sparsities[0]
-  assert sparsity is not None
   dense, compact = jf(*(zv, pv)), spjf(*(zv, pv))
-  assert isinstance(dense, np.ndarray) and isinstance(compact, np.ndarray)
-  flat = np.asarray(sparsity.rows) * dense.shape[1] + np.asarray(sparsity.cols)
-  np.testing.assert_allclose(compact, np.ravel(dense)[flat])
-  assert sparsity.nnz < dense.size
+  assert isinstance(dense, np.ndarray) and compact.format == "csc"
+  np.testing.assert_allclose(compact.toarray(), dense)
+  assert compact.nnz < dense.size
 
 
 @pytest.mark.parametrize("horizon", [1, 2])
@@ -225,22 +222,22 @@ def test_colored_sparse_jacobian_matches_the_reference_path(horizon: int) -> Non
 
   @sc.function(_inputs_tree(horizon), outputs=sc.arg("colored"), name="bicycle_spjac_colored")
   def colored_fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    return rebound(colored.values, inputs)
+    return rebound(sc.values(colored), inputs)
 
   @sc.function(_inputs_tree(horizon), outputs=sc.arg("reference"), name="bicycle_spjac_reference")
   def reference_fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    return rebound(reference.values, inputs)
+    return rebound(sc.values(reference), inputs)
 
   @sc.function(
     _inputs_tree(horizon),
-    outputs=sc.group(sc.arg("colored", colored.values.shape), sc.arg("reference", reference.values.shape)),
+    outputs=sc.group(sc.arg("colored", sc.values(colored).shape), sc.arg("reference", sc.values(reference).shape)),
     name="bicycle_spjac_compare",
   )
   def compare(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
-    return rebound(colored.values, inputs), rebound(reference.values, inputs)
+    return rebound(sc.values(colored), inputs), rebound(sc.values(reference), inputs)
 
   zv, pv = _sample(horizon, 2)
-  assert colored.sparsity == reference.sparsity
+  assert colored.type.pattern is reference.type.pattern
   assert len(topo(as_concrete(colored_fn).outputs)) < len(topo(as_concrete(reference_fn).outputs))
   colored_values, reference_values = compare((zv, pv))
   np.testing.assert_allclose(colored_values, reference_values, rtol=1e-10, atol=1e-10)

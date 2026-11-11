@@ -185,7 +185,7 @@ def test_declared_sparse_and_derivative_metadata_coexist(lang, empty, tmp_path):
   derivative = sc.sparse_jacobian(fun, "y", "x", name="mixed_sparse")
   module = write_module(derivative, tmp_path, lang=lang)
   if not empty:
-    assert "csc_val_perm" in module.header and "csr_val_perm" in module.header
+    assert "csc_row_ind" in module.header and "val_perm" not in module.header
   assert not re.search(r"\w+\[0\] =", module.header)
   main = tmp_path / "main.cpp"
   main.write_text(f'#include "{module.header_name}"\nint main() {{ return 0; }}\n')

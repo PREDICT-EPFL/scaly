@@ -24,13 +24,13 @@ jac = sc.sparse_jacobian(stages, "residuals", "zs")
 zs = np.arange(1.0, 2 * N + 1) / 10.0
 pattern = jac.sparsity()
 assert pattern is not None
-values = jac(zs)
+matrix = jac(zs)
 print(stages(zs))
 print("Jacobian shape:", pattern.shape)
 print("Stored entries:", pattern.nnz)
-print("Row coordinates:", pattern.rows)
-print("Column coordinates:", pattern.cols)
-print("Values:", values)
+print("Column pointers:", matrix.indptr)
+print("Row indices:", matrix.indices)
+print("Values in CSC order:", matrix.data)
 
 generated = Path(__file__).parent / "generated"
 write_module(stages, generated)

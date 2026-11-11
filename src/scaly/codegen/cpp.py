@@ -5,7 +5,6 @@ does (``docs/how_it_works/generated_interface.md``)."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 
 from .abi import (
   ENTRY_C_TYPES,
@@ -26,9 +25,6 @@ from ..ir.types import DType
 from ..passes.lowering import workspace_dtype
 from ..solvers.stats import stats_c_defs
 from ..utils.names import NameScope
-
-if TYPE_CHECKING:
-  from ..ir.types import SparsityPattern
 
 BUFFER_TEMPLATE = """#ifndef SCALY_BUFFER_HPP
 #define SCALY_BUFFER_HPP
@@ -94,29 +90,7 @@ def _std_array(name: str, values: tuple[int, ...], size: str) -> str:
   return f"constexpr std::array<int, {size}> {name} = {{{', '.join(str(v) for v in values)}}};"
 
 
-def _sparse_namespace(name: str, sp: SparsityPattern, names: NameScope) -> list[str]:
-  row_ptr, col_ind, csr_perm = sp.to_csr()
-  col_ptr, row_ind, csc_perm = sp.to_csc()
-  return [
-    f"namespace {names.allocate(name + '_' if names.contains(c_ident(name)) else name)} {{",
-    f"constexpr int nrow = {sp.shape[0]};",
-    f"constexpr int ncol = {sp.shape[1]};",
-    f"constexpr int nnz = {sp.nnz};",
-    _std_array("rows", sp.rows, "nnz"),
-    _std_array("cols", sp.cols, "nnz"),
-    _std_array("csr_row_ptr", row_ptr, "nrow + 1"),
-    _std_array("csr_col_ind", col_ind, "nnz"),
-    _std_array("csr_val_perm", csr_perm, "nnz"),
-    _std_array("csc_col_ptr", col_ptr, "ncol + 1"),
-    _std_array("csc_row_ind", row_ind, "nnz"),
-    _std_array("csc_val_perm", csc_perm, "nnz"),
-    "}",
-  ]
-
-
-def render_cpp_header(
-  fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, frame_bytes: int, *, casadi: bool, sparsities: tuple[SparsityPattern | None, ...]
-) -> str:
+def render_cpp_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, frame_bytes: int, *, casadi: bool) -> str:
   """The ``.hpp`` for ``fun``. The kernel symbols are declared ``extern "C"`` inside the function's
   namespace, since a namespace and a function cannot share the global name. C linkage keeps the
   symbol unmangled, so ``f::f`` is the same entry a C caller reaches as ``f``."""
@@ -207,9 +181,6 @@ def render_cpp_header(
     header=True,
   )
   names.occupied.add(f"{symbol}_FRAME_BYTES")
-  for name, sp in zip(fun.output_names, sparsities, strict=True):
-    if sp is not None:
-      lines += ["", *_sparse_namespace(name, sp, names)]
   for ident, type_, layout in zip(
     (*inputs, *outputs), (*fun.input_tree.types, *fun.output_tree.types), (*fun.input_tree.layouts, *fun.output_tree.layouts), strict=True
   ):

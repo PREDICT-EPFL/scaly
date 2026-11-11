@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from scaly.function.model import as_concrete
 from scaly.ir.program import ProgramOp, walk_program
 from scaly.passes.lowering import lower_function
 
@@ -55,12 +54,12 @@ def test_overlapping_stage_hessian_matches_numpy_through_packed_masks(stages):
   lower_function(hess, observe=lambda name, prog: observed.__setitem__(name, prog))
   assert any(n.op == ProgramOp.BIT_SELECT for n in walk_program(observed["pass:pack_masks"])), "the assembly should take the packed path"
 
-  pattern = as_concrete(hess).output_sparsities[0]
+  pattern = hess.sparsity()
   assert pattern is not None
   rows, cols = np.asarray(pattern.rows), np.asarray(pattern.cols)
   z = np.random.default_rng(stages).uniform(-1.0, 1.0, NX * (stages + 1))
   dense = _dense_hessian(z, stages)
-  np.testing.assert_allclose(np.asarray(hess(z)), dense[rows, cols], rtol=1e-12, atol=1e-12)
+  np.testing.assert_allclose(hess(z).toarray(), dense, rtol=1e-12, atol=1e-12)
   covered = np.zeros_like(dense, dtype=bool)
   covered[rows, cols] = True
   assert not np.any(dense[~covered]), "a nonzero of the reference is missing from the pattern"

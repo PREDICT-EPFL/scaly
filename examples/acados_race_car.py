@@ -81,15 +81,13 @@ def scaly_cost(x: sc.Expr, u: sc.Expr, p: sc.Expr, stage: str) -> sc.Expr:
   return value
 
 
-def _export(path: Path, inputs: tuple[sc.Expr, ...], outputs: dict[str, sc.Expr | sc.SparseJacobian], replacements: dict[sc.Expr, sc.Expr]) -> None:
-  values = [out.values if isinstance(out, sc.SparseJacobian) else out for out in outputs.values()]
+def _export(path: Path, inputs: tuple[sc.Expr, ...], outputs: dict[str, sc.Expr], replacements: dict[sc.Expr, sc.Expr]) -> None:
   fun = ConcreteFunction.build(
     path.stem,
     sc.group(*(sc.arg(str(expr.name), expr.type) for expr in inputs)),
     inputs,
-    sc.group(*(sc.arg(name, value.type) for name, value in zip(outputs, values, strict=True))),
-    [substitute(value, replacements) for value in values],
-    output_sparsities=[out.sparsity if isinstance(out, sc.SparseJacobian) else None for out in outputs.values()],
+    sc.group(*(sc.arg(name, value.type) for name, value in outputs.items())),
+    [substitute(value, replacements) for value in outputs.values()],
   )
   assert path.is_file(), f"acados did not generate {path}"
   write_module(fun, path.parent, casadi=True)
@@ -122,10 +120,8 @@ def build_scaly_solver(
 
   ux, x, u, pi, p = sc.sym("ux", nu + nx), sc.sym("x", nx), sc.sym("u", nu), sc.sym("pi", nx), sc.sym("p", np_)
   phi = dynamics(ux[nu:], ux[:nu], p)
-  jac = sc.sparse_jacobian(phi, ux)
-  transposed = sc.SparseJacobian(sc.SparsityPattern((nu + nx, nx), jac.sparsity.cols, jac.sparsity.rows), jac.values)
   hess = sc.sparse_hessian((phi * pi).sum(), ux)
-  outputs = {"phi": phi, "jac_phi_ux": transposed, "hess_lagrangian_ux_ux": hess}
+  outputs = {"phi": phi, "jac_phi_ux": sc.sparse_jacobian(phi, ux).T, "hess_lagrangian_ux_ux": hess}
   replacements = {ux: sc.concat([u, x])}
   for suffix, count in (("", 1), ("_jac", 2), ("_jac_hess", 3)):
     inputs = (x, u, pi, p) if count == 3 else (x, u, p)
@@ -138,8 +134,8 @@ def build_scaly_solver(
       "cost": value,
       "grad_cost_ux": sc.gradient(value, ux),
       "hess_cost_ux_ux": sc.sparse_hessian(value, ux),
-      "hess_cost_z_z": sc.SparseJacobian(sc.SparsityPattern.empty((0, 0)), sc.const(np.empty(0))),
-      "hess_cost_z_ux": sc.SparseJacobian(sc.SparsityPattern.empty((0, stage_nu + nx)), sc.const(np.empty(0))),
+      "hess_cost_z_z": sc.const(np.empty(0), pattern=sc.SparsityPattern.empty((0, 0))),
+      "hess_cost_z_ux": sc.const(np.empty(0), pattern=sc.SparsityPattern.empty((0, stage_nu + nx))),
     }
     for derivative, count in (("", 1), ("_jac", 2), ("_jac_hess", 5)):
       _export(

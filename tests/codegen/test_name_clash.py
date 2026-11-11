@@ -272,7 +272,9 @@ def test_header_scope_preserves_library_and_table_names() -> None:
     assert "new__t" not in header
 
   sparse = as_concrete(sc.sparse_jacobian(fun, "log", "new"))
-  named = ConcreteFunction._from_exprs("header_sparse", sparse.inputs, sparse.outputs, sparse.input_names, ["log"], sparse.output_sparsities)
+  named = ConcreteFunction._from_exprs(
+    "header_sparse", sparse.inputs, sparse.outputs, sparse.input_names, ["log"], output_layouts=sparse.output_tree.layouts
+  )
   assert "namespace log {" in render_c_module(named, lang="cpp", lanes=1).header
 
 

@@ -34,12 +34,12 @@ def test_c_api_header_exposes_sparse_output_metadata() -> None:
   assert "#define f_spjac_spjac_y_x_NNZ 2" in header
   assert "#define f_spjac_spjac_y_x_NROW 2" in header
   assert "#define f_spjac_spjac_y_x_NCOL 3" in header
-  assert "static const int f_spjac_spjac_y_x_rows[2] = {0, 1};" in header
-  assert "static const int f_spjac_spjac_y_x_cols[2] = {0, 2};" in header
-  assert "static const int f_spjac_spjac_y_x_csr_row_ptr[3] = {0, 1, 2};" in header
-  assert "static const int f_spjac_spjac_y_x_csr_col_ind[2] = {0, 2};" in header
   assert "static const int f_spjac_spjac_y_x_csc_col_ptr[4] = {0, 1, 1, 2};" in header
   assert "static const int f_spjac_spjac_y_x_csc_row_ind[2] = {0, 1};" in header
+  assert "csr_row_ptr" not in header and "val_perm" not in header
+  csr = render_c_api_header(sc.sparse_jacobian(primal, "y", "x", name="f_spjac_csr", layout="csr"))
+  assert "static const int f_spjac_csr_spjac_y_x_csr_row_ptr[3] = {0, 1, 2};" in csr
+  assert "static const int f_spjac_csr_spjac_y_x_csr_col_ind[2] = {0, 2};" in csr
 
 
 def test_c_source_executes_scalar_subset_through_universal_abi(tmp_path) -> None:

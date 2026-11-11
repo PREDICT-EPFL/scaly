@@ -16,7 +16,7 @@ import pytest
 import scaly as sc
 from scaly.ad.forward import jvp
 from scaly.ad.reverse import vjp
-from scaly.ad.sparse import sparse_jacobian_colored
+from scaly.ad.sparse import _colored
 from scaly.ad.sparsity import jacobian_sparsity
 from scaly.function.concrete import ConcreteFunction
 from scaly.ir.expr import zeros_like
@@ -68,7 +68,7 @@ def _workload(n: int, entries: int) -> None:
   assert pattern.nnz == (entries + 19) // 20 * 10
   tangent = simplify_cse_fixpoint(jvp(matrix, x, sc.const(1.0)))
   assert tangent.shape == matrix.shape and tangent.support is not None and len(tangent.support) == entries
-  jac = sparse_jacobian_colored(matrix, x)
+  jac = _colored(matrix, x)
   assert jac.sparsity.nnz == entries and jac.coloring_width == 1
   selected = matrix[-1:, :10].sum()
   adjoint = simplify_cse_fixpoint(vjp((selected,), (x,), (sc.const(1.0),))[0])

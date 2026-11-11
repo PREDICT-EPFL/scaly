@@ -130,9 +130,8 @@ def test_maros_meszaros_kkt_and_products_without_dense_matrix_buffers(name):
       incidence = jacobian_sparsity(concrete.outputs[0], concrete.inputs[0])
       _same_pattern(incidence, expected, f"{prefix}_jac")
       derivative = sc.sparse_jacobian(values)
-      dp = derivative.sparsity()
-      assert dp is not None
-      jac = sparse.coo_array((derivative(numeric), (dp.rows, dp.cols)), shape=dp.shape).tocsc()
+      jac = derivative(numeric)
+      assert jac.format == "csc"
       numeric_values = values(numeric)
       assert isinstance(numeric_values, np.ndarray)
       for column in np.unique(np.linspace(0, len(numeric) - 1, min(len(numeric), 5), dtype=int)):

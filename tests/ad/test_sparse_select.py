@@ -189,7 +189,7 @@ def test_sparse_select_stored_bool_condition_and_hessian_without_logical_matrix_
   np.testing.assert_array_equal(grad(v, condition), expected_grad)
   hp = hess.sparsity()
   assert hp is not None
-  actual_hess = sparse.coo_array((hess(v, condition), (hp.rows, hp.cols)), shape=hp.shape).toarray()
+  actual_hess = hess(v, condition).toarray()
   np.testing.assert_array_equal(actual_hess, np.diag([-2.0, 0, 0, 0, 0, -0.25]))
   difference = finite_difference(lambda z: grad(z, condition), v)
   np.testing.assert_allclose(actual_hess, difference, atol=1e-7, rtol=1e-7)

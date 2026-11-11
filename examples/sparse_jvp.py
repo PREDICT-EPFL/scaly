@@ -14,7 +14,7 @@ def chain(x: sc.Expr) -> sc.Expr:
 
 @sc.function(sc.arg("x", N), sc.arg("v", N), outputs=sc.arg("jv"))
 def jvp_via_sparse_jac(x: sc.Expr, v: sc.Expr) -> sc.Expr:
-  return sc.sparse_jacobian(chain(x), x).to_dense() @ v
+  return sc.to_dense(sc.sparse_jacobian(chain(x), x)) @ v
 
 
 @sc.function(sc.arg("x", N), sc.arg("v", N), outputs=sc.arg("jv"))

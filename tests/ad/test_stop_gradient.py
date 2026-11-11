@@ -44,7 +44,7 @@ def test_stop_gradient_inside_calls_and_maps(mapped: bool) -> None:
   @sc.function(sc.arg("x", (3, 2)), outputs=sc.group(sc.arg("value", (3, 2)), sc.arg("jac", (6, 6)), sc.arg("sparse", (6, 6)), sc.arg("adj", (3, 2))))
   def fn(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
     out = sc.vmap(piece, 3)(x) if mapped else sc.stack([piece(x[i]) for i in range(3)])
-    return out, sc.jacobian(out, x), sc.sparse_jacobian(out, x).to_dense(), sc.vjp((out,), (x,), (sc.const(np.ones(out.shape)),))[0]
+    return out, sc.jacobian(out, x), sc.to_dense(sc.sparse_jacobian(out, x)), sc.vjp((out,), (x,), (sc.const(np.ones(out.shape)),))[0]
 
   point = np.arange(6.0).reshape(3, 2) + 0.3
   value, jac, sparse, adj = fn(point)
@@ -107,7 +107,7 @@ def test_reverse_ignores_nonsmooth_operations_of_stopped_inputs() -> None:
   def fn(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
     scale = sc.maximum(sc.stop_gradient(sc.sumsqr(x)), 1e-6)
     cost = (x / scale).sum()
-    return cost, sc.gradient(cost, x), sc.jacobian(cost, x), sc.sparse_jacobian(cost, x).to_dense()
+    return cost, sc.gradient(cost, x), sc.jacobian(cost, x), sc.to_dense(sc.sparse_jacobian(cost, x))
 
   point = np.array([0.3, 2.0])
   value, grad, jac, sparse = fn(point)
@@ -130,7 +130,7 @@ def test_reverse_ignores_nonsmooth_calls_of_stopped_inputs(mapped: bool) -> None
     frozen = sc.stop_gradient(x)
     value = sc.vmap(rounded, 2)(frozen) if mapped else sc.stack([rounded(frozen[i]) for i in range(2)])
     cost = (x * value).sum()
-    return cost, sc.gradient(cost, x), sc.jacobian(cost, x), sc.sparse_jacobian(cost, x).to_dense()
+    return cost, sc.gradient(cost, x), sc.jacobian(cost, x), sc.to_dense(sc.sparse_jacobian(cost, x))
 
   point = np.array([[0.3, 2.5], [1.7, -0.4]])
   value, grad, jac, sparse = fn(point)

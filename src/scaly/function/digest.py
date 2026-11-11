@@ -30,7 +30,7 @@ class Unkeyed(Exception):
 # The fields of a ConcreteFunction the digest reads, and the ones it leaves out: of the trees, which
 # group the flat inputs and outputs, rendering reads only the names and the sparse layouts, and the
 # memo is computed state.
-_FIELDS = ("name", "inputs", "outputs", "output_sparsities", "output_coloring_widths", "device", "descriptor", "role", "rules")
+_FIELDS = ("name", "inputs", "outputs", "output_coloring_widths", "device", "descriptor", "role", "rules")
 _NOT_READ = ("input_tree", "output_tree", "_memo")
 # What a tree holds: the digest reads the names and the layouts, while the declared types only reach
 # the generated header, which the expression types already fix, the parts only group the leaves, and

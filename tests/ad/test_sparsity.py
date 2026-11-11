@@ -12,8 +12,9 @@ from scaly.function.concrete import ConcreteFunction
 from scaly.function.sugar import _mapped_call
 import scaly as sc
 from scaly.ad import finite_difference
-from scaly.ad.sparse import Triangle
+from scaly.ad.sparse import Triangle, _colored, _sparse_hessian, _sparse_jacobian
 from scaly.ir.expr import ExprOp, topo
+from scaly.ir.types import CanonicalPattern
 from scaly.passes.expr import simplify_cse_fixpoint
 
 
@@ -278,7 +279,7 @@ def _mapped_sphess_fixture(length: int, *, shared: bool = False) -> tuple[sc.Fun
   return mapped_fn, unrolled_fn
 
 
-def _scatter_sparse(values: np.ndarray, sparsity: sc.SparsityPattern) -> np.ndarray:
+def _scatter_sparse(values: np.ndarray, sparsity: sc.SparsityPattern | CanonicalPattern) -> np.ndarray:
   dense = np.zeros(sparsity.shape)
   dense[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = values
   return dense
@@ -384,19 +385,19 @@ def test_sparse_hessian_factory_returns_compact_values_with_sparsity_metadata() 
 
   assert as_concrete(shf).output_names == ("sphess_y_x_x",)
   assert as_concrete(shf).output_coloring_widths == (2,)
-  shf_sparsity = as_concrete(shf).output_sparsities[0]
+  shf_sparsity = shf.sparsity()
   assert shf_sparsity is not None
   assert shf_sparsity.rows == (0, 1, 2)
   assert shf_sparsity.cols == (0, 2, 1)
-  np.testing.assert_allclose(shf(xv), np.array([2.0, 1.0, 1.0]))
+  np.testing.assert_allclose(shf(xv).toarray(), np.array([[2.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]]))
 
 
 @pytest.mark.parametrize("triangle", ("lower", "upper"))
 def test_sparse_hessian_triangle_matches_masked_full(triangle: Triangle) -> None:
   x = sc.sym("triangle_x", 4)
   y = (x[0] * x[1]).sin() + (x[2] * x[3]).sin()
-  full_expr = sc.sparse_hessian(y, x)
-  triangle_expr = sc.sparse_hessian(y, x, triangle=triangle)
+  full_expr = _sparse_hessian(y, x)
+  triangle_expr = _sparse_hessian(y, x, triangle=triangle)
   selected_expr = full_expr.triangle(triangle)
   full_sp, triangle_sp = full_expr.sparsity, triangle_expr.sparsity
   keep = np.asarray(full_sp.rows) >= np.asarray(full_sp.cols) if triangle == "lower" else np.asarray(full_sp.rows) <= np.asarray(full_sp.cols)
@@ -416,8 +417,8 @@ def test_sparse_hessian_triangle_matches_masked_full(triangle: Triangle) -> None
   )
   def value_fn(x):
     y = (x[0] * x[1]).sin() + (x[2] * x[3]).sin()
-    full = sc.sparse_hessian(y, x)
-    return full.values, sc.sparse_hessian(y, x, triangle=triangle).values, full.triangle(triangle).values
+    full = _sparse_hessian(y, x)
+    return full.values, _sparse_hessian(y, x, triangle=triangle).values, full.triangle(triangle).values
 
   full_values, triangle_values, selected_values = value_fn(np.array([0.2, 0.7, -0.3, 1.1]))
   np.testing.assert_allclose(triangle_values, full_values[keep], rtol=1e-10, atol=1e-10)
@@ -431,13 +432,14 @@ def test_sparse_hessian_triangle_matches_masked_full(triangle: Triangle) -> None
   triangle_fn = sc.sparse_hessian(fn, "y", "triangle_x", name=f"triangle_fn_{triangle}", triangle=triangle)
   assert as_concrete(full_fn).output_names == as_concrete(triangle_fn).output_names == ("sphess_y_triangle_x_triangle_x",)
   assert as_concrete(full_fn).output_coloring_widths == as_concrete(triangle_fn).output_coloring_widths
-  full_fn_sp, triangle_fn_sp = as_concrete(full_fn).output_sparsities[0], as_concrete(triangle_fn).output_sparsities[0]
+  full_fn_sp, triangle_fn_sp = as_concrete(full_fn).outputs[0].type.pattern, as_concrete(triangle_fn).outputs[0].type.pattern
   assert full_fn_sp is not None and triangle_fn_sp is not None
   assert triangle_fn_sp.rows == tuple(np.asarray(full_fn_sp.rows)[keep])
   assert triangle_fn_sp.cols == tuple(np.asarray(full_fn_sp.cols)[keep])
+  full_dense = full_fn(np.array([0.2, 0.7, -0.3, 1.1])).toarray()
   np.testing.assert_allclose(
-    triangle_fn(np.array([0.2, 0.7, -0.3, 1.1])),
-    np.asarray(full_fn(np.array([0.2, 0.7, -0.3, 1.1])))[keep],
+    triangle_fn(np.array([0.2, 0.7, -0.3, 1.1])).toarray(),
+    np.tril(full_dense) if triangle == "lower" else np.triu(full_dense),
     rtol=1e-10,
     atol=1e-10,
   )
@@ -453,11 +455,11 @@ def test_sparse_lagrangian_hessian_uses_aux_output() -> None:
   assert as_concrete(shf).input_names == ("x", "lam:f", "lam:g")
   assert as_concrete(shf).output_names == ("sphess_gamma_x_x",)
   assert as_concrete(shf).output_coloring_widths == (2,)
-  shf_sparsity = as_concrete(shf).output_sparsities[0]
+  shf_sparsity = as_concrete(shf).outputs[0].type.pattern
   assert shf_sparsity is not None
   assert shf_sparsity.rows == (0, 0, 1, 1)
   assert shf_sparsity.cols == (0, 1, 0, 1)
-  np.testing.assert_allclose(shf(*(np.array([2.0, 3.0]), (np.array(1.5), np.array([0.25, -0.5])))), np.array([3.0, 0.25, 0.25, -1.0]))
+  np.testing.assert_allclose(shf(*(np.array([2.0, 3.0]), (np.array(1.5), np.array([0.25, -0.5])))).toarray(), np.array([[3.0, 0.25], [0.25, -1.0]]))
 
 
 def test_sparse_lagrangian_hessian_through_vmap_matches_unrolled_dense_and_fd() -> None:
@@ -467,15 +469,15 @@ def test_sparse_lagrangian_hessian_through_vmap_matches_unrolled_dense_and_fd() 
   unrolled_hess = unrolled.factory("unrolled_hess_dense", ["z", "lam:f", "lam:g"], [sc.factory.Hess("gamma", "z")], aux={"gamma": ["f", "g"]})
   unrolled_grad = unrolled.factory("unrolled_grad_for_fd", ["z", "lam:f", "lam:g"], [sc.factory.Grad("gamma", "z")], aux={"gamma": ["f", "g"]})
 
-  mapped_sp, unrolled_sp = as_concrete(mapped_sphess).output_sparsities[0], as_concrete(unrolled_sphess).output_sparsities[0]
+  mapped_sp, unrolled_sp = as_concrete(mapped_sphess).outputs[0].type.pattern, as_concrete(unrolled_sphess).outputs[0].type.pattern
   assert mapped_sp is not None and unrolled_sp is not None
-  np.testing.assert_array_equal(mapped_sp.to_mask(), unrolled_sp.to_mask())
-  np.testing.assert_array_equal(mapped_sp.to_mask(), mapped_sp.to_mask().T)
+  assert mapped_sp is unrolled_sp
+  assert set(zip(mapped_sp.rows, mapped_sp.cols)) == set(zip(mapped_sp.cols, mapped_sp.rows))
 
   zv = np.array([-0.7, 0.2, 0.4, -0.5, 0.8, 0.3])
   lam_f, lam_g = np.array(0.6), np.array([0.3, -0.8, 1.1])
-  mapped_dense = _scatter_sparse(np.asarray(mapped_sphess(*(zv, lam_f, lam_g))), mapped_sp)
-  unrolled_dense = _scatter_sparse(np.asarray(unrolled_sphess(*(zv, lam_f, lam_g))), unrolled_sp)
+  mapped_dense = mapped_sphess(*(zv, lam_f, lam_g)).toarray()
+  unrolled_dense = unrolled_sphess(*(zv, lam_f, lam_g)).toarray()
   np.testing.assert_allclose(mapped_dense, unrolled_dense, rtol=1e-10, atol=1e-10)
   np.testing.assert_allclose(mapped_dense, unrolled_hess(*(zv, lam_f, lam_g)), rtol=1e-10, atol=1e-10)
   np.testing.assert_allclose(mapped_dense, finite_difference(lambda value: unrolled_grad(*(value, lam_f, lam_g)), zv), rtol=2e-5, atol=2e-6)
@@ -484,14 +486,14 @@ def test_sparse_lagrangian_hessian_through_vmap_matches_unrolled_dense_and_fd() 
 def test_mapped_sparse_hessian_multiplier_weighting_and_shared_fill() -> None:
   mapped, _ = _mapped_sphess_fixture(3)
   sphess = mapped.factory("mapped_sphess_weighting", ["z", "lam:f", "lam:g"], [sc.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
-  sparsity = as_concrete(sphess).output_sparsities[0]
+  sparsity = as_concrete(sphess).outputs[0].type.pattern
   assert sparsity is not None
   zv = np.array([-0.7, 0.2, 0.4, -0.5, 0.8, 0.3])
   lam_f, lam_g = np.array(0.6), np.array([0.3, -0.8, 1.1])
-  base = _scatter_sparse(np.asarray(sphess(*(zv, lam_f, lam_g))), sparsity)
+  base = sphess(*(zv, lam_f, lam_g)).toarray()
   changed_lam = lam_g.copy()
   changed_lam[1] += 0.7
-  changed = _scatter_sparse(np.asarray(sphess(*(zv, lam_f, changed_lam))), sparsity)
+  changed = sphess(*(zv, lam_f, changed_lam)).toarray()
   delta = changed - base
   np.testing.assert_allclose(delta[:2], 0.0, atol=1e-12)
   np.testing.assert_allclose(delta[4:], 0.0, atol=1e-12)
@@ -502,19 +504,19 @@ def test_mapped_sparse_hessian_multiplier_weighting_and_shared_fill() -> None:
   shared_unrolled_sphess = shared_unrolled.factory(
     "unrolled_sphess_shared_fill", ["z", "lam:f", "lam:g"], [sc.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]}
   )
-  shared_sp, shared_unrolled_sp = as_concrete(shared_sphess).output_sparsities[0], as_concrete(shared_unrolled_sphess).output_sparsities[0]
+  shared_sp, shared_unrolled_sp = as_concrete(shared_sphess).outputs[0].type.pattern, as_concrete(shared_unrolled_sphess).outputs[0].type.pattern
   assert shared_sp is not None and shared_unrolled_sp is not None
-  np.testing.assert_array_equal(shared_sp.to_mask(), shared_unrolled_sp.to_mask())
+  assert shared_sp is shared_unrolled_sp
   shared_index = 6
-  mask = shared_sp.to_mask()
+  mask = _scatter_sparse(np.ones(shared_sp.nnz), shared_sp).astype(bool)
   assert np.all(mask[shared_index, :shared_index])
   assert np.all(mask[:shared_index, shared_index])
   # Values, not just pattern: a wrong-iteration sum or wrong per-instance multiplier in the
   # stride-0 adjoint reduction would keep the same mask, so pin the numbers with nonuniform lam:g.
   zv_shared = np.array([-0.7, 0.2, 0.4, -0.5, 0.8, 0.3, 0.9])
   lam_g_shared = np.array([0.7, -1.3, 0.45])
-  shared_dense = _scatter_sparse(np.asarray(shared_sphess(*(zv_shared, lam_f, lam_g_shared))), shared_sp)
-  shared_unrolled_dense = _scatter_sparse(np.asarray(shared_unrolled_sphess(*(zv_shared, lam_f, lam_g_shared))), shared_unrolled_sp)
+  shared_dense = shared_sphess(*(zv_shared, lam_f, lam_g_shared)).toarray()
+  shared_unrolled_dense = shared_unrolled_sphess(*(zv_shared, lam_f, lam_g_shared)).toarray()
   np.testing.assert_allclose(shared_dense, shared_unrolled_dense, rtol=1e-10, atol=1e-10)
 
 
@@ -539,7 +541,7 @@ def test_sparse_lagrangian_hessian_triangle_matches_masked_full_on_shared_vmap(t
     [sc.factory.SpHess("gamma", "z", triangle=triangle)],
     aux={"gamma": ["f", "g"]},
   )
-  full_sp, triangle_sp = as_concrete(full).output_sparsities[0], as_concrete(triangle_fn).output_sparsities[0]
+  full_sp, triangle_sp = as_concrete(full).outputs[0].type.pattern, as_concrete(triangle_fn).outputs[0].type.pattern
   assert full_sp is not None and triangle_sp is not None
   rows, cols = np.asarray(full_sp.rows), np.asarray(full_sp.cols)
   keep = rows >= cols if triangle == "lower" else rows <= cols
@@ -547,7 +549,7 @@ def test_sparse_lagrangian_hessian_triangle_matches_masked_full_on_shared_vmap(t
   assert triangle_sp.cols == tuple(cols[keep])
   assert as_concrete(triangle_fn).output_coloring_widths == as_concrete(full).output_coloring_widths
 
-  unrolled_sp = as_concrete(unrolled_triangle).output_sparsities[0]
+  unrolled_sp = as_concrete(unrolled_triangle).outputs[0].type.pattern
   assert unrolled_sp is not None
   assert unrolled_sp.rows == triangle_sp.rows
   assert unrolled_sp.cols == triangle_sp.cols
@@ -555,11 +557,11 @@ def test_sparse_lagrangian_hessian_triangle_matches_masked_full_on_shared_vmap(t
   zv = np.array([-0.7, 0.2, 0.4, -0.5, 0.8, 0.3, 0.9])
   lam_f = np.array(0.6)
   lam_g = np.array([0.7, -1.3, 0.45])
-  full_values = np.asarray(full(*(zv, lam_f, lam_g)))
-  triangle_values = np.asarray(triangle_fn(*(zv, lam_f, lam_g)))
-  unrolled_values = np.asarray(unrolled_triangle(*(zv, lam_f, lam_g)))
-  np.testing.assert_allclose(triangle_values, full_values[keep], rtol=1e-10, atol=1e-10)
-  np.testing.assert_allclose(triangle_values, unrolled_values, rtol=1e-10, atol=1e-10)
+  full_dense = full(*(zv, lam_f, lam_g)).toarray()
+  triangle_values = triangle_fn(*(zv, lam_f, lam_g))
+  unrolled_values = unrolled_triangle(*(zv, lam_f, lam_g))
+  np.testing.assert_allclose(triangle_values.toarray(), np.tril(full_dense) if triangle == "lower" else np.triu(full_dense), rtol=1e-10, atol=1e-10)
+  np.testing.assert_allclose(triangle_values.data, unrolled_values.data, rtol=1e-10, atol=1e-10)
 
 
 @pytest.mark.parametrize("triangle", ("diagonal", None, 1))
@@ -588,11 +590,11 @@ def test_spjac_factory_returns_compact_values_with_sparsity_metadata() -> None:
 
   assert as_concrete(spjf).output_names == ("spjac_y_x",)
   assert as_concrete(spjf).output_coloring_widths == (2,)
-  spjf_sparsity = as_concrete(spjf).output_sparsities[0]
+  spjf_sparsity = spjf.sparsity()
   assert spjf_sparsity is not None
   assert spjf_sparsity.rows == (0, 1, 1, 2)
   assert spjf_sparsity.cols == (0, 2, 3, 1)
-  np.testing.assert_allclose(spjf(xv), np.ones(4))
+  np.testing.assert_allclose(spjf(xv).toarray(), np.array([[1.0, 0, 0, 0], [0, 0, 1, 1], [0, 1, 0, 0]]))
 
 
 def test_sparse_jacobian_preserves_constructed_local_coloring_width() -> None:
@@ -607,7 +609,7 @@ def test_sparse_jacobian_preserves_constructed_local_coloring_width() -> None:
   def mapped(z):
     return _mapped_call(piece, 4, [(z, 0, 1), (z, 1, 1)])
 
-  sj = sc.sparse_jacobian(mapped_expr, z)
+  sj = _sparse_jacobian(mapped_expr, z)
 
   np.testing.assert_array_equal(sj.sparsity.to_mask(), sc.jacobian_sparsity(mapped_expr, z).to_mask())
   assert sj.coloring_width == 2
@@ -670,7 +672,7 @@ def test_dependency_composition_keeps_exactly_256_shared_paths() -> None:
   @sc.function(sc.arg("x", 1), outputs=sc.group(sc.arg("colored", 1), sc.arg("reference", 1)), name="shared_256_jac")
   def f(x):
     y = inner(x + np.zeros(256))
-    return sc.sparse_jacobian_colored(y, x).values, sc.sparse_jacobian_reference(y, x).values
+    return sc.values(sc.sparse_jacobian_colored(y, x)), sc.values(sc.sparse_jacobian_reference(y, x))
 
   colored_values, reference_values = f(np.array([2.0]))
   np.testing.assert_allclose(colored_values, np.array([256.0]))
@@ -762,8 +764,8 @@ def test_shared_fill_star_hessian_matches_one_sided_and_dense() -> None:
     lam_g = sc.sym(f"shared_fill_lam_g_{length}", length)
     lagrangian = as_concrete(mapped).outputs[0] * lam_f + (as_concrete(mapped).outputs[1] * lam_g).sum()
     gradient = sc.gradient(lagrangian, z).reshape((z.size,))
-    one_sided = sc.sparse_jacobian_colored(gradient, z)
-    star = sc.sparse_hessian(lagrangian, z)
+    one_sided = _colored(gradient, z)
+    star = _sparse_hessian(lagrangian, z)
 
     assert one_sided.sparsity == star.sparsity
     assert star.coloring_width is not None
@@ -788,7 +790,7 @@ def test_shared_fill_star_hessian_matches_one_sided_and_dense() -> None:
       lagrangian = mapped_f * lam_f + (mapped_g * lam_g).sum()
       one_sided = sc.sparse_jacobian_colored(sc.gradient(lagrangian, z).reshape((z.size,)), z)
       star = sc.sparse_hessian(lagrangian, z)
-      return star.values, one_sided.values, star.to_dense(), one_sided.to_dense(), sc.hessian(lagrangian, z)
+      return sc.values(star), sc.values(one_sided), sc.to_dense(star), sc.to_dense(one_sided), sc.hessian(lagrangian, z)
 
     zv = np.random.default_rng(length).normal(size=z.size)
     lam_fv = np.array(0.6)

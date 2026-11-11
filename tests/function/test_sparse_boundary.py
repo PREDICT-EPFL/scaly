@@ -337,7 +337,7 @@ def test_sparse_weighted_hessians_preserve_dual_layouts(layout) -> None:
   expected = np.zeros((12, 12))
   expected[logical, logical] = 2 * multipliers
   np.testing.assert_allclose(dense(primal, weights), expected)
-  np.testing.assert_allclose(compact(primal, weights), 2 * multipliers)
+  np.testing.assert_allclose(compact(primal, weights).toarray(), expected)
 
 
 @pytest.mark.parametrize("layout", ["csr", COORDINATE_LAYOUT])

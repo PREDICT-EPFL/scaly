@@ -197,7 +197,7 @@ def test_lagrangian_hessians_accept_constant_output_leaves() -> None:
   assert not as_concrete(dense).input_tree.types[-1].diff
   assert not as_concrete(sparse).input_tree.types[-1].diff
   np.testing.assert_array_equal(dense(*inputs), 3.0 * np.eye(2))
-  np.testing.assert_array_equal(sparse(*inputs), np.array([3.0, 3.0]))
+  np.testing.assert_array_equal(sparse(*inputs).toarray(), 3.0 * np.eye(2))
 
 
 def test_call_dispatches_on_leaf_kind() -> None:

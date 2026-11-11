@@ -183,12 +183,12 @@ def test_erf_forward_reverse_jacobian_and_sparse_hessian() -> None:
   np.testing.assert_allclose(jvp_value, seedv * first, rtol=1e-12, atol=1e-12)
   np.testing.assert_allclose(vjp_value, seedv * first, rtol=1e-12, atol=1e-12)
   np.testing.assert_allclose(jac_value, np.diag(first), rtol=1e-12, atol=1e-12)
-  sparsity = as_concrete(derivatives).output_sparsities[1]
+  sparsity = as_concrete(derivatives).outputs[1].type.pattern
   assert sparsity is not None
   assert sparsity.rows == (0, 1, 2)
   assert sparsity.cols == (0, 1, 2)
   second = weights * (-4 * xv / np.sqrt(np.pi)) * np.exp(-(xv**2))
-  np.testing.assert_allclose(sphess_value, second, rtol=1e-12, atol=1e-12)
+  np.testing.assert_allclose(sphess_value.toarray(), np.diag(second), rtol=1e-12, atol=1e-12)
 
 
 def test_jvp_many_sum_batches_seeds_without_unrolling() -> None:
@@ -232,8 +232,8 @@ def test_float32_reduction_derivative_paths() -> None:
   assert jvp_many.type.dtype == sc.dtypes.float32
   assert jacobian.shape == (1, 3)
   assert hessian.shape == (3, 3)
-  assert sparse_jacobian.sparsity.shape == (1, 3)
-  assert sparse_hessian.sparsity.shape == (3, 3)
+  assert sparse_jacobian.shape == (1, 3) and sparse_jacobian.type.dtype == sc.dtypes.float32
+  assert sparse_hessian.shape == (3, 3) and sparse_hessian.type.dtype == sc.dtypes.float32
 
 
 @pytest.mark.parametrize(
@@ -403,7 +403,7 @@ def test_matrix_vector_vjp_graph_uses_tensor_ops() -> None:
 def test_sparse_jacobian_colored_scalar_plus_vector() -> None:
   @sc.function(sc.arg("z", 6), outputs=sc.arg("dense", (5, 6)), name="spjac_scalar_plus_vec")
   def f(z):
-    return sc.sparse_jacobian_colored(z[5] + z[:5] * z[:5], z).to_dense()
+    return sc.to_dense(sc.sparse_jacobian_colored(z[5] + z[:5] * z[:5], z))
 
   zv = np.random.default_rng(5).normal(size=6)
   dense = np.zeros((5, 6))

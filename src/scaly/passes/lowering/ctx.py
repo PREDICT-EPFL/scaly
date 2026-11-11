@@ -135,7 +135,6 @@ def _normalize_function(fun: ConcreteFunction, *, residuals: bool = False) -> Co
   return fun._replace(
     outputs=outputs,
     output_tree=flat_tree(fun.result_names, tuple(out.type for out in outputs), layouts=layouts),
-    output_sparsities=(*fun.output_sparsities, *(None,) * extra),
     output_coloring_widths=(*fun.output_coloring_widths, *(None,) * extra),
     rules=None,
   )

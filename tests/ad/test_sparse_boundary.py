@@ -8,7 +8,7 @@ import scaly as sc
 from scaly.ad.forward import jvp, jvp_many
 from scaly.ad.derivatives import gradient
 from scaly.ad.reverse import vjp
-from scaly.ad.sparse import sparse_hessian, sparse_jacobian
+from scaly.ad.sparse import _sparse_hessian as sparse_hessian, _sparse_jacobian as sparse_jacobian
 from scaly.ad.sparsity import jacobian_sparsity
 from scaly.function.concrete import ConcreteFunction
 from scaly.function.sugar import _mapped_call, vmap
@@ -180,13 +180,12 @@ def test_custom_sparse_rules_bound_relations_by_storage_without_losing_zero_rows
   ruled = sc.custom_derivative(primal, jvp=rule, sparsity=(lambda *_: declared_pattern) if declared else None)
   fn = sc.vmap(ruled, 2) if mapped else ruled
   data = np.array([[2.0, 5.0], [7.0, 11.0]]) if mapped else np.array([2.0, 5.0])
-  batch = (np.repeat([0, 1], 2),) if mapped else ()
-  coords = (*batch, np.tile(pattern.rows, 2 if mapped else 1), np.tile(pattern.cols, 2 if mapped else 1))
-  source = sparse.coo_array((data.reshape(-1), coords), shape=(*((2,) if mapped else ()), *pattern.shape))
-  derivative = sc.sparse_jacobian(fn)
-  result = derivative(source)
-  output_pattern = derivative.sparsity()
-  assert output_pattern is not None
+  # A 10^5 x 10^5 leaf has a 10^10 x 10^10 Jacobian, past what a sparse tensor's flat int64
+  # coordinates reach, so the compact values are evaluated as a dense vector.
+  x = _input("x", pattern, (2,) if mapped else ())
+  compact = sparse_jacobian(fn(x), x)
+  output_pattern = compact.sparsity
+  result = _evaluate("sparse_custom_compact", [x], [compact.values], [data])[0]
   entries = np.array([*domain, *(i + size for i in domain)]) if mapped else np.array(domain)
   assert output_pattern.shape == ((2 * size, 2 * size) if mapped else (size, size))
   assert np.isin(output_pattern.rows, entries).all() and np.isin(output_pattern.cols, entries).all()
@@ -244,7 +243,7 @@ def test_declared_layout_window_jacobian_keeps_local_coloring(monkeypatch, layou
   def reject_global_coloring(*args, **kwargs):
     pytest.fail("declared-layout window fell back to global coloring")
 
-  monkeypatch.setattr("scaly.ad.sparse.sparse_jacobian_colored", reject_global_coloring)
+  monkeypatch.setattr("scaly.ad.sparse._colored", reject_global_coloring)
   compact = sparse_jacobian(result, raw)
   data = np.linspace(-0.8, 0.9, size)
   expected = np.zeros((length, size))
@@ -253,7 +252,7 @@ def test_declared_layout_window_jacobian_keeps_local_coloring(monkeypatch, layou
     columns = 1 + iteration * stride + np.arange(width)
     expected[iteration, columns] = coefficients * np.cos(data[columns])
   np.testing.assert_array_equal(compact.sparsity.to_mask(), expected != 0)
-  actual, dense = _evaluate("layout_window_jac", [raw], [compact.to_dense(), sc.jacobian(result, raw)], [data])
+  actual, dense = _evaluate("layout_window_jac", [raw], [sc.to_dense(compact.leaf()), sc.jacobian(result, raw)], [data])
   np.testing.assert_allclose(actual, expected, rtol=1e-13, atol=1e-13)
   np.testing.assert_allclose(actual, dense, rtol=1e-13, atol=1e-13)
   assert compact.coloring_width == (width if length and width else 0)
@@ -272,11 +271,11 @@ def test_gathered_mapped_columns_accumulate_within_and_across_formals(monkeypatc
   def reject_global_coloring(*args, **kwargs):
     pytest.fail("constant gather fell back to global coloring")
 
-  monkeypatch.setattr("scaly.ad.sparse.sparse_jacobian_colored", reject_global_coloring)
+  monkeypatch.setattr("scaly.ad.sparse._colored", reject_global_coloring)
   compact = sparse_jacobian(result, raw)
   np.testing.assert_array_equal(compact.sparsity.to_mask(), jacobian_sparsity(reference, raw).to_mask())
   data = np.linspace(-0.8, 0.9, raw.size)
-  actual, dense = _evaluate("gathered_columns_jac", [raw], [compact.to_dense(), sc.jacobian(reference, raw)], [data])
+  actual, dense = _evaluate("gathered_columns_jac", [raw], [sc.to_dense(compact.leaf()), sc.jacobian(reference, raw)], [data])
   np.testing.assert_allclose(actual, dense, rtol=1e-13, atol=1e-13)
 
 
@@ -285,7 +284,7 @@ def test_repeated_gather_count_does_not_imply_full_jacobian_coverage():
   raw = sc.sym("gathered_cover_raw", 2)
   result = _mapped_call(stage, 1, [(raw.gather([0, 0]), 0, 2), (raw, 1, 1)])
   compact = sparse_jacobian(result, raw)
-  actual, dense = _evaluate("gathered_cover_jac", [raw], [compact.to_dense(), sc.jacobian(result, raw)], [np.array([0.3, -0.2])])
+  actual, dense = _evaluate("gathered_cover_jac", [raw], [sc.to_dense(compact.leaf()), sc.jacobian(result, raw)], [np.array([0.3, -0.2])])
   np.testing.assert_array_equal(compact.sparsity.to_mask(), [[True, True]])
   np.testing.assert_allclose(actual, [[2 * np.cos(0.3), 3]], rtol=1e-13, atol=1e-13)
   np.testing.assert_allclose(actual, dense, rtol=1e-13, atol=1e-13)

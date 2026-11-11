@@ -12,7 +12,7 @@ from scipy import sparse
 
 from ..ir.expr import Expr
 from ..ir.layout import bind_sparse
-from ..ir.types import SparsityPattern, TensorType, as_shape
+from ..ir.types import CanonicalPattern, TensorType, as_shape
 from .concrete import ConcreteFunction, DerivSpec
 from .tree import Tree, _G, _Leaf, _PatternHole, _is_hole, _shape_hole, _leaves, flat_tree, parameter_list
 
@@ -275,32 +275,31 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     )
 
   @overload
-  def sparsity(self, *, of: str | None = None) -> SparsityPattern | None: ...
+  def sparsity(self, *, of: str | None = None) -> CanonicalPattern | None: ...
 
   @overload
   def sparsity[*Ns](
     self: Function[SymbolicInputs, tuple[*Ns], SymbolicOutputs, NumericalOutputs], *args: *Ns, of: str | None = None
-  ) -> SparsityPattern | None: ...
+  ) -> CanonicalPattern | None: ...
 
   @overload
   def sparsity[*Ss](
     self: Function[tuple[*Ss], NumericalInputs, SymbolicOutputs, NumericalOutputs], *args: *Ss, of: str | None = None
-  ) -> SparsityPattern | None: ...
+  ) -> CanonicalPattern | None: ...
 
-  def sparsity(self, *args: Any, of: str | None = None) -> SparsityPattern | None:
-    """Return an output's compact-value pattern without numerical evaluation or compilation.
+  def sparsity(self, *args: Any, of: str | None = None) -> CanonicalPattern | None:
+    """Return a sparse output's stored pattern without numerical evaluation or compilation.
 
     Pass the same arguments as a call to select its binding. Fully specified functions also
     accept no arguments. ``of`` selects an output by name and is required for multiple outputs.
-    Sparse derivative outputs return the pattern that indexes their compact values. Other outputs
-    return ``None``, including sparse matrices, whose pattern is in their type.
+    Dense outputs return ``None``. A batched sparse output returns the pattern its matrices share.
     """
     instance = self._resolve(args, f"{self.name}.sparsity") if args or self.inputs is None else self.instantiate()
     if of is None:
       if len(instance.output_names) != 1:
         raise ValueError(f"of must be specified; declared {instance.output_names}")
       of = instance.output_names[0]
-    return instance.output_sparsities[instance.output_tree.index(of)]
+    return instance.outputs[instance.output_tree.index(of)].type.pattern
 
   def compile(self) -> None:
     """Compile a fully specified function ahead of its first numerical call."""

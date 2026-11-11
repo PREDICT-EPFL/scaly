@@ -85,7 +85,7 @@ from .solvers import (
 )
 from .ir.expr_spec import spec_expr, spec_expr_shared, verify_expr
 from .ir.spec import Rule, Spec, VerifyError
-from .ad.sparse import SparseJacobian, sparse_jacobian_colored, sparse_jacobian_reference
+from .ad.sparse import sparse_jacobian_colored, sparse_jacobian_reference
 from .ad.sparsity import color_groups, column_coloring, jacobian_sparsity, star_coloring
 from .ir.types import DeviceSpec, DType, SparsityPattern, TensorType, as_dtype, dtypes
 
@@ -123,7 +123,6 @@ __all__ = [
   "SolverStatus",
   "StageConstraint",
   "Spec",
-  "SparseJacobian",
   "SparsityPattern",
   "TensorType",
   "VerifyError",

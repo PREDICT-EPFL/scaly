@@ -151,6 +151,7 @@ def test_unseeded_derivatives_bind_and_keep_declared_output_names(operation: _De
   assert operation(cost, name="derived").instantiate((2,)) is two
   assert operation(cost).instantiate((2,)).input_tree.types == cost.instantiate((2,)).input_tree.types
   values = derivative(np.array([2.0, 3.0]))
+  values = values.toarray() if operation in (sc.sparse_jacobian, sc.sparse_hessian) else values
   assert isinstance(values, np.ndarray)
   assert np.all(np.isfinite(values))
   if operation is sc.gradient:
@@ -184,11 +185,7 @@ def test_seeded_templates_and_lagrangian_multiplier_trees() -> None:
     derivative = operation(problem, "x")
     result = derivative(x, (np.array(2.0), np.array([1.0, 2.0])))
     expected = np.diag(4.0 + 6.0 * np.array([1.0, 2.0]) * x)
-    instance = next(iter(derivative.instances.values()))
-    pattern = instance.output_sparsities[0]
-    if pattern is not None:
-      expected = expected[np.asarray(pattern.rows), np.asarray(pattern.cols)]
-    np.testing.assert_array_equal(result, expected)
+    np.testing.assert_array_equal(result if isinstance(result, np.ndarray) else result.toarray(), expected)
     with pytest.raises(ValueError, match="seed or argument types"):
       derivative(x, (np.array(2.0), np.ones(3)))
 
@@ -347,7 +344,7 @@ def test_factory_templates_flatten_reordered_inputs_and_bind_seed_shapes() -> No
     np.testing.assert_array_equal(value, 3.0 * np.dot(x, x))
     np.testing.assert_array_equal(grad, 6.0 * x)
     np.testing.assert_array_equal(forward, 4.0 * x)
-    np.testing.assert_array_equal(compact, 2.0 * x)
+    np.testing.assert_array_equal(compact.toarray(), np.diag(2.0 * x))
     pattern = combined.sparsity(p, x, seed, of="spjac_g_x")
     assert pattern is not None and pattern.shape == (size, size) and pattern.nnz == size
     instance = combined.instantiate(((), size, size))
@@ -377,7 +374,7 @@ def test_factory_templates_snapshot_requests_and_infer_auxiliary_weight_shapes()
   x, weight, multipliers = np.array([2.0, 3.0]), np.array(2.0), np.array([1.0, 2.0])
   gamma, hessian = combined(x, weight, multipliers)
   np.testing.assert_array_equal(gamma, weight * np.dot(x, x) + np.dot(multipliers, x**3))
-  np.testing.assert_array_equal(hessian, 2.0 * weight + 6.0 * multipliers * x)
+  np.testing.assert_array_equal(hessian.toarray(), np.diag(2.0 * weight + 6.0 * multipliers * x))
   assert combined.sparsity(x, weight, multipliers, of="gamma") is None
   pattern = combined.sparsity(x, weight, multipliers, of="sphess_gamma_x_x")
   assert pattern is not None and pattern.nnz == 2
@@ -433,9 +430,7 @@ def test_sparsity_queries_cover_fixed_bare_and_zero_input_functions() -> None:
   mapped_derivative = sc.vmap(derivative, 3)
   pattern = mapped_derivative.sparsity(batch)
   assert pattern is not None
-  matrices = np.zeros((3, *pattern.shape))
-  matrices[:, np.asarray(pattern.rows), np.asarray(pattern.cols)] = mapped_derivative(batch)
-  np.testing.assert_array_equal(matrices, np.stack([np.diag(2.0 * point) for point in batch]))
+  np.testing.assert_array_equal(mapped_derivative(batch).toarray(), np.stack([np.diag(2.0 * point) for point in batch]))
   assert model.sparsity() is None
   with pytest.raises(ValueError, match="expected shape"):
     derivative.sparsity(np.ones(3))

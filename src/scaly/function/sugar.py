@@ -11,7 +11,7 @@ from scipy import sparse
 from ..ir.expr import Expr, ExprOp, as_expr, common_lowering, stop_gradient, pack, values
 from ..ir.expr_spec import loop_result_type
 from ..ir.layout import bind_sparse
-from ..ir.types import SparsityPattern, TensorType
+from ..ir.types import CanonicalPattern, TensorType
 from .model import Function, _Derived, _traced, as_concrete
 from .tree import Tree, _G, _Leaf, _PatternHole, _leaves
 from .concrete import ConcreteFunction
@@ -267,7 +267,7 @@ class _Mapped(_Derived):
 
     return self._bind(add_axis(skeleton), self.name)
 
-  def sparsity(self, *args: Any, of: str | None = None) -> SparsityPattern | None:
+  def sparsity(self, *args: Any, of: str | None = None) -> CanonicalPattern | None:
     """Return the callee's per-iteration pattern for each leading output slice.
 
     Arguments use the same leading-axis, broadcast and window rules as a mapped call.

@@ -22,7 +22,7 @@ import math
 import numpy as np
 
 from .abi import ENTRY_C_TYPES, abi_status_defines, c_api_signature, c_ident
-from .casadi import casadi_defines, casadi_gather, casadi_scratch, render_casadi_queries
+from .casadi import casadi_defines, render_casadi_queries
 from ..ad.rules import ELEMENTWISE
 from ..function.concrete import ConcreteFunction
 from ..passes.lowering import LoweringError, main_proc, workspace_dtype
@@ -152,7 +152,7 @@ def render_program_c(
     lines.append("")
   lines += _render_entry(proc, fun, casadi=casadi, dialect=dialect, vector_libm=vector_libm)
   if casadi:
-    lines += ["", *render_casadi_queries(fun, entry_workspace(fun, int(proc.attrs.get("sz_w", 0)), casadi=True))]
+    lines += ["", *render_casadi_queries(fun, int(proc.attrs.get("sz_w", 0)))]
   lines += ["", "#ifdef __cplusplus", "}", "#endif"]
   return "\n".join(lines).rstrip() + "\n"
 
@@ -166,11 +166,6 @@ def extern_declarations(prog: ProgramNode) -> list[str]:
     if declaration not in declarations:
       declarations.append(declaration)
   return [*declarations, ""] if declarations else []
-
-
-def entry_workspace(fun: ConcreteFunction, sz_w: int, *, casadi: bool) -> int:
-  """The ``SZ_W`` an entry needs: the packed spill size plus, under ``casadi``, the gather scratch."""
-  return sz_w + (casadi_scratch(fun) if casadi else 0)
 
 
 def entry_prologue(fun: ConcreteFunction, sz_w: int, *, options_count: int = 0) -> list[str]:
@@ -219,7 +214,7 @@ def _render_entry(
 
   lines = [
     *_render_vector_helpers(proc, dialect=dialect, vector_libm=vector_libm),
-    *entry_prologue(fun, entry_workspace(fun, sz_w, casadi=casadi), options_count=options_count),
+    *entry_prologue(fun, sz_w, options_count=options_count),
     *entry_setup,
   ]
   if unit == dtypes.uint8:
@@ -230,21 +225,9 @@ def _render_entry(
       const = "const " if i < len(fun.inputs) else ""
       lines.append(f"  {const}{param.dtype.c_type}* {local} = ({const}{param.dtype.c_type}*){ptr_expr[param.attrs['name']]};")
       ptr_expr[param.attrs["name"]] = local
-  epilogue: list[str] = []
-  if casadi:
-    gather = casadi_gather(fun, sz_w)
-    ptr_expr.update(
-      {
-        param.attrs["name"]: gather.ptr[name]
-        for param, name in zip(proc.args[len(fun.inputs) : param_count], fun.output_names, strict=True)
-        if name in gather.ptr
-      }
-    )
-    lines += gather.setup
-    epilogue = gather.epilogue
   _emit_local_buffers(body, lines, ptr_expr, indent=2, unit=unit)
   _emit_body(body, ptr_expr, lines, indent=2, dialect=dialect, unit=unit)
-  lines += [*epilogue, "  return SCALY_SUCCESS;", "}"]
+  lines += ["  return SCALY_SUCCESS;", "}"]
   return lines
 
 
