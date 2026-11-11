@@ -36,6 +36,7 @@ def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction, arguments: tuple[Sup
       ctx.program_names,
       ctx.symbols,
       ctx.residuals,
+      ctx.broadcasts,
       observe_expr=ctx.observe_expr,
       argument_support=arguments,
       symbol=symbol,
@@ -251,6 +252,7 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
       ctx.program_names,
       ctx.symbols,
       ctx.residuals,
+      {**ctx.broadcasts, variant: ctx.broadcasts.get(callee, frozenset())},
       observe_expr=ctx.observe_expr,
       inout_carries=chains,
     )

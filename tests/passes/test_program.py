@@ -20,9 +20,7 @@ import scaly as sc
 from scaly.codegen.aot import render_c_source
 from scaly.codegen.toolchain import find_c_compiler
 from scaly.passes.lowering import lower_function, main_proc
-from scaly.passes.program.combine_scatter_sums import combine_scatter_sums
 from scaly.passes.program.fold_arith import fold_arith
-from scaly.passes.program.fuse_elementwise import fuse_elementwise
 from scaly.passes.program.hoist_invariant import hoist_invariant
 from scaly.passes.program._common import prune_procedures
 from scaly.utils.names import NameScope
@@ -173,39 +171,6 @@ def test_fusion_into_reduction() -> None:
   assert len(loops) == 1  # the single reduce loop
 
 
-def test_fusion_counts_expensive_work_through_producer_chains() -> None:
-  x, y = (buffer(name, dtypes.float64, (4,)) for name in ("x", "y"))
-  a, b = (buffer(name, dtypes.float64, (4,), address_space="private") for name in ("a", "b"))
-  i = var("i")
-  at = lambda buf: view(buf, [i])
-  sin = ProgramNode(ProgramOp.SIN, (load(at(x)),), dtype=dtypes.float64)
-  body = [
-    a,
-    b,
-    for_(range_("i", 0, 4), [store(at(a), sin)]),
-    for_(range_("i", 0, 4), [store(at(b), add(load(at(a)), const_float(1.0)))]),
-    for_(range_("i", 0, 4), [store(at(y), mul(load(at(b)), load(at(b))))]),
-  ]
-  result = fuse_elementwise(program([proc_("chain_cost", [x, y], body)])).args[0]
-  result_body = result.args[int(result.attrs["param_count"]) :]
-  assert sum(stmt.op == ProgramOp.FOR for stmt in result_body) == 2
-  assert sum(node.op == ProgramOp.SIN for stmt in result_body for node in walk_program(stmt)) == 1
-
-
-def test_fusion_does_not_move_reads_into_a_consumer_that_overwrites_them() -> None:
-  x = buffer("x", dtypes.float64, (4,))
-  a = buffer("a", dtypes.float64, (4,), address_space="private")
-  i = var("i")
-  body = [
-    a,
-    for_(range_("i", 0, 4), [store(view(a, [i]), add(load(view(x, [i])), const_float(1.0)))]),
-    for_(range_("i", 0, 4), [store(view(x, [i]), load(view(a, [p.sub(const_int(3), i)])))]),
-  ]
-  prog = program([proc_("read_motion_consumer", [x], body)])
-  verify_program(prog)
-  assert fuse_elementwise(prog) is prog
-
-
 def test_buffer_analysis_keeps_arguments_with_unspecified_access_modes() -> None:
   from scaly.passes.program._common import buffer_refs, prune_dead_buffers
 
@@ -216,22 +181,6 @@ def test_buffer_analysis_keeps_arguments_with_unspecified_access_modes() -> None
   refs = buffer_refs(stmt)
   assert refs.reads == refs.writes == frozenset({"a"})
   assert prune_dead_buffers(proc) is proc
-  assert fuse_elementwise(program([proc])).args[0] is proc
-
-
-def test_fusion_does_not_move_a_read_past_a_write() -> None:
-  x, y = (buffer(name, dtypes.float64, (1,)) for name in ("x", "y"))
-  a = buffer("a", dtypes.float64, (1,), address_space="private")
-  i = var("i")
-  at = lambda buf: view(buf, [i])
-  body = [
-    a,
-    for_(range_("i", 0, 1), [store(at(a), mul(load(at(x)), const_float(2.0)))]),
-    store(view(x, [const_int(0)]), const_float(3.0)),
-    for_(range_("i", 0, 1), [store(at(y), add(load(at(a)), const_float(1.0)))]),
-  ]
-  result = fuse_elementwise(program([proc_("read_motion", [x, y], body)])).args[0]
-  assert any(stmt.op == ProgramOp.BUFFER and stmt.attrs["name"] == "a" for stmt in result.args)
 
 
 # --- unit-loop unrolling ---------------------------------------------------------
@@ -349,12 +298,15 @@ def test_hoist_reserves_exported_names_across_repeated_loop_variables() -> None:
 
 
 def test_contiguous_slice_aliases_source() -> None:
-  """A contiguous slice becomes a zero-copy pointer alias (no copy loop), unlike a strided one."""
+  """A contiguous slice that a call needs whole becomes a zero-copy pointer alias, not a copy loop."""
+
+  @sc.function(sc.arg("v", 4), outputs=sc.arg("w"), name="slc_inner")
+  def g(v: sc.Expr) -> sc.Expr:
+    return v.sin()
 
   @sc.function(sc.arg("x", 8), outputs=sc.arg("out0"), name="slc")
   def f(x: sc.Expr) -> sc.Expr:
-    s = x[2:6]
-    return (s * s).sin()  # use s twice so it stays materialized (not inlined) -> visible alias
+    return g(x[2:6]) * 2.0
 
   _compute, aliases, _loops = _classify(_main_body(f))
   assert len(aliases) == 1
@@ -597,7 +549,7 @@ def test_slice_gradient_combines_pads(count: int) -> None:
   grad = f.factory("slice_grad", ["x"], [sc.factory.Grad("cost", "x")])
   stages = {}
   lower_function(grad, observe=lambda name, prog: stages.__setitem__(name, prog))
-  combined = main_proc(stages["pass:combine_scatter_sums"])
+  combined = main_proc(stages["lowered"])
   buffers, _, _ = _classify(list(combined.args[int(combined.attrs["param_count"]) :]))
   assert not [b for b in buffers if b.attrs["shape"] == (4 * count,)]
   combined_loops = [
@@ -641,57 +593,6 @@ def test_scatter_sum_preserves_overlaps_and_shared_outputs(shared: bool) -> None
     original = np.zeros(8)
     original[[1, 3, 5]] = data
     np.testing.assert_array_equal(result[1], original)
-
-
-@pytest.mark.parametrize("alias", [False, True])
-def test_scatter_sum_does_not_move_source_reads_past_writes(alias: bool) -> None:
-  from scaly.ir.program import ProgramNode, const_int
-
-  @sc.function(sc.arg("x", 4), outputs=sc.arg("sum"), name="mutated_scatter")
-  def f(x):
-    a = _scatter_zero(x[:2] if alias else x, [0, 2] if alias else [0, 2, 4, 6], 8)
-    b = _scatter_zero(x[2:] if alias else 2 * x, [1, 3] if alias else [1, 3, 5, 7], 8)
-    return a + b
-
-  stages = {}
-  lower_function(f, observe=lambda name, prog: stages.__setitem__(name, prog))
-  lowered = stages["lowered"]
-  original = main_proc(lowered)
-  params = list(original.args[: int(original.attrs["param_count"])])
-  body = list(original.args[len(params) :])
-  body.insert(-1, store(view(params[0], [const_int(0)]), const_float(42.0)))
-  mutated = ProgramNode(ProgramOp.PROC, (*params, *body), original.attrs, dtype=original.dtype)
-  prog = program([mutated])
-  assert combine_scatter_sums(prog) is prog
-
-
-@pytest.mark.parametrize("repeated", [False, True])
-def test_scatter_sum_rejects_self_reading_sources(repeated: bool) -> None:
-  @sc.function(sc.arg("x", 4), outputs=sc.arg("sum"))
-  def f(x):
-    a = _scatter_zero(x, [0, 2, 4, 6], 8)
-    b = _scatter_zero(2 * x, [1, 1, 3, 5] if repeated else [1, 3, 5, 7], 8)
-    return a + b
-
-  stages = {}
-  lower_function(f, observe=lambda name, prog: stages.__setitem__(name, prog))
-  original = main_proc(stages["lowered"])
-  params = list(original.args[: int(original.attrs["param_count"])])
-  body = list(original.args[len(params) :])
-  scatters = [
-    i
-    for i, stmt in enumerate(body)
-    if stmt.op == ProgramOp.FOR and stmt.args[1].op == ProgramOp.STORE and stmt.args[1].args[0].args[0].op != ProgramOp.VAR
-  ]
-  i = scatters[1]
-  loop = body[i]
-  target, value = loop.args[1].args
-  source = value.args[1].args[0] if repeated else value.args[0]
-  self_view = ProgramNode(ProgramOp.VIEW, source.args, {**source.attrs, "buffer": target.attrs["buffer"]}, dtype=source.dtype)
-  value = add(load(target), load(self_view)) if repeated else load(self_view)
-  body[i] = for_(loop.args[0], [store(target, value)])
-  mutated = program([ProgramNode(ProgramOp.PROC, (*params, *body), original.attrs, dtype=original.dtype)])
-  assert combine_scatter_sums(mutated) is mutated
 
 
 @pytest.mark.parametrize("left_associated", [False, True])
@@ -740,13 +641,12 @@ def test_scatter_sum_combines_accumulate_loops(shared: bool) -> None:
 
   stages = {}
   lower_function(f, observe=lambda name, prog: stages.__setitem__(name, prog))
-  before = main_proc(stages["lowered"])
-  after = main_proc(stages["pass:combine_scatter_sums"])
+  lowered = main_proc(stages["lowered"])
+  buffers, _, _ = _classify(list(lowered.args[int(lowered.attrs["param_count"]) :]))
+  loops = [s for s in lowered.args[int(lowered.attrs["param_count"]) :] if s.op == ProgramOp.FOR]
   if not shared:
-    before_buffers, _, _ = _classify(list(before.args[int(before.attrs["param_count"]) :]))
-    after_buffers, _, _ = _classify(list(after.args[int(after.attrs["param_count"]) :]))
-    assert len(after_buffers) < len(before_buffers)
-    loops = [s for s in after.args[int(after.attrs["param_count"]) :] if s.op == ProgramOp.FOR]
+    # The three scatters accumulate into the sum: one zero fill and no temporary.
+    assert not buffers
     assert sum(loop.args[1].args[1].op == ProgramOp.CONST_FLOAT for loop in loops) == 1
 
   data = np.array([-1.5, 2.0, 0.25, 0.5, 3.0])

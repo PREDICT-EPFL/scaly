@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Literal
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 
 import numpy as np
 
@@ -23,7 +23,11 @@ from ...ir.support import Support, _make_support, support_indices, specialize_su
 from ...ir.types import DeviceSpec, DType, dtypes, stored_indices
 from ...utils.names import NameScope
 from ..affine import affine_index_map
+from ..arith import constant
+from ...ad.rules import ELEMENTWISE
+from .fusion import ALIASES, MOVEMENT, plan_fusion
 from ..arith import fold_program
+from ..program.fold_arith import _fold_index as _fold_bounded
 from ..expr import cse_many, simplify
 
 _EXACT_STORES = (dtypes.float64, dtypes.float32, dtypes.int64, dtypes.bool_)
@@ -77,9 +81,9 @@ def lower_function(
 
   """
   fun = as_concrete(fun)
-  names, symbols, residuals = _function_names(fun, reserved_names)
+  names, symbols, residuals, broadcasts = _function_names(fun, reserved_names)
   callees: dict[ProcKey, ProgramNode] = {}
-  root = _lower_to_proc(fun, callees, names, symbols, residuals, auto_scalarize=False, observe_expr=observe_expr)
+  root = _lower_to_proc(fun, callees, names, symbols, residuals, broadcasts, auto_scalarize=False, observe_expr=observe_expr)
   prog = p.program([*callees.values(), root])
   externs = tuple(fn for fn in symbols if isinstance(fn, _Extern))
   prog = ProgramNode(
@@ -162,6 +166,7 @@ def _lower_to_proc(
   names: NameScope,
   symbols: dict[ConcreteFunction, str],
   residuals: frozenset[ConcreteFunction],
+  broadcasts: Mapping[ConcreteFunction, frozenset[frozenset[int]]],
   *,
   auto_scalarize: bool = True,
   observe_expr: ExprObserver | None = None,
@@ -171,12 +176,13 @@ def _lower_to_proc(
 ) -> ProgramNode:
   lowering = fun._effective_lowering
   symbol = symbols[fun] if symbol is None else symbol
+  invariant = broadcasts.get(fun, frozenset())
   # A reuse proof names nodes in the already normalized function.
   if inout_carries is None:
     fun = _normalize_function(fun, residuals=fun in residuals)
   if observe_expr is not None:
     observe_expr("normalized", fun)
-  ctx = LowerCtx(fun, callees, names, symbols, residuals, observe_expr)
+  ctx = LowerCtx(fun, callees, names, symbols, residuals, broadcasts, observe_expr, invariant=invariant)
   if argument_support is not None:
     ctx.seed_pairs = True
     ctx.support_of = specialize_support(fun, argument_support, OP_INFO)
@@ -222,7 +228,10 @@ class LowerCtx:
     names: NameScope,
     symbols: dict[ConcreteFunction, str],
     residuals: frozenset[ConcreteFunction],
+    broadcasts: Mapping[ConcreteFunction, frozenset[frozenset[int]]],
     observe_expr: ExprObserver | None = None,
+    *,
+    invariant: frozenset[frozenset[int]] = frozenset(),
   ) -> None:
     self.fun = fun
     self.seed_pairs = fun.role == "forward"
@@ -234,6 +243,8 @@ class LowerCtx:
     self.symbols = symbols
     # Functions whose procedures also write their residuals, because some call reads one.
     self.residuals = residuals
+    # Functions mapped with some arguments broadcast: the sets of input positions each map holds fixed.
+    self.broadcasts = broadcasts
     self.input_names = tuple(self.names.allocate(n) for n in fun.input_names)
     self.output_names = tuple(self.names.allocate(n) for n in fun.output_names)
     self.observe_expr = observe_expr
@@ -258,6 +269,12 @@ class LowerCtx:
     self._computed: list[Expr] = []
     self._declared: dict[str, Expr] = {}
     self._shared_indices: dict[tuple[int, ...], ProgramNode] = {}
+    self.invariant = invariant
+    self.deferred: frozenset[int] = frozenset()
+    self.sums: dict[int, tuple[Expr, ...]] = {}
+    self._reads: dict[tuple[int, bool, tuple[ProgramNode, ...]], ProgramNode] = {}
+    # Nodes evaluated in place that read through a deferred transpose.
+    self.permutes: set[int] = set()
 
   # --- declarations ---------------------------------------------------------
 
@@ -335,6 +352,12 @@ class LowerCtx:
       node.id: sources for chain in self.inout_carries.values() for node in chain if (sources := same_index_sources(self.fun, node))
     }
     deferred = set().union(*self.fused_scatter.values())
+    self.deferred, self.sums = plan_fusion(self.fun, self.invariant, scalar=self.scalarize and self.fun._effective_lowering == "scalar")
+    absorbed = {leaf.id for leaves in self.sums.values() for leaf in leaves}
+    self.permutes = set()
+    for node in topo(self._computed):
+      if ExprOp(node.op) == ExprOp.TRANSPOSE or any(a.id in self.deferred and a.id in self.permutes for a in node.args):
+        self.permutes.add(node.id)
     needed = set()
     for node in topo(self._computed):
       operands = node.args
@@ -349,7 +372,7 @@ class LowerCtx:
         continue
       if node.op == ExprOp.CONST and node not in needed:
         continue
-      if node.id in self.value_buffers:
+      if node.id in self.value_buffers or node.id in self.deferred or node.id in absorbed:
         continue  # input (or already lowered)
       rule = _RULES.get(ExprOp(node.op))
       if rule is None:
@@ -370,7 +393,23 @@ class LowerCtx:
     return source
 
   def raw_buf_of(self, expr: Expr) -> ProgramNode:
+    if expr.id not in self.value_buffers:
+      self._store(expr)
     return self.buffers[self.value_buffers[expr.id]]
+
+  def _store(self, expr: Expr) -> None:
+    """Give a deferred value a buffer, for a consumer that needs it whole: its source's buffer for an
+    alias, the constant's own rule, else one flat loop that evaluates it."""
+    op = ExprOp(expr.op)
+    if op in ALIASES:
+      self.value_buffers[expr.id] = self.raw_buf_of(expr.args[0]).attrs["name"]
+      return
+    if op == ExprOp.CONST:
+      _RULES[op](self, expr)
+      return
+    out = self.alloc_tmp(expr)
+    ranges, (k,) = self.nest((expr.size,), f"i_{out.attrs['name']}")
+    self.emit(ranges, [p.store(p.view(out, [k]), self.compute_flat(expr, k))])
 
   def physical_slots(self, expr: Expr, slots: np.ndarray) -> np.ndarray:
     order = self._orders.get(expr.id)
@@ -380,6 +419,8 @@ class LowerCtx:
     return np.where(slots < 0, -1, slots // width * width + order[slots % width])
 
   def read_stored(self, expr: Expr, slots: np.ndarray, k: ProgramNode) -> ProgramNode:
+    if expr.type.pattern is None and expr.id not in self._orders:
+      return self.read_flat(expr, self.index_at(slots, k, shared=True))
     return p.load(p.view(self.raw_buf_of(expr), [self.index_at(self.physical_slots(expr, slots), k, shared=True)]))
 
   def stored_view(self, expr: Expr, slot: ProgramNode) -> ProgramNode:
@@ -561,10 +602,113 @@ class LowerCtx:
     return self.nest(extents, name, kind=RangeKind.REDUCE)
 
   def read(self, expr: Expr, coords: Sequence[ProgramNode]) -> ProgramNode:
-    """The scalar value of ``expr`` at dense logical ``coords``."""
+    """The scalar value of ``expr`` at dense logical ``coords``: a load where it is stored, else the
+    value evaluated in place."""
     if expr.type.pattern is not None:
       raise LoweringError("sparse logical reads require an explicit stored-slot map")
-    return p.load(p.view(self.buf_of(expr), [_flat(expr.shape, coords)]))
+    return self._resolve((expr, False, tuple(coords)))
+
+  def read_flat(self, expr: Expr, flat: ProgramNode) -> ProgramNode:
+    """``read`` at the row-major position ``flat``."""
+    return self._resolve((expr, True, (flat,)))
+
+  def compute(self, expr: Expr, coords: Sequence[ProgramNode]) -> ProgramNode:
+    """``expr``'s own operation at ``coords``, reading its arguments, whether or not it is stored."""
+    return self._finish(self._step((expr, False, tuple(coords))))
+
+  def compute_flat(self, expr: Expr, flat: ProgramNode) -> ProgramNode:
+    """``compute`` at the row-major position ``flat``."""
+    return self._finish(self._step((expr, True, (flat,))))
+
+  def _positions(self, expr: Expr) -> tuple[Expr, np.ndarray]:
+    """The value under a chain of deferred movement ops, and the flat position in it of each element
+    of ``expr``, so a gather through the chain reads one composed index table."""
+    positions = np.arange(expr.size, dtype=np.int64)
+    while expr.id in self.deferred and expr.id not in self.value_buffers and (op := ExprOp(expr.op)) in MOVEMENT and op != ExprOp.CONST:
+      src = expr.args[0]
+      if op == ExprOp.TRANSPOSE:
+        step = np.arange(src.size, dtype=np.int64).reshape(src.shape).transpose(expr.attrs["axes"]).reshape(-1)
+      elif op == ExprOp.SLICE:
+        step = np.arange(src.size, dtype=np.int64).reshape(src.shape)[expr.attrs["index"]].reshape(-1)
+      elif op == ExprOp.GATHER:
+        step = expr.attrs["indices"].reshape(-1)
+      else:
+        step = np.arange(src.size, dtype=np.int64)
+      positions, expr = step[positions], src
+    return expr, positions
+
+  def _finish(self, step: _Step) -> ProgramNode:
+    if isinstance(step, ProgramNode):
+      return step
+    reads, build = step
+    return build([self._resolve(r) for r in reads])
+
+  def _resolve(self, request: _Read) -> ProgramNode:
+    """The value a read asks for, memoized on ``(expr, coordinates)``. Evaluated with an explicit
+    stack, so a long chain of inlined values does not become depth on the Python stack."""
+    key = lambda r: (r[0].id, r[1], r[2])
+    stack, plans = [request], {}
+    while stack:
+      top = stack[-1]
+      k = key(top)
+      if k in self._reads:
+        stack.pop()
+        continue
+      if k not in plans:
+        expr, flat, at = top
+        if expr.id in self.value_buffers or expr.id not in self.deferred:
+          step: _Step = p.load(p.view(self.buf_of(expr), [at[0] if flat else _flat(expr.shape, at)]))
+        else:
+          step = self._step(top)
+        if isinstance(step, ProgramNode):
+          self._reads[k] = step
+          stack.pop()
+          continue
+        plans[k] = step
+      reads, build = plans[k]
+      missing = [r for r in reads if key(r) not in self._reads]
+      if missing:
+        stack.extend(missing)
+        continue
+      self._reads[k] = build([self._reads[key(r)] for r in reads])
+      stack.pop()
+    return self._reads[key(request)]
+
+  def _step(self, request: _Read) -> _Step:
+    """One step of evaluating an expression in place: its value, or the reads of its arguments and
+    how to combine them. An elementwise operation reads each operand at the broadcast coordinates, a
+    constant is its value or a table load, and a movement op is an index remap. A reshape maps each
+    group of axes it merges or splits on its own, so quotients and remainders appear only on the axes
+    a merge reads through a transpose or a slice. A flat position reaches an operand of the same size,
+    an alias and a gather as it is."""
+    expr, flat, at = request
+    op = ExprOp(expr.op)
+    if op in ELEMENTWISE:
+      coords = _flat_coordinates(at[0], expr.shape) if flat and any(a.size != expr.size for a in expr.args) else at
+      reads = [(a, True, at) if flat and a.size == expr.size else (a, False, _broadcast(coords, a.shape)) for a in expr.args]
+      return reads, lambda values: ProgramNode(ELEMENTWISE[op].program, tuple(values), dtype=expr.type.dtype)
+    position = at[0] if flat else _flat(expr.shape, at)
+    if op == ExprOp.CONST:
+      if (value := _uniform(expr)) is not None:
+        return constant(value, expr.type.dtype)
+      return p.load(p.view(self.raw_buf_of(expr), [position]))
+    src = expr.args[0]
+    if op in ALIASES:
+      if not flat and src.id in self.deferred and src.id not in self.value_buffers and ExprOp(src.op) in (ExprOp.TRANSPOSE, ExprOp.SLICE):
+        return [(src, False, tuple(_reshape_coords(at, expr.shape, src.shape)))], _only
+      return [(src, True, (position,))], _only
+    if op == ExprOp.SLICE and flat and (offset := _contiguous_slice_offset(expr.attrs["index"], src.shape, expr.shape)) is not None:
+      return [(src, True, (_shift(position, offset),))], _only
+    if op == ExprOp.GATHER:
+      base, positions = self._positions(src)
+      return [(base, True, (self.index_at(positions[expr.attrs["indices"].reshape(-1)], position),))], _only
+    coords = _flat_coordinates(at[0], expr.shape) if flat else at
+    if op == ExprOp.TRANSPOSE:
+      axes = tuple(int(a) for a in expr.attrs["axes"])
+      return [(src, False, tuple(coords[axes.index(dim)] for dim in range(len(axes))))], _only
+    if op == ExprOp.SLICE:
+      return [(src, False, tuple(_slice_coords(expr.attrs["index"], src.shape, coords)))], _only
+    raise LoweringError(f"{op} is not evaluated in place")
 
   def write(self, expr: Expr, coords: Sequence[ProgramNode], value: ProgramNode) -> ProgramNode:
     """The statement storing ``value`` at dense logical ``coords``."""
@@ -572,12 +716,62 @@ class LowerCtx:
       raise LoweringError("sparse logical writes require an explicit stored-slot map")
     return p.store(p.view(self.buf_of(expr), [_flat(expr.shape, coords)]), value)
 
-  def emit(self, ranges: Sequence[ProgramNode], body: Sequence[ProgramNode]) -> None:
+  def emit(self, ranges: Sequence[ProgramNode], body: Sequence[ProgramNode], *, delinearize: bool = False) -> None:
     """Append ``body`` inside ``ranges``, outermost first.
 
-    See ``nest_body`` for empty ranges, merging and unit-loop indices.
+    See ``nest_body`` for empty ranges, merging and unit-loop indices, and ``delinearize`` for the
+    loops of a kernel that reads through a transpose.
     """
+    if delinearize:
+      ranges, body = self.delinearize(ranges, body)
     self.statements.extend(self.nest_body(ranges, body))
+
+  def delinearize(self, ranges: Sequence[ProgramNode], body: Sequence[ProgramNode]) -> tuple[list[ProgramNode], list[ProgramNode]]:
+    """Split each loop whose variable the body divides into one loop per digit the divisors mark, so
+    a read through a transpose indexes by affine sums; ``nest_body`` merges back the digits every
+    access walks contiguously.
+
+    The block sizes are the divisors of ``k / b`` and ``k % b`` and the products ``s * e`` of
+    ``(k / s) % e``. When each divides the next and the trip count, ``k`` is the sum of its digits
+    times their block sizes, and the quotients and remainders fold away under the digits' bounds."""
+    out: list[ProgramNode] = []
+    body = list(body)
+    bounds = {r.attrs["name"]: (int(r.args[0].attrs["value"]), int(r.args[1].attrs["value"]) - 1) for r in ranges if trip_count(r)}
+    for rng in ranges:
+      count, name = trip_count(rng), rng.attrs["name"]
+      var = p.var(name)
+      blocks = {count}
+      for n in (n for stmt in body for n in walk_program(stmt)):
+        if n.op in (ProgramOp.DIV, ProgramOp.MOD) and n.args[1].op == ProgramOp.CONST_INT:
+          x, c = n.args[0], int(n.args[1].attrs["value"])
+          if x is var:
+            blocks.add(c)
+          elif x.op == ProgramOp.DIV and x.args[0] is var and x.args[1].op == ProgramOp.CONST_INT:
+            blocks.add(int(x.args[1].attrs["value"]) * c)
+      sizes = sorted(b for b in blocks if b is not None and 1 < b)
+      edges = [1, *sizes]
+      if (
+        count is None
+        or len(sizes) < 2
+        or rng.args[0] != p.const_int(0)
+        or rng.args[2] != p.const_int(1)
+        or rng.attrs.get("carried")
+        or sizes[-1] != count
+        or any(b % a for a, b in zip(edges, sizes))
+      ):
+        out.append(rng)
+        continue
+      digits = [self.names.allocate(f"{name}_{k}") for k in range(len(sizes))]
+      index: ProgramNode | None = None
+      for digit, edge, top in zip(digits, edges, sizes):
+        bounds[digit] = (0, top // edge - 1)
+        term = p.var(digit) if edge == 1 else p.mul(p.var(digit), p.const_int(edge))
+        index = term if index is None else p.add(term, index)
+      assert index is not None
+      fold = Pattern[ProgramNode](None, lambda n: n.op in (ProgramOp.DIV, ProgramOp.MOD), lambda n: _fold_bounded(n, bounds) or n)
+      body = [_fold_index(rewrite(substitute_var(stmt, name, index), [fold], rebuild=rebuild_program)) for stmt in body]
+      out += [p.range_(digit, 0, top // edge, kind=rng.attrs["kind"]) for digit, edge, top in reversed(list(zip(digits, edges, sizes)))]
+    return out, body
 
   def nest_body(self, ranges: Sequence[ProgramNode], body: Sequence[ProgramNode]) -> list[ProgramNode]:
     """Return ``body`` inside ``ranges``, outermost first.
@@ -628,11 +822,114 @@ def _flat(shape: tuple[int, ...], coords: Sequence[ProgramNode]) -> ProgramNode:
   return p.add(p.const_int(offset), out) if offset else out
 
 
+_Read = tuple[Expr, bool, tuple[ProgramNode, ...]]
+_Step = ProgramNode | tuple[list[_Read], Callable[[list[ProgramNode]], ProgramNode]]
+
+
+def _only(values: list[ProgramNode]) -> ProgramNode:
+  return values[0]
+
+
+def _broadcast(coords: Sequence[ProgramNode], shape: tuple[int, ...]) -> tuple[ProgramNode, ...]:
+  """The coordinates an operand of ``shape`` is read at under broadcasting: the trailing ones, zero on a unit axis."""
+  return tuple(c if d != 1 else p.const_int(0) for c, d in zip(coords[len(coords) - len(shape) :], shape, strict=True))
+
+
+def _uniform(expr: Expr) -> int | float | None:
+  """The one value of a constant whose entries are all equal, else None."""
+  value = expr.value
+  assert value is not None
+  flat = value.reshape(-1)
+  return flat[0].item() if flat.size and flat.tobytes() == flat[:1].tobytes() * flat.size else None
+
+
+def _contiguous_slice_offset(index: tuple[object, ...], in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> int | None:
+  """If the slice selects a contiguous sub-block of ``src`` at a constant flat offset (no stride,
+  at most one partial leading slice with full trailing dims), return that offset; else None. Port
+  of ``codegen/c.py::_contiguous_slice_offset`` — the precondition for pointer aliasing."""
+  if not out_shape:
+    offset = 0
+    for dim, item in enumerate(index):
+      if not isinstance(item, int):
+        return None
+      offset += (item if item >= 0 else in_shape[dim] + item) * _stride(in_shape, dim)
+    return offset
+  first_slice = None
+  offset = 0
+  out_dim = 0
+  for dim, item in enumerate(index):
+    stride = _stride(in_shape, dim)
+    if isinstance(item, int):
+      if first_slice is not None and in_shape[dim] != 1:
+        return None
+      offset += (item if item >= 0 else in_shape[dim] + item) * stride
+      continue
+    assert isinstance(item, slice)
+    start, stop, step = item.indices(int(in_shape[dim]))
+    if step != 1:
+      return None
+    if first_slice is None:
+      first_slice = dim
+      offset += start * stride
+      out_dim += 1
+      continue
+    if start != 0 or stop != int(in_shape[dim]) or out_shape[out_dim] != int(in_shape[dim]):
+      return None
+    out_dim += 1
+  return offset
+
+
+def _slice_coords(index: tuple[object, ...], src_shape: tuple[int, ...], coords: Sequence[ProgramNode]) -> list[ProgramNode]:
+  """The source coordinates a slice reads at its output ``coords``: an integer index is a constant, a
+  slice ``start + step * coord``."""
+  source: list[ProgramNode] = []
+  out_dim = 0
+  for dim, item in enumerate(index):
+    if isinstance(item, int):
+      source.append(p.const_int(item if item >= 0 else int(src_shape[dim]) + item))
+      continue
+    assert isinstance(item, slice)
+    start, _stop, step = item.indices(int(src_shape[dim]))
+    source.append(_shift(coords[out_dim], start, step))
+    out_dim += 1
+  return source
+
+
+def _reshape_coords(coords: Sequence[ProgramNode], shape: tuple[int, ...], src_shape: tuple[int, ...]) -> list[ProgramNode]:
+  """The source coordinates of a reshape from ``src_shape`` to ``shape`` at ``coords``.
+
+  Axes pair into the smallest groups of equal size on both sides. A group's position is affine in its
+  output coordinates, and splitting it back costs a quotient and a remainder only on a source group
+  of more than one axis."""
+  if 0 in shape:
+    return [p.const_int(0)] * len(src_shape)
+  out: list[ProgramNode] = []
+  i = j = 0
+  while j < len(src_shape):
+    gi, gj, a, b = [], [j], 1, int(src_shape[j])
+    j += 1
+    while a != b:
+      if a < b:
+        gi.append(i)
+        a *= int(shape[i])
+        i += 1
+      else:
+        gj.append(j)
+        b *= int(src_shape[j])
+        j += 1
+    position = _flat(tuple(int(shape[k]) for k in gi), [coords[k] for k in gi])
+    out += _flat_coordinates(position, tuple(int(src_shape[k]) for k in gj))
+  return out
+
+
 def _flat_coordinates(k: ProgramNode, shape: tuple[int, ...]) -> list[ProgramNode]:
   """The coordinates of row-major position ``k`` in ``shape``, as quotients and remainders."""
   coords = []
   for dim, extent in enumerate(shape):
     stride = _stride(shape, dim)
+    if k.op == ProgramOp.CONST_INT:
+      coords.append(p.const_int(int(k.attrs["value"]) // stride % int(extent) if extent else 0))
+      continue
     quotient = k if stride == 1 else p.div(k, p.const_int(stride))
     coords.append(p.const_int(0) if extent == 1 else quotient if dim == 0 else p.mod(quotient, p.const_int(int(extent))))
   return coords
@@ -730,7 +1027,7 @@ def _copy_loop(src: ProgramNode, dst: ProgramNode, shape: tuple[int, ...], names
 
 def _function_names(
   root: ConcreteFunction, reserved_names: Iterable[str] = ()
-) -> tuple[NameScope, dict[ConcreteFunction, str], frozenset[ConcreteFunction]]:
+) -> tuple[NameScope, dict[ConcreteFunction, str], frozenset[ConcreteFunction], dict[ConcreteFunction, frozenset[frozenset[int]]]]:
   """Name every reachable function, and find those whose residuals some call reads."""
 
   names = NameScope(reserved_names)
@@ -738,6 +1035,7 @@ def _function_names(
   functions: list[ConcreteFunction] = []
   seen: set[ConcreteFunction] = set()
   residuals: set[ConcreteFunction] = set()
+  broadcasts: dict[ConcreteFunction, frozenset[frozenset[int]]] = {}
 
   external_symbols: dict[str, _Extern] = {}
 
@@ -758,6 +1056,9 @@ def _function_names(
       for callee in callees_of(node):
         if node.op != ExprOp.LOOP and node.attrs["output"] >= len(callee.outputs):
           residuals.add(callee)
+        if node.op == ExprOp.VMAP and 0 in node.attrs["strides"]:
+          fixed = frozenset(k for k, stride in enumerate(node.attrs["strides"]) if stride == 0)
+          broadcasts[callee] = broadcasts.get(callee, frozenset()) | {fixed}
         visit(callee)
 
   visit(root)
@@ -768,7 +1069,7 @@ def _function_names(
   for function in functions:
     if function not in symbols:
       symbols[function] = names.procedure(function.name)
-  return names, symbols, frozenset(residuals)
+  return names, symbols, frozenset(residuals), broadcasts
 
 
 def workspace_dtype(fun: ConcreteFunction) -> DType:

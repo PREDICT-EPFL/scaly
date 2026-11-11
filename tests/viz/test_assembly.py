@@ -53,7 +53,7 @@ def test_render_c_source_tracing_is_opt_in(tmp_path, monkeypatch):
   assert step_names[:3] == ["expression", "normalized:square_plus_one", "lowered"]
   assert captured[0]["steps"][0]["phase"] == "expression dialect"
   assert captured[0]["steps"][0]["dialect"] == "expr"
-  assert "pass:fuse_elementwise" in step_names
+  assert "pass:fuse_ranges" in step_names
   assert "pass:unroll_unit_loops" in step_names
   assert "pass:pack_workspace" in step_names
   assert step_names[-1] == "generated C"

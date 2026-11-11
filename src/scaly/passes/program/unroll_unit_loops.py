@@ -9,9 +9,9 @@ from ._common import _map_procs, _proc_parts, _rebuild_proc, prune_dead_buffers,
 def unroll_unit_loops(prog: ProgramNode) -> ProgramNode:
   """Remove static zero-trip loops and inline static one-trip loops.
 
-  Lowering intentionally emits uniform loops even for scalar buffers (shape ``(1,)``). Keeping
-  that shape through ``fuse_elementwise`` preserves its producer matcher; after fusion, this pass
-  erases the leftover ``for (... < 1)`` noise by substituting the loop variable with its sole value.
+  Lowering intentionally emits uniform loops even for scalar buffers (shape ``(1,)``), the shape
+  the loop passes before this one match on. This pass erases the leftover ``for (... < 1)`` noise by
+  substituting the loop variable with its sole value.
   """
   return _map_procs(prog, _unroll_unit_loops_proc)
 
