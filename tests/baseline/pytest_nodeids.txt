@@ -4998,6 +4998,7 @@ tests/passes/lowering/test_in_place.py::test_lengths_and_reverse_preserve_input[
 tests/passes/lowering/test_in_place.py::test_overlapping_later_gather_refuses
 tests/passes/lowering/test_in_place.py::test_repeated_same_indices_materialize_before_writing
 tests/passes/lowering/test_in_place.py::test_returning_old_carry_refuses
+tests/passes/lowering/test_in_place.py::test_reused_buffer_drops_old_zero_support
 tests/passes/lowering/test_in_place.py::test_same_index_matrix_broadcast
 tests/passes/lowering/test_in_place.py::test_same_runtime_index
 tests/passes/lowering/test_in_place.py::test_scatter_keeps_a_live_private_base

@@ -309,3 +309,16 @@ def test_unchanged_carry_needs_no_step_copy():
   proc = next(proc for proc in lower_function(fn).args if proc.attrs.get("inout_carries"))
   assert proc.attrs["param_count"] == 1
   assert not any(node.op == ProgramOp.STORE for stmt in proc.args[1:] for node in walk_program(stmt))
+
+
+def test_reused_buffer_drops_old_zero_support():
+  @sc.function(sc.arg("x", 4))
+  def step(x):
+    base = x * sc.const([0.0, 1.0, 0.0, 1.0])
+    return sc.scatter(base, [0], [5.0], combine="set")
+
+  @sc.function(sc.arg("x", 4))
+  def run(x):
+    return step(x)
+
+  np.testing.assert_array_equal(run(np.arange(4.0)), [5, 1, 0, 3])

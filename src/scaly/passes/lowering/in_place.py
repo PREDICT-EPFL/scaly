@@ -5,7 +5,9 @@ from __future__ import annotations
 import numpy as np
 
 from ...ad.rules import ELEMENTWISE
+from ...ir import program as p
 from ...ir.expr import Expr, ExprOp, _index_values
+from ...ir.program import ProgramNode
 from ...function.concrete import ConcreteFunction
 from ...ir.types import dtypes
 
@@ -139,6 +141,11 @@ def scatter_reuse(ctx, node: Expr) -> bool:
     return False
   if any(expr in aliases for expr in ctx.fun.outputs) or any(any(arg in aliases for arg in later.args) for later in nodes[nodes.index(node) + 1 :]):
     return False
+  if "support" in buf.attrs:
+    # Support describes the old value, not every value the reused storage will hold.
+    replacement = ProgramNode(buf.op, buf.args, {key: value for key, value in buf.attrs.items() if key != "support"}, buf.dtype)
+    ctx.buffers[buf.attrs["name"]] = replacement
+    ctx.statements[ctx.statements.index(buf)] = replacement
   ctx.value_buffers[node.id] = ctx.value_buffers[base.id]
   return True
 
@@ -176,9 +183,6 @@ def same_index_sources(fun: ConcreteFunction, scatter: Expr) -> set[Expr]:
 
 def fused_value(ctx, node: Expr, scatter: Expr, address, coords):
   """Render the proved elementwise update, loading its gather at the destination address."""
-  from ...ir import program as p
-  from ...ir.program import ProgramNode
-
   if node.op == ExprOp.GATHER:
     return p.load(p.view(ctx.buf_of(scatter.args[0]), [address]))
   if node.op == ExprOp.CONST:
