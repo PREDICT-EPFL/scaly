@@ -811,6 +811,78 @@ def test_hoist_refuses_a_buffer_read_between_two_invariant_writes() -> None:
   assert hoist_invariant(prog) is prog
 
 
+@pytest.mark.parametrize("case", ["body", "prologue", "chain", "reassign", "loop", "variant"])
+def test_hoist_keeps_scalar_assignments_with_their_readers(tmp_path, case):
+  import ctypes
+  import subprocess
+
+  from scaly.codegen.c import _includes, _render_raw_callee
+  from scaly.utils.env import shared_lib_ext, shared_lib_flag
+  from tests.compilers import c_compiler
+
+  f64 = dtypes.float64
+  at = lambda buf: p.view(buf, [p.const_int(0)])
+  x, weight, y = (p.buffer(name, f64, (1,)) for name in ("x", "weight", "y"))
+  extra = p.buffer("extra", f64, (1,), address_space="private")
+  fixed, varying, a = p.load(at(weight)), p.load(at(x)), p.var("a", f64)
+  body = [extra, p.assign("a", varying if case == "variant" else fixed, declare=True)]
+  scalar = a
+  if case == "chain":
+    scalar = p.var("b", f64)
+    body.append(p.assign("b", p.add(a, p.const_float(1)), declare=True))
+  elif case == "reassign":
+    body.append(p.assign("a", p.add(a, varying)))
+  coefficient = a if case in ("prologue", "variant") else fixed
+  body.append(p.store(at(extra), p.mul(coefficient, coefficient)))
+  value = p.add(scalar, p.mul(p.load(at(extra)), varying))
+  if case == "prologue":
+    value = p.mul(p.load(at(extra)), varying)
+  elif case == "variant":
+    value = p.load(at(extra))
+  result = p.store(at(y), value)
+  body.append(p.for_(p.range_("j", 0, 1), [result]) if case == "loop" else result)
+  stage = p.proc("stage", [x, weight, y], body)
+  stage = ProgramNode(stage.op, stage.args, {**stage.attrs, "input_count": 2}, stage.dtype)
+  xs, ys = (p.buffer(name, f64, (4,)) for name in ("xs", "ys"))
+  call = ProgramNode(
+    ProgramOp.CALL,
+    (p.view(xs, [p.var("i")]), weight, p.view(ys, [p.var("i")])),
+    {"callee": "stage", "n_in": 2, "n_out": 1, "returns": ()},
+  )
+  root = p.proc("root", [xs, weight, ys], [p.for_(p.range_("i", 0, 4), [call])])
+  root = ProgramNode(root.op, root.args, {**root.attrs, "input_count": 2}, root.dtype)
+  original = p.program([stage, root])
+  hoisted = hoist_invariant(original)
+  verify_program(hoisted)
+  source = "\n".join([*_includes(prog=hoisted), *(line for proc in hoisted.args for line in _render_raw_callee(proc))])
+  path, library = tmp_path / "hoisted.c", tmp_path / ("hoisted" + shared_lib_ext())
+  path.write_text(source + "\nvoid run(double *xs, double *weight, double *ys) { root_raw(xs, weight, ys, NULL); }\n")
+  subprocess.run([*c_compiler(), "-O2", "-fPIC", shared_lib_flag(), str(path), "-lm", "-o", str(library)], check=True)
+  run = ctypes.CDLL(str(library)).run
+  ptr = ctypes.POINTER(ctypes.c_double)
+  run.argtypes, run.restype = [ptr, ptr, ptr], None
+  data, weights, out = np.array([-2.0, -0.5, 0.0, 1.5]), np.array([0.7]), np.empty(4)
+  run(*(values.ctypes.data_as(ptr) for values in (data, weights, out)))
+  expected = weights[0] + weights[0] ** 2 * data
+  if case == "prologue":
+    expected = weights[0] ** 2 * data
+  elif case == "chain":
+    expected = expected + 1
+  elif case == "reassign":
+    expected = expected + data
+  elif case == "variant":
+    expected = data**2
+  np.testing.assert_allclose(out, expected)
+  if case == "variant":
+    assert hoisted is original
+  else:
+    prologue = next(proc for proc in hoisted.args if "_hoist_" in proc.attrs["name"])
+    variant = next(proc for proc in hoisted.args if "_hoisted_" in proc.attrs["name"])
+    assigns = lambda proc: {n.attrs["target"] for n in walk_program(proc) if n.op == ProgramOp.ASSIGN}
+    assert assigns(prologue) == ({"a"} if case == "prologue" else set())
+    assert assigns(variant) == (set() if case == "prologue" else {"a", "b"} if case == "chain" else {"a"})
+
+
 @pytest.mark.parametrize("hint,mode", [("auto", "inline"), ("scalar", "procedure"), ("block", "disabled")])
 def test_hoist_prunes_before_scalarization_and_preserves_prologue_policy(hint: Lowering, mode: str) -> None:
   @sc.function(sc.group(sc.arg("x", 1), sc.arg("w", 1)), outputs=sc.arg("y"), name="policy_stage")
