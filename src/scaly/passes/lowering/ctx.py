@@ -243,8 +243,8 @@ class LowerCtx:
     self._output_alias: dict[int, str] = {}
     self.used_results: dict[tuple, list[Expr]] = {}
     for node in fun.nodes:
-      if (key := invocation_key(node)) is not None:
-        self.used_results.setdefault(key, []).append(node)
+      if callees_of(node):
+        self.used_results.setdefault(invocation_key(node), []).append(node)
     self._tmp = 0
     self._zero_padded: dict[int, ProgramNode] = {}
 

@@ -750,14 +750,11 @@ def callees_of(node: Expr) -> tuple[Any, ...]:
   return (node.attrs["callee"],) if node.op in CALLEE_OPS else ()
 
 
-def invocation_key(node: Expr) -> tuple[Any, ...] | None:
-  """Group callee results by operation, callee identity, argument identity and invocation attributes."""
-  callees = callees_of(node)
-  if not callees:
-    return None
+def invocation_key(node: Expr) -> tuple[Any, ...]:
+  """Group a call operation's results by operation, callee identity, argument identity and invocation attributes."""
   # VMAP's slice size describes the selected result, not the invocation.
-  attrs = {k: v for k, v in node.attrs.items() if k not in ("callee", "output") and not (node.op == ExprOp.VMAP and k == "slice_size")}
-  return node.op, tuple(id(callee) for callee in callees), tuple(arg.id for arg in node.args), _attrs_key(attrs)
+  attrs = {k: v for k, v in node.attrs.items() if k not in ("callee", "output", "slice_size")}
+  return node.op, tuple(id(callee) for callee in callees_of(node)), tuple(arg.id for arg in node.args), _attrs_key(attrs)
 
 
 def as_expr(x: Any) -> Expr:

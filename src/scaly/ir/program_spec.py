@@ -32,13 +32,9 @@ def verify_program(root: ProgramNode, spec: "Spec | None" = None) -> None:
     if node.op == ProgramOp.PROC:
       can_break = False
     elif node.op == ProgramOp.FOR:
-      can_break = bool(node.args[0].attrs.get("carried") and node.attrs.get("exit_var"))
-    if node.op in (ProgramOp.PROGRAM, ProgramOp.BLOCK):
+      can_break = bool(node.attrs.get("exit_var"))  # the FOR rule has checked that its range is carried
+    if node.op in (ProgramOp.PROGRAM, ProgramOp.PROC, ProgramOp.BLOCK, ProgramOp.FOR):
       pending.extend((arg, can_break) for arg in node.args)
-    elif node.op == ProgramOp.PROC:
-      pending.extend((arg, can_break) for arg in node.args[node.attrs["param_count"] :])
-    elif node.op == ProgramOp.FOR:
-      pending.extend((arg, can_break) for arg in node.args[1:])
 
 
 # ---------- shared rules ----------

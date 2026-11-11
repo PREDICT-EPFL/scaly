@@ -54,9 +54,7 @@ def _lower_call(ctx: LowerCtx, node: Expr) -> None:
 def _result_buffers(ctx: LowerCtx, node: Expr) -> tuple[list[ProgramNode], dict[int, Expr]]:
   callee = node.attrs["callee"]
   results = callee.results if callee in ctx.residuals else callee.outputs
-  key = invocation_key(node)
-  assert key is not None
-  siblings = ctx.used_results[key]
+  siblings = ctx.used_results[invocation_key(node)]
   used = {int(sibling.attrs["output"]): sibling for sibling in siblings}
   buffers = [
     ctx.alloc_tmp(used[i]) if i in used else ctx.new_private(result.type.dtype, result.type.storage_shape) for i, result in enumerate(results)
