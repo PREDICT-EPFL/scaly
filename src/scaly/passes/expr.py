@@ -300,7 +300,7 @@ SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
   Pattern(ExprOp.TRANSPOSE, lambda e: e.attrs["axes"] == tuple(range(len(e.attrs["axes"]))), _transpose_identity),
   Pattern(ExprOp.MATMUL, _matmul_of_transpose_and_vector, _matmul_transpose_fold),
   Pattern(ExprOp.MATMUL, _matmul_ones_vector, _matmul_ones),
-  Pattern(ExprOp.REDUCE, lambda e: _is_zero(e), _zero_unary),
+  Pattern(ExprOp.REDUCE, _is_zero, _zero_unary),
   Pattern(ExprOp.GATHER, lambda e: _is_zero(e.args[0]), _zero_unary),
   Pattern(ExprOp.GATHER, _gather_identity, lambda e: e.args[0].reshape(e.shape)),
   Pattern(ExprOp.SCATTER, lambda e: _is_zero(e.args[0]), _zero_unary),

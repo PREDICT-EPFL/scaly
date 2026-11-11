@@ -449,12 +449,7 @@ def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> 
 
 def reduce_entries(entries: np.ndarray, shape: tuple[int, ...], axes: tuple[int, ...]) -> np.ndarray:
   """Project input coordinates onto the axes retained by a reduction."""
-  coords = np.unravel_index(entries, shape) if shape else ()
-  output = np.zeros(len(entries), dtype=np.int64)
-  for axis, (dim, coord) in enumerate(zip(shape, coords, strict=True)):
-    if axis not in axes:
-      output = output * dim + coord
-  return output
+  return project_entries(entries, tuple(1 if axis in axes else dim for axis, dim in enumerate(shape)), shape)
 
 
 def transpose_entries(entries: np.ndarray, shape: tuple[int, ...], axes: tuple[int, ...]) -> np.ndarray:
