@@ -373,8 +373,9 @@ Only mapped calls get a separate stage adjoint function.
 
 ## Non-smooth and unsupported derivatives
 
-The operations without derivative rules, including the refusal of an active
-derivative through a solver call, are listed in the guide's
+The guide records the [non-smooth conventions](../guide/derivatives.md#non-smooth-conventions),
+including equal shares at extremum ties and zero slopes for rounding operations.
+An active derivative through a solver call is refused, as described under
 [current limitations](../guide/derivatives.md#current-limitations).
 
 [^griewank]: Andreas Griewank and Andrea Walther, *Evaluating Derivatives:

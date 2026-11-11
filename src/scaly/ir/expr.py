@@ -1356,7 +1356,7 @@ def argmax(x: Any, axis: int | None = None, *, keepdims: bool = False) -> Expr:
   Floating operands, a single integer axis or ``None``, and ``keepdims`` follow
   NumPy. With ``axis=None`` indices address the flattened logical array. Structural
   zeros participate. An empty reduction domain raises ``ValueError``.
-  Function output leaves currently require float64; cast indices to float64 to
+  Function output leaves currently require float64. Cast indices to float64 to
   return them numerically, or use the integer expression inside the function.
   """
   return _arg_extreme(x, "max", axis, keepdims)
@@ -1372,11 +1372,12 @@ def _arg_extreme(x: Any, kind: str, axis: int | None, keepdims: bool) -> Expr:
   original = x.shape
   flattened = axis is None
   if axis is None:
-    x, axis = to_dense(x).reshape((x.size,)), 0
-  elif not x.shape and isinstance(axis, int | np.integer) and not isinstance(axis, bool | np.bool_) and axis in (-1, 0):
-    x, axis = x.reshape((1,)), 0
-  elif not isinstance(axis, int | np.integer) or isinstance(axis, bool | np.bool_):
-    raise TypeError("arg reduction axis must be an integer or None")
+    x, axis = x.reshape((x.size,)), 0
+  else:
+    if not isinstance(axis, int | np.integer) or isinstance(axis, bool | np.bool_):
+      raise TypeError("arg reduction axis must be an integer or None")
+    if not x.shape and axis in (-1, 0):
+      x, axis = x.reshape((1,)), 0
   extreme = _extreme(x, kind, axis, True)
   axis = int(axis) % len(x.shape)
   n = x.shape[axis]

@@ -107,7 +107,9 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
   if expr.op == ExprOp.REDUCE:
     shape = tuple(1 if i in expr.attrs["axes"] else n for i, n in enumerate(args[0].shape))
     if expr.attrs["kind"] != "add":
-      return (times_partial(reduction_partial(expr), to_dense(cot).reshape(shape)),)
+      (seed,) = carry_mask(to_dense(cot), lambda c: (c.reshape(shape),))
+      assert seed is not None
+      return (times_partial(reduction_partial(expr), seed),)
     return (cot.reshape(shape) * _ones_like(args[0]),)
   if expr.op == ExprOp.RESHAPE:
     return (cot.reshape(args[0].shape),)

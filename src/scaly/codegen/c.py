@@ -43,7 +43,7 @@ _PREFIX = {r.program: r.c for op, r in _OPERATORS.items() if OP_INFO[op].arity =
 _BIN_SYM = {ProgramOp.MOD: "%"} | {r.program: r.c for op, r in _OPERATORS.items() if OP_INFO[op].arity == 2}
 _UNARY_C = {r.program: r.c for op, r in ELEMENTWISE.items() if OP_INFO[op].arity == 1 and r.c.isidentifier()}
 _BINARY_C = {r.program: r.c for op, r in ELEMENTWISE.items() if OP_INFO[op].arity == 2 and r.c.isidentifier()}
-_VECTOR_BINARY = _BINARY_C | {ProgramOp.MINIMUM: "minimum", ProgramOp.MAXIMUM: "maximum"}
+_VECTOR_BINARY = _BINARY_C | {ProgramOp.MINIMUM: "fmin", ProgramOp.MAXIMUM: "fmax"}
 _INTEGER_C = {r.program: r.c_integer for r in ELEMENTWISE.values() if r.c_integer is not None}
 # printf conversion and argument by dtype. 17 significant digits read a double back exactly.
 _PRINTF = {
@@ -70,11 +70,22 @@ _FLOOR_HELPERS = {
     "}",
   ],
 }
-# isfinite is only meaningful when the compiler keeps infinities and NaN, which -ffast-math and
-# -ffinite-math-only both drop.
+_EXTREMA_HELPERS = {
+  ProgramOp.MINIMUM: [
+    "static inline double scaly_minimum(double x, double y) {",
+    "  return x != x ? x : (x < y ? x : y);",
+    "}",
+  ],
+  ProgramOp.MAXIMUM: [
+    "static inline double scaly_maximum(double x, double y) {",
+    "  return x != x ? x : (x > y ? x : y);",
+    "}",
+  ],
+}
+# Predicates and NaN-propagating extrema require the compiler to keep nonfinite values.
 _FAST_MATH_GUARD = [
   "#if defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__",
-  '#error "Scaly code calling isfinite cannot be compiled with -ffast-math or -ffinite-math-only"',
+  '#error "Scaly nonfinite-value semantics cannot be compiled with -ffast-math or -ffinite-math-only"',
   "#endif",
 ]
 # Defining SCALY_PRINTF before this point reroutes prints, and ``-DSCALY_PRINTF(...)=`` removes them.
@@ -86,15 +97,26 @@ def _includes(
 ) -> list[str]:
   # Vector types for coalesced stores (``_emit_body``): ``aligned(8)`` because the ABI only
   # promises double alignment, ``may_alias`` because they access plain double storage.
-  ops = set() if prog is None else {n.op for n in walk_program(prog)}
+  nodes = [] if prog is None else list(walk_program(prog))
+  ops = {n.op for n in nodes}
+  nonfinite = any(
+    n.dtype.is_floating
+    and n.op in _EXTREMA_HELPERS
+    or n.op == ProgramOp.ISFINITE
+    or n.op == ProgramOp.NE
+    and n.args[0] is n.args[1]
+    and n.args[0].dtype.is_floating
+    for n in nodes
+  )
   return [
     "#include <math.h>",
     "#include <stddef.h>",
     "#include <stdint.h>",
     *extra,
-    *(_FAST_MATH_GUARD if ProgramOp.ISFINITE in ops else []),
+    *(_FAST_MATH_GUARD if nonfinite else []),
     *(_PRINTF_DEFINES if prog is not None and prints(prog) else []),
     *(line for op, helper in _FLOOR_HELPERS.items() if op in ops for line in helper),
+    *(line for op, helper in _EXTREMA_HELPERS.items() if any(n.op == op and n.dtype.is_floating for n in nodes) for line in helper),
     *([_VECTOR_TYPEDEF] if dialect == "gnu" else []),
     *_lane_defines(prog, dialect=dialect, vector_libm=vector_libm),
   ]
@@ -687,7 +709,7 @@ def _vector_math(helper: str, vec: str, width: str, op: ProgramOp, vector_libm: 
         f"  return {symbol}(x{', y' if binary else ''});",
       ]
     lines += ["#endif", "#else"]
-  scalar = _TEMPLATE_C[op].format("x[i]", "y[i]") if op in _TEMPLATE_C else f"{function}({args})"
+  scalar = f"{_UNARY_C.get(op, _BINARY_C.get(op))}({args})"
   lines += [f"  {vec} result;", f"  for (int i = 0; i < {width}; ++i) result[i] = {scalar};", "  return result;"]
   if glibc:
     lines.append("#endif")

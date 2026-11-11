@@ -179,14 +179,14 @@ ELEMENTWISE: dict[ExprOp, Elementwise] = {
   ExprOp.MINIMUM: Elementwise(
     ProgramOp.MINIMUM,
     np.minimum,
-    "({0} != {0} ? {0} : ({0} < {1} ? {0} : {1}))",
+    "scaly_minimum",
     (lambda e: _extremum_partial(e, 0), lambda e: _extremum_partial(e, 1)),
     c_integer="({0} < {1} ? {0} : {1})",
   ),
   ExprOp.MAXIMUM: Elementwise(
     ProgramOp.MAXIMUM,
     np.maximum,
-    "({0} != {0} ? {0} : ({0} > {1} ? {0} : {1}))",
+    "scaly_maximum",
     (lambda e: _extremum_partial(e, 0), lambda e: _extremum_partial(e, 1)),
     c_integer="({0} > {1} ? {0} : {1})",
   ),

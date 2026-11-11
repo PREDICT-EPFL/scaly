@@ -69,11 +69,24 @@ def test_qp_proof_rejects_stopped_derivatives(location: str, form: str) -> None:
 
 @pytest.mark.parametrize("location", ["cost", "eq", "ineq", "lb", "ineq-hi"])
 @pytest.mark.parametrize("form", ["direct", "call", "map"])
-def test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear(location: str, form: str) -> None:
+@pytest.mark.parametrize("operation", ["select", "maximum", "minimum", "abs", "floor", "ceil", "reduce_max", "reduce_min", "norm_1", "norm_inf"])
+def test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear(location: str, form: str, operation: str) -> None:
   """``where(x > 0, x, -x)`` has a zero Hessian but is not quadratic, and a bound of ``x > 0`` has a
   zero Jacobian but depends on the variables."""
 
   def bare(value: sc.Expr) -> sc.Expr:
+    if operation != "select":
+      return {
+        "maximum": lambda: sc.maximum(value, 0),
+        "minimum": lambda: sc.minimum(value, 0),
+        "abs": value.abs,
+        "floor": value.floor,
+        "ceil": value.ceil,
+        "reduce_max": lambda: sc.reduce_max(value),
+        "reduce_min": lambda: sc.reduce_min(value),
+        "norm_1": lambda: sc.norm_1(value),
+        "norm_inf": lambda: sc.norm_inf(value),
+      }[operation]()
     return sc.cast(value > 0.0, "float64") if location in {"lb", "ineq-hi"} else sc.where(value > 0.0, value, -value)
 
   absolute = sc.function(sc.arg("value"), outputs=sc.arg("absolute"))(bare)

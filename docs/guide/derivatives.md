@@ -415,6 +415,19 @@ print(sc.sparse_jacobian(root)(p).shape)   # (9,)
     leaves out an entry the rule computes gives wrong sparse derivatives
     without an error.
 
+## Non-smooth conventions
+
+`minimum`, `maximum`, `reduce_min` and `reduce_max` split derivatives equally
+among tied extrema. `abs` has slope `sign(x)`, with slope zero at zero.
+`floor` and `ceil` have zero derivative everywhere. These conventions apply
+in forward and reverse mode. A branch that is not chosen contributes zero
+even when its local derivative is NaN or infinite.
+
+`argmin` and `argmax` return integer indices and have no derivative.
+Quadratic-program backends refuse variable-dependent nonsmooth operations,
+even when the chosen derivative has a zero Hessian. Express control limits as
+variable bounds to keep a quadratic problem.
+
 ## Current limitations
 
 Derivatives work through ordinary function calls and `vmap`. Ordinary calls may
@@ -425,15 +438,9 @@ or mapped function. A solve independent of the differentiated input does not
 block its derivative. See [solver sensitivities](solvers.md#nesting-a-solver-in-a-graph)
 for the limits of dependency analysis.
 
-`minimum`, `maximum`, `reduce_min` and `reduce_max` split derivatives equally
-among tied extrema. `abs` has slope `sign(x)`, with slope zero at zero.
-`floor` and `ceil` have zero derivative everywhere. These conventions apply
-in forward and reverse mode. A branch that is not chosen contributes zero
-even when its local derivative is NaN or infinite.
-
-`argmin` and `argmax` return integer indices and have no derivative.
-For optimization problems, express control limits as variable bounds when
-possible.
+Derivatives of `reduce_min` and `reduce_max` on sparse inputs currently
+materialize masks and tie counts over the full logical shape. Their temporary
+storage can therefore grow with the dense size, even for diagonal inputs.
 
 Comparisons, `sc.isfinite` and casts to integer or `bool` types have no
 derivative, and a gradient of an integer or `bool` value raises `TypeError`.

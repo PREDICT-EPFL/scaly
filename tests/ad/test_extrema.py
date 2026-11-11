@@ -212,3 +212,19 @@ def test_tied_norm_inf_through_a_transposed_view():
   g, h = map(np.asarray, f(np.array([[-3.0, 1.0, 3.0], [2.0, -3.0, 0.0]])))
   np.testing.assert_allclose(g, [[-1 / 3, 0, 1 / 3], [0, -1 / 3, 0]])
   np.testing.assert_equal(h, np.zeros((6, 6)))
+
+
+@pytest.mark.parametrize("kind", ["max", "min"])
+@pytest.mark.parametrize("sparse", [False, True])
+def test_outer_where_mask_survives_extremum_reduction(kind, sparse):
+  build = sc.reduce_max if kind == "max" else sc.reduce_min
+
+  @sc.function(sc.arg("x", 2), sc.arg("p", ()), outputs=sc.group(sc.arg("t"), sc.arg("g")))
+  def f(x, p):
+    source = sc.pack(x, CanonicalPattern((2, 2), (0, 1), (0, 1))) if sparse else x
+    y = sc.where(p > 0, build(source.sqrt(), axis=1 if sparse else None), 0).sum()
+    return sc.jvp(y, x, sc.const(np.ones(2))), sc.gradient(y, x)
+
+  t, g = map(np.asarray, f(np.zeros(2), np.array(-1.0)))
+  np.testing.assert_equal(t, 0)
+  np.testing.assert_equal(g, np.zeros(2))
