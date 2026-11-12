@@ -366,7 +366,10 @@ def test_loop_body_fuses_within_one_trip_and_keeps_shared_work_apart() -> None:
   assert any(n.op == ProgramOp.MUL for n in walk_program(fused)) and not any(n.op == ProgramOp.EXP for n in walk_program(fused))
   final = lower_function(fn)
   root = final.args[-1]
-  assert any(n.op == ProgramOp.CALL for n in root.args if n.op == ProgramOp.CALL), "the shared work runs once before the loop"
+  (shared,) = [stmt for stmt in root.args if stmt.op == ProgramOp.CALL]
+  shared_proc = next(proc for proc in final.args if proc.attrs["name"] == shared.attrs["callee"])
+  assert any(node.op == ProgramOp.EXP for node in walk_program(shared_proc))
+  assert root.args.index(shared) < root.args.index(_carried_loop(root)), "the shared work runs once before the loop"
   rng = np.random.default_rng(32)
   c0, w, v = rng.uniform(-1, 1, 3), rng.uniform(-1, 1, 3), rng.uniform(-1, 1, (4, 3))
   c, ys = c0, []

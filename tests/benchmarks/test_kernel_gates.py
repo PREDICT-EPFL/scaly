@@ -36,10 +36,7 @@ def test_npmpc_jacobian_source_is_independent_of_horizon_and_width(tmp_path: Pat
   small, large, wide = _build(tmp_path, "npmpc_jac", 6), _build(tmp_path, "npmpc_jac", 100), _build(tmp_path, "npmpc_decoder_jac", 128)
   assert large["source_lines"] < 1.2 * small["source_lines"]
   assert wide["source_lines"] < 1.2 * small["source_lines"]
-  # Seed-axis matrix products use 6144 doubles of fixed scratch; mapped outputs add 1600 at N=100.
-  # Crossing the frame budget can move more of the fixed scratch from the stack to the workspace.
-  assert int(small["w_size"]) <= 6144
-  assert int(large["w_size"]) <= 7744
+  assert int(small["w_size"]) == int(large["w_size"]) == 0
 
 
 def test_npmpc_lagrangian_hessian_source_is_independent_of_horizon_and_width(tmp_path: Path) -> None:
