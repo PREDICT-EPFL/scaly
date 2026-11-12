@@ -119,3 +119,17 @@ The refreshed detached `~/.scaly-suite/run` exited 0: 6,611 passed and 56 skippe
 with benchmark smoke, documentation build, type checking, Ruff checks and the
 private-name check all passing. No C snapshot was regenerated. The final record
 commit changes this evidence only.
+
+## Selected carries at singular partials
+
+Before changing the reverse boundary, the requested two-step problems already
+matched unrolled gradients and central finite differences at `x = [-1, 16]`.
+The body `sqrt(where(c > 0, c, 0))` at both steps gives `[0, 0.03125]`. A select
+at step zero followed by a square root at step one gives `[0, 0.125]`. Both
+results hold with carried ranges and with static expansion. The test checks
+which lowering actually occurred. An incoming-select probe also matched.
+
+The local select guards in these reverse bodies suppress the inactive partials,
+so the reverse rule itself is unchanged for this follow-up. The regressions pin
+the requested cases rather than introducing another cotangent-activity protocol.
+The forward rule's activity-carry fix is inherited from the new forward-loop base.

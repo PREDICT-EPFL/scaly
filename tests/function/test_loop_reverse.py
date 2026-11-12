@@ -481,3 +481,34 @@ def test_carried_reverse_drops_select_activity():
   point = np.array([-0.2, 0.4])
   expected = np.where(point > 0.0, np.cos(np.sin(point)) * np.cos(point), 0.0)
   np.testing.assert_allclose(evaluate([x], [grad], [point]), expected, atol=1e-12)
+
+
+@pytest.mark.parametrize("hint", ["block", "scalar"])
+@pytest.mark.parametrize("split", [False, True])
+def test_selected_carries_reverse_matches_unrolled_at_singular_partials(hint, split):
+  from scaly.ad.derivatives import finite_difference
+  from scaly.codegen import render_c_module
+  from scaly.ir.program import ProgramOp, walk_program
+
+  @sc.function(sc.arg("c", 2), sc.arg("k", sc.TensorType((), sc.dtypes.int64)))
+  def step(c, k):
+    selected = sc.where(c > 0.0, c, 0.0)
+    return sc.where(sc.equal(k, 0), selected, c.sqrt()) if split else selected.sqrt()
+
+  x = sc.sym("x", 2)
+  final = sc.scan(step, x, length=2, index=True)[0].with_lowering(hint)
+  reference = x
+  for k in range(2):
+    reference = step(reference, sc.const(np.int64(k)))
+  gradient = sc.gradient(final.sum(), x).with_lowering(hint)
+  expected = sc.gradient(reference.sum(), x)
+  point = np.array([-1.0, 16.0])
+  value, got, want = evaluate([x], [final, gradient, expected], [point])
+  fd = finite_difference(lambda value: evaluate([x], [final.sum()], [value]), point)
+  np.testing.assert_allclose(got, want, atol=1e-12)
+  np.testing.assert_allclose(got, fd.reshape(-1), rtol=1e-7, atol=1e-10)
+  np.testing.assert_allclose(value, [0.0, 4.0 if split else 2.0], atol=1e-12)
+  fn = ConcreteFunction._from_exprs("selected_reverse", [x], [final, gradient], ["x"], ["final", "gradient"])
+  program = render_c_module(fn).program
+  carried = any(node.op == ProgramOp.RANGE and node.attrs.get("carried") for node in walk_program(program))
+  assert carried == (hint == "block")
