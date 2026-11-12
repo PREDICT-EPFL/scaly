@@ -189,6 +189,16 @@ def main(root):
     if row["backend"] == "scaly" and row["metric"] == "runtime_ns":
       row["status"] = "larger" if row["low95"] > control_band else "smaller" if row["high95"] < 1 / control_band else "unresolved"
   write(root / "comparison.csv", results)
+  write(
+    root / "changes.csv",
+    [
+      row
+      for row in results
+      if row["backend"] == "scaly"
+      and row["metric"] in {"runtime_ns", "kernel_compile_ms", "source_bytes", "dispatch_arithmetic"}
+      and row["status"] in {"larger", "smaller"}
+    ],
+  )
   episode_rows = []
   episodes = defaultdict(dict)
   for side in ("before", "after"):

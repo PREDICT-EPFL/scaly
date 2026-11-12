@@ -17,10 +17,10 @@ LABELS = {
   "unbumpercars": "Unbumpercars Hessian, C",
 }
 METRICS = {
-  "runtime_ns": ("Runtime, µs", 1000),
-  "kernel_compile_ms": ("C compilation, ms", 1),
+  "runtime_ns": ("Evaluation time, µs", 1000),
+  "kernel_compile_ms": ("C compilation, seconds", 1000),
   "source_bytes": ("C source, kB", 1000),
-  "dispatch_arithmetic": ("Operations per mapped iteration", 1),
+  "dispatch_arithmetic": ("Operations per iteration", 1),
 }
 
 
@@ -56,7 +56,9 @@ def main(root, repo):
   assets = repo / "docs/assets/benchmarks"
   write_csv(assets / "compiler_run_values.csv", values)
   write_csv(assets / "compiler_run_ratios.csv", ratios)
-  params = [{"name": "measure", "value": "Runtime, µs", "bind": {"input": "select", "name": "Metric: ", "options": [v[0] for v in METRICS.values()]}}]
+  params = [
+    {"name": "measure", "value": "Evaluation time, µs", "bind": {"input": "select", "name": "Metric: ", "options": [v[0] for v in METRICS.values()]}}
+  ]
   common = {
     "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
     "params": params,
@@ -65,7 +67,13 @@ def main(root, repo):
     "columns": 3,
     "resolve": {"scale": {"x": "independent", "y": "independent"}},
   }
-  x = {"field": "size", "type": "quantitative", "title": "Size", "scale": {"type": "log", "nice": False}, "axis": {"format": "~g", "tickCount": 3}}
+  x = {
+    "field": "size",
+    "type": "quantitative",
+    "title": "Size",
+    "scale": {"type": "log", "nice": False},
+    "axis": {"format": "~g", "tickCount": 3, "grid": False},
+  }
   absolute = {
     **common,
     "data": {"url": "compiler_run_values.csv", "format": {"type": "csv", "parse": {"size": "number", "value": "number"}}},
@@ -131,6 +139,28 @@ def main(root, repo):
   relative["spec"].pop("encoding")
   for layer in relative["spec"]["layer"][1:]:
     layer["encoding"]["x"] = x
+  point = relative["spec"]["layer"][2]
+  point["mark"] = {"type": "point", "filled": True, "color": "#2a78d6"}
+  relative["spec"]["layer"].insert(
+    2,
+    {
+      "mark": {"type": "line", "color": "#2a78d6", "opacity": 0.55},
+      "encoding": {"x": x, "y": point["encoding"]["y"]},
+    },
+  )
+  band = json.loads((root / "audit.json").read_text())["observed_control_ratio_band"]
+  relative["spec"]["layer"].insert(
+    0,
+    {
+      "transform": [{"filter": "datum.metric === 'Evaluation time, µs'"}, {"aggregate": [], "groupby": ["problem"]}],
+      "mark": {"type": "rect", "color": "#c3c2b7", "opacity": 0.35},
+      "encoding": {"y": {"datum": band[0], "type": "quantitative", "scale": {"type": "log"}}, "y2": {"datum": band[1]}},
+    },
+  )
+  for layer in relative["spec"]["layer"]:
+    y = layer["encoding"]["y"]
+    y["scale"] = {"type": "log", "nice": False, "zero": False}
+    y["axis"] = {"format": ".4~g", "grid": False, "tickCount": 4}
   for name, spec in (("compiler_run_values", absolute), ("compiler_run_ratios", relative)):
     (assets / f"{name}.vl.json").write_text(json.dumps(spec, indent=2) + "\n")
   html = """<!doctype html><html><head><meta charset="utf-8"><style>
@@ -139,13 +169,14 @@ select{font:inherit;color:var(--foreground);background:var(--card);border:1px so
 p{font-size:13px;color:var(--muted-foreground);margin:8px 0}svg{width:100%;height:690px}text{fill:var(--foreground);font-family:var(--font-sans);font-size:11px}
 </style></head><body><label>Metric <select id="metric"></select></label><p>After / before. Smaller values are left of 1. Lines show 95% timing intervals. Gray points mark equal values or unresolved changes.</p>
 <svg id="chart" viewBox="0 0 710 690" role="img" aria-label="Compiler comparison by workload and size"></svg>
-<p>Three fresh builds per revision. Four alternating retimings per binary, eight for noisy cells. C compilation excludes the wrapper and linker. The operation count describes the dominant mapped family.</p>
-<script>const data=DATA;const labels=LABELS;const menu=document.getElementById('metric');
+<p>Before: e7f80e1f. After: 5335c46d. Each interval uses three build means, with four or eight alternating retimings per binary. Evaluation-time changes must also clear the shaded 1.6% reference range. C compilation excludes the wrapper and linker. Operation counts cover the most expensive equally repeated blocks.</p>
+<script>const data=DATA;const band=BAND;const menu=document.getElementById('metric');
 for(const metric of [...new Set(data.map(r=>r.metric))])menu.add(new Option(metric,metric));
 const svg=document.getElementById('chart'),ns='http://www.w3.org/2000/svg';
 function add(name,attrs,text){const e=document.createElementNS(ns,name);for(const[k,v]of Object.entries(attrs))e.setAttribute(k,v);if(text!==undefined)e.textContent=text;svg.append(e);return e;}
 function draw(){svg.replaceChildren();const rows=data.filter(r=>r.metric===menu.value),low=Math.min(.5,...rows.map(r=>r.low95||r.ratio)),high=Math.max(2,...rows.map(r=>r.high95||r.ratio));
 const minimum=Math.log(low)-.08,maximum=Math.log(high)+.08,x=v=>235+365*(Math.log(v)-minimum)/(maximum-minimum);
+if(menu.value==='Evaluation time, µs')add('rect',{x:x(band[0]),y:25,width:x(band[1])-x(band[0]),height:623,fill:'var(--border)',opacity:.6});
 for(const tick of [.125,.25,.5,1,2,4,8].filter(v=>v>=low&&v<=high)){add('line',{x1:x(tick),x2:x(tick),y1:25,y2:648,stroke:'var(--border)','stroke-dasharray':tick===1?'':'3 4'});add('text',{x:x(tick),y:17,'text-anchor':'middle'},tick+'×');}
 rows.forEach((r,i)=>{const y=39+i*23,color=['unresolved','unchanged'].includes(r.status)?'var(--muted-foreground)':r.ratio>1?'var(--destructive)':'var(--success)';
 add('text',{x:0,y:y+4},r.problem.replace(', width',' W').replace(', M',' M').replace(', N',' N').replace(', C',' C')+'='+r.size);
@@ -153,7 +184,7 @@ if(r.low95&&r.high95)add('line',{x1:x(r.low95),x2:x(r.high95),y1:y,y2:y,stroke:c
 const point=add('circle',{cx:x(r.ratio),cy:y,r:4,fill:color});const title=document.createElementNS(ns,'title');title.textContent=`Before ${r.before.toPrecision(5)}, after ${r.after.toPrecision(5)}. ${r.status}.`;point.append(title);
 add('text',{x:615,y:y+4},r.ratio.toFixed(3)+'×');});}
 menu.onchange=draw;draw();</script></body></html>"""
-  html = html.replace("DATA", json.dumps(ratios)).replace("LABELS", json.dumps(LABELS))
+  html = html.replace("DATA", json.dumps(ratios)).replace("BAND", json.dumps(band))
   (root / "comparison.html").write_text(html)
   print(f"Wrote {len(values)} before/after points and {len(ratios)} metric comparisons")
 

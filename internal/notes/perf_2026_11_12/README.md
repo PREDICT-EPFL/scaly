@@ -48,7 +48,8 @@ steps per revision completed. No correctness or execution gate failed.
 
 `analyze.py` checks pushed clean revisions, CPU policy, frozen-file and native-library hashes,
 correctness markers and input bytes, then writes `comparison.csv`, `closed-loop-comparison.csv`,
-`artifact-audit.json` and `audit.json`. The chain Jacobian's unrolled Scaly reference differs by
+`artifact-audit.json` and `audit.json`. `changes.csv` keeps every beyond-noise change in the four
+requested metrics. The chain Jacobian's unrolled Scaly reference differs by
 roundoff between revisions; it is checked to 1e-12 rather than claimed to be independent.
 All 24 completed CasADi kernel objects match byte for byte.
 
@@ -80,3 +81,23 @@ reported 58,541 M=9 operations compare with 270,299 under the baseline's automat
 the earlier 46,700 scalar floor named by #427. M=5's dominant-family count rises from 17,315 to
 21,679, with a change from 39 to 40 trips. The separate lowering-fusion study explains only about
 0.9% of its runtime change, so that change alone does not explain the measured 71% regression.
+
+The independent prose review identified a separate controller-noise limit. Six of seven
+CasADi controller pairs have mean step times within 1.6%, but neural MPC SQP shifts
+10% in total and 17% in function evaluation. The kernel control range must not be applied to
+episode totals, and comparable controller changes are labelled indicative in the report and docs.
+
+`verify_figures.py` compiles and renders both local figure specifications for all four metrics
+in light and dark mode through the cached Vega converter. It needs no server. The T3 browser
+preview was blocked by the host's AppArmor configuration. Its standalone HTML remains available
+for the thread, while the native converter checks the actual docs figures.
+
+```sh
+uv run --offline internal/notes/perf_2026_11_12/verify_figures.py . benchmarks/results/post-run-2026-11-12/figures
+```
+
+All analysis assertions, Ruff lint and formatting, and the local documentation build pass.
+The converter compiled all 16 figure variants; the runtime and compilation plots were visually
+checked. One Fable prose review was applied once, and the changed labels, controller caveats and
+point-only uncertainty styling were checked locally. No new runnable documentation examples were
+added. Only this task's extra detached worktree was removed. Documentation edits remain uncommitted.
