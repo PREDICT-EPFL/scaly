@@ -103,6 +103,7 @@ def _includes(
     "#include <math.h>",
     "#include <stddef.h>",
     "#include <stdint.h>",
+    *(["#include <string.h>"] if prog is not None and any(n.attrs.get("zero_fill") for n in walk_program(prog)) else []),
     *extra,
     *(_FAST_MATH_GUARD if nonfinite else []),
     *(_PRINTF_DEFINES if prog is not None and prints(prog) else []),
@@ -247,7 +248,7 @@ def _render_raw_callee(
   pointer per param plus the workspace tail (spilled slots index into ``w``; ``call`` sites pass
   the caller's ``w`` advanced past its own spill window). ``w`` points to ``unit``, the
   program's workspace dtype, and is ``void*`` for a byte workspace. The leading ``input_count`` params are
-  inputs and are ``const``-qualified (read-only by construction), so a solver wrapper can pass
+  inputs and are ``const``-qualified except for explicit ``inout`` parameters, so a solver wrapper can pass
   its ``const double*`` arguments without discarding qualifiers. No ABI wrapper.
 
   Callees stay inline unless lowering marks them ``noinline``, which it does for forward-AD helpers;
@@ -261,7 +262,10 @@ def _render_raw_callee(
   ptr_expr = {pp.attrs["name"]: c_ident(pp.attrs["name"]) for pp in params}
   param_decls = ", ".join(
     [
-      *(f"{'const ' if i < input_count else ''}{pp.dtype.c_type}* {c_ident(pp.attrs['name'])}" for i, pp in enumerate(params)),
+      *(
+        f"{'const ' if i < input_count and pp.attrs.get('intent') != 'inout' else ''}{pp.dtype.c_type}* {c_ident(pp.attrs['name'])}"
+        for i, pp in enumerate(params)
+      ),
       f"{ENTRY_C_TYPES[unit]}* w",
     ]
   )
@@ -392,6 +396,13 @@ def _emit_statement(
     _emit_vector_calls(stmt, ptr_expr, lines, indent)
   elif stmt.op == ProgramOp.FOR:
     rng = stmt.args[0]
+    if stmt.attrs.get("zero_fill"):
+      assert len(stmt.args) == 2 and stmt.args[1].op == ProgramOp.STORE
+      assert stmt.args[1].args[1].op in (ProgramOp.CONST_INT, ProgramOp.CONST_FLOAT) and stmt.args[1].args[1].attrs["value"] == 0
+      target = _emit_view(stmt.args[1].args[0], ptr_expr, {rng.attrs["name"]: "0"})
+      count = _emit_scalar(rng.args[1], ptr_expr)
+      lines.append(f"{pad}memset(&{target}, 0, {count} * sizeof({stmt.args[1].dtype.c_type}));")
+      return
     name = c_ident(rng.attrs["name"])
     start = _emit_scalar(rng.args[0], ptr_expr, index=True)
     stop = _emit_scalar(rng.args[1], ptr_expr, index=True)

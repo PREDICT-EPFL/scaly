@@ -10,6 +10,8 @@ from ..ir.expr import (
   Expr,
   ExprOp,
   _full_like,
+  _index_values,
+  _scatter_zero,
   _uniform,
   callees_of,
   concat,
@@ -32,6 +34,7 @@ from .rules import (
   _masked,
   carry_masks,
   move_mask,
+  scatter_weights,
   reduction_partial,
   times_partial,
   tangent as _elementwise_tangent,
@@ -138,6 +141,10 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
           raise NotImplementedError(f"JVP for nonsmooth op {expr.op!r} in callee {callee!r} is not implemented")
         tangent = _elementwise_tangent(expr, d, nseed)
       else:
+        if expr.op == ExprOp.GATHER:
+          args, d = args[:1], d[:1]
+        elif expr.op == ExprOp.SCATTER:
+          args, d = (args[0], args[2]), (d[0], d[2])
         assert all(arg.type.dtype.is_floating for arg in args)
         d = [t if t is not None else _zero_tangent(arg, nseed) for arg, t in zip(args, d, strict=True)]
         if len(d) == 1:
@@ -211,7 +218,11 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
   if op == ExprOp.SLICE:
     return d[0][(slice(None), *expr.attrs["index"])]
   if op == ExprOp.GATHER:
-    indices = expr.attrs["indices"].reshape(-1)
+    if expr.args[1].value is None or expr.attrs.get("mode") == "fill":
+      axis = expr.attrs.get("axis")
+      source = d[0].reshape((nseed, args[0].size)) if axis is None else d[0]
+      return gather(source, args[1], axis=1 if axis is None else axis + 1, mode=expr.attrs["mode"]).reshape((nseed, *expr.shape))
+    indices = _index_values(expr).reshape(-1)
     if args[0].type.pattern is not None:
       source = stored_indices(args[0].type)
       reads = indices[stored_indices(expr.type)]
@@ -225,15 +236,27 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
     full = (np.arange(nseed, dtype=np.int64)[:, None] * args[0].size + indices[None, :]).reshape(-1)
     return gather(d[0], full).reshape((nseed, *expr.shape))
   if op == ExprOp.SCATTER:
-    indices = expr.attrs["indices"].reshape(-1)
-    if args[0].type.pattern is not None:
-      target = indices[stored_indices(args[0].type)]
+    if expr.args[1].value is None or expr.attrs["mode"] == "fill" or expr.attrs["combine"] != "add":
+      base, updates = d
+      if expr.attrs["combine"] != "add":
+        base_weight, update_weight = scatter_weights(expr)
+        base, updates = base * base_weight, updates * update_weight
+      axis = expr.attrs.get("axis")
+      if axis is None:
+        base = base.reshape((nseed, expr.size))
+        updates = updates.reshape((nseed, *args[1].shape))
+      return scatter(base, args[1], updates, axis=1 if axis is None else axis + 1, mode=expr.attrs["mode"]).reshape((nseed, *expr.shape))
+    indices = _index_values(expr).reshape(-1)
+    if args[2].type.pattern is not None:
+      target = indices[stored_indices(args[2].type)]
       slots = np.searchsorted(stored_indices(expr.type), target) if expr.type.pattern is not None else target
       full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.type.storage_size + slots[None, :]).reshape(-1)
-      stored = scatter(values(d[0]).vec(), full, (nseed * expr.type.storage_size,))
-      return _reshape_tangent(stored, expr, nseed)
+      stored = _scatter_zero(values(d[1]).vec(), full, (nseed * expr.type.storage_size,))
+      scattered = _reshape_tangent(stored, expr, nseed)
+      return scattered if d[0].support == frozenset() else d[0] + scattered
     full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.size + indices[None, :]).reshape(-1)
-    return scatter(d[0].reshape((nseed * args[0].size,)), full, (nseed * expr.size,)).reshape((nseed, *expr.shape))
+    scattered = _scatter_zero(d[1].reshape((nseed * args[2].size,)), full, (nseed * expr.size,)).reshape((nseed, *expr.shape))
+    return scattered if d[0].support == frozenset() else d[0] + scattered
   if op == ExprOp.STACK:
     return stack(d, axis=expr.attrs.get("axis", 0) + 1)
   if op == ExprOp.CONCAT:

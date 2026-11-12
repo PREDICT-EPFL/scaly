@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from ..ir.expr import Expr, pack, scatter, to_dense, values
+from ..ir.expr import Expr, pack, _scatter_zero, to_dense, values
 from ..ir.types import stored_indices
 from ..passes.expr import simplify_cse_fixpoint
 from .forward import jvp_many
@@ -32,7 +32,7 @@ def jacobian(expr: Expr, wrt: Expr) -> Expr:
     seeds = pack(compact, wrt.type.pattern, shape=(count, *wrt.shape)) if wrt.type.pattern is not None else compact
     tangent = values(jvp_many(expr, wrt, seeds)).reshape((count, expr.type.storage_size)).T
     indices = (stored_indices(expr.type)[:, None] * wrt.size + stored_indices(wrt.type)[None, :]).reshape(-1)
-    return simplify_cse_fixpoint(scatter(tangent, indices, (expr.size, wrt.size)))
+    return simplify_cse_fixpoint(_scatter_zero(tangent, indices, (expr.size, wrt.size)))
   if wrt.size == 0:
     return Expr.const(np.zeros((expr.size, 0), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype)
   seed_arr = np.eye(wrt.size, dtype=wrt.type.dtype.numpy()).reshape((wrt.size, *wrt.shape))

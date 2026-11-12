@@ -17,7 +17,7 @@ from ..ir.expr import (
   concat,
   gather,
   pack,
-  scatter,
+  _scatter_zero,
   stack,
   stop_gradient,
   substitute,
@@ -454,7 +454,7 @@ def _vmap_jvp_many(
             continue
           sources = np.broadcast_to(np.arange(length * active_count * slice_size).reshape(1, length, active_count, slice_size), chosen.shape)
           targets = np.broadcast_to(np.arange(nseed * length * slice_size).reshape(nseed, length, 1, slice_size), chosen.shape)
-          term = move_mask(mapped_flat, lambda t: scatter(gather(t, sources[chosen]), targets[chosen], (nseed, length * slice_size)))
+          term = move_mask(mapped_flat, lambda t: _scatter_zero(gather(t, sources[chosen]), targets[chosen], (nseed, length * slice_size)))
           ret = term if ret is None else _accumulate(ret, term)
           continue
       for pos, c_local in enumerate(active):
@@ -626,7 +626,7 @@ def _vmap_vjp(
         segments = gather(mapped, indices).reshape((length, formal_size))
         vbar = Expr.const(np.ones(length, dtype=mapped.type.dtype.numpy()), dtype=mapped.type.dtype) @ segments
         if start != 0 or formal_size != arg.size:
-          vbar = scatter(vbar, start + np.arange(formal_size, dtype=np.int64), arg.shape)
+          vbar = _scatter_zero(vbar, start + np.arange(formal_size, dtype=np.int64), arg.shape)
       else:
         pieces: list[Expr] = []
         groups = -(-formal_size // stride)
@@ -635,7 +635,7 @@ def _vmap_vjp(
           indices = np.asarray([it * result_size + part_offset + j for it in iterations for j in range(formal_size)], dtype=np.int64)
           destinations = np.asarray([start + it * stride + j for it in iterations for j in range(formal_size)], dtype=np.int64)
           if indices.size:
-            pieces.append(scatter(gather(mapped, indices), destinations, arg.shape))
+            pieces.append(_scatter_zero(gather(mapped, indices), destinations, arg.shape))
         vbar = _sum_exprs(pieces)
       assembled.append(vbar)
     value = cast_expr(assembled[0], arg.type.dtype)

@@ -1,5 +1,7 @@
 """Stored-coordinate derivatives of sparse kernels against SciPy and finite differences."""
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 from scipy import sparse
@@ -99,7 +101,7 @@ def test_sparse_movement_derivatives_match_finite_differences(operation):
       "concat": lambda: sc.concat((x, -x), axis=1),
       "stack": lambda: sc.stack((x, -x)),
       "gather": lambda: sc.gather(x, [[11, 0, 3], [8, 9, 4]]),
-      "scatter": lambda: sc.scatter(x, [0, 1, 2, 3, 4, 4, 5, 6, 7, 7, 8, 8], (3, 3)),
+      "scatter": lambda: _scatter_zero(x, [0, 1, 2, 3, 4, 4, 5, 6, 7, 7, 8, 8], (3, 3)),
       "sum": lambda: x.sum(),
       "elementwise": lambda: x.sin() * x,
     }[operation]()
@@ -131,7 +133,7 @@ def test_sparse_movement_derivative_buffers_scale_with_stored_entries(operation,
       "slice": lambda: a[::2, :],
       "gather_matrix": lambda: sc.gather(a, (reverse[:, None] * n + reverse[None, :])[: n // 2]),
       "gather_vector": lambda: sc.gather(a, np.concatenate((logical[::2], logical[:3]))),
-      "scatter": lambda: sc.scatter(a, np.arange(n * n - 1, -1, -1), source.shape),
+      "scatter": lambda: _scatter_zero(a, np.arange(n * n - 1, -1, -1), source.shape),
     }[operation]()
     values = sc.values(moved).sin()
     return values.sum() if kind == "grad" else values
@@ -234,7 +236,7 @@ def test_sparse_data_jacobian_has_bounded_loop_and_source_growth(operation):
       elif operation == "gather":
         result = sc.gather(a, np.asarray(pattern.rows) * n + pattern.cols)
       else:
-        result = sc.scatter(a, np.arange(n * n), (n, n))
+        result = _scatter_zero(a, np.arange(n * n), (n, n))
       return sc.values(result).sin().block()
 
     jac = as_concrete(sc.jacobian(fn, wrt="data"))
@@ -271,7 +273,7 @@ def test_batched_sparse_movement_jvp_matches_numpy(operation, empty):
 
   @sc.function(leaf, seeds_leaf, name=f"batched_sparse_{operation}_{empty}")
   def fn(a, seeds):
-    moved = sc.gather(a, indices) if operation.startswith("gather") else sc.scatter(a, scatter_indices, output_shape)
+    moved = sc.gather(a, indices) if operation.startswith("gather") else _scatter_zero(a, scatter_indices, output_shape)
     return sc.to_dense(jvp_many(moved, a, seeds)).block()
 
   rng = np.random.default_rng(225)

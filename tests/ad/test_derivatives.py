@@ -4,6 +4,8 @@ from collections.abc import Callable
 
 from tests.matmul_cases import SHAPES
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 
@@ -311,7 +313,7 @@ def test_float32_structural_derivatives_stay_float32(case, mode):
     while pending:
       nodes = topo((pending.pop(),))
       assert {node.type.dtype for node in nodes if node.type.dtype.is_floating} == {f32}
-      assert all(node.value.dtype == np.float32 for node in nodes if node.value is not None)
+      assert all(node.value.dtype == np.float32 for node in nodes if node.value is not None and node.type.dtype.is_floating)
       for node in nodes:
         if node.op in {sc.ExprOp.CALL, sc.ExprOp.VMAP} and (callee := node.attrs["callee"]) not in seen:
           seen.add(callee)
@@ -354,7 +356,7 @@ def test_jvp_many_scatter_and_gather_stays_structural() -> None:
   )
   def fn(inputs):
     x, seeds = inputs
-    expr = sc.scatter(sc.gather(x, np.array([[5, 1], [4, 0]])), np.array([[0, 4], [7, 8]]), (3, 3))
+    expr = _scatter_zero(sc.gather(x, np.array([[5, 1], [4, 0]])), np.array([[0, 4], [7, 8]]), (3, 3))
     return sc.jvp_many(expr, x, seeds)
 
   (structural,) = as_concrete(fn).outputs

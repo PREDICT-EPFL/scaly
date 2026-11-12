@@ -37,6 +37,10 @@ class _Pointer:
   support: Support = None
 
 
+class _DataDependentAddress(Exception):
+  pass
+
+
 class _Frame:
   def __init__(
     self,
@@ -60,7 +64,10 @@ class _Frame:
     if node.op == ProgramOp.BUFFER:
       return self.buffers[node.attrs["name"]]
     ptr = self.buffers[node.attrs["buffer"]]
-    offset = self.scalar(node.args[0], {}).attrs["value"]
+    index = self.scalar(node.args[0], {})
+    if index.op != ProgramOp.CONST_INT:
+      raise _DataDependentAddress
+    offset = index.attrs["value"]
     return _Pointer(ptr.values, ptr.offset + offset)
 
   def scalar(self, node: ProgramNode, memo: dict[ProgramNode, ProgramNode]) -> ProgramNode:
@@ -160,6 +167,8 @@ def expand_static_loop(
 
 def _scalarize_proc(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
   params = proc.args[: proc.attrs["param_count"]]
+  if any(param.attrs.get("intent") == "inout" for param in params):
+    raise NotImplementedError("scalarize refuses inout parameters")
   n_in = proc.attrs["input_count"]
   pointers = [
     _Pointer([p.load(p.view(param, [p.const_int(i)])) if k < n_in else None for i in range(math.prod(param.attrs["shape"]))])
@@ -228,7 +237,11 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
     param_work = sum(math.prod(param.attrs["shape"]) for param in proc.args[: proc.attrs["param_count"]])
     total_work = param_work + sum(value for value in body_work if value is not None)
     mode = proc.attrs.get("scalarize_mode", "disabled")
-    eligible = mode != "disabled" and all(value is not None for value in body_work)
+    eligible = (
+      mode != "disabled"
+      and all(value is not None for value in body_work)
+      and not any(param.attrs.get("intent") == "inout" for param in proc.args[: proc.attrs["param_count"]])
+    )
     if eligible and proc.attrs["lowering"] == "auto" and total_work > AUTO_EXPANSION_WORK_PER_PROC:
       eligible = False
     if not eligible:
@@ -237,7 +250,11 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
     if mode == "inline":
       expansion_work[name] = total_work
       continue
-    candidate = _scalarize_proc(proc, procs)
+    try:
+      candidate = _scalarize_proc(proc, procs)
+    except _DataDependentAddress:
+      expansion_work[name] = None
+      continue
     ops, growth = scalar_cost(candidate)
     if proc.attrs["lowering"] == "auto" and (ops > AUTO_SCALAR_OPS_PER_PROC or scalar_growth + growth > AUTO_SCALAR_GROWTH_PER_PROGRAM):
       expansion_work[name] = None

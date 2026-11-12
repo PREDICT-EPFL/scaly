@@ -300,14 +300,22 @@ def var(name: str, dtype: DType = dtypes.int64) -> ProgramNode:
   return ProgramNode(ProgramOp.VAR, (), attrs={"name": name}, dtype=dtype)
 
 
-def buffer(name: str, dtype: DType, shape: tuple[int, ...], *, address_space: str = "global", device: DeviceSpec | str | None = None) -> ProgramNode:
+def buffer(
+  name: str, dtype: DType, shape: tuple[int, ...], *, address_space: str = "global", device: DeviceSpec | str | None = None, intent: str | None = None
+) -> ProgramNode:
   if address_space not in ADDRESS_SPACES:
     raise ValueError(f"unknown address space {address_space!r}; expected one of {sorted(ADDRESS_SPACES)}")
   dev = DeviceSpec.parse(device)
   return ProgramNode(
     ProgramOp.BUFFER,
     (),
-    attrs={"name": name, "shape": tuple(int(d) for d in shape), "address_space": address_space, "device": dev},
+    attrs={
+      "name": name,
+      "shape": tuple(int(d) for d in shape),
+      "address_space": address_space,
+      "device": dev,
+      **({"intent": intent} if intent is not None else {}),
+    },
     dtype=dtype,
   )
 

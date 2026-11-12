@@ -177,7 +177,9 @@ def _render_program_node(n: ProgramNode, indent: int, lines: list[str]) -> None:
     lines.append(f"{pad}}}")
   elif n.op == ProgramOp.PROC:
     pc = int(n.attrs["param_count"])
-    params = ", ".join(f"%{p.attrs['name']}: {_memref_asm(p)}" for p in n.args[:pc])
+    params = ", ".join(
+      f"%{p.attrs['name']}: {_memref_asm(p)}" + _attrs_asm({"intent": p.attrs["intent"]} if "intent" in p.attrs else {}) for p in n.args[:pc]
+    )
     attrs = _attrs_asm(n.attrs, skip={"name", "param_count"})
     lines.append(f"{pad}prog.proc @{n.attrs['name']}({params}){attrs} {{")
     for stmt in n.args[pc:]:

@@ -1337,6 +1337,7 @@ lanes, `max` and `min` split ties. Sparsity and support are exact for a constant
 conservative row otherwise. `scalarize` reports a data-dependent address as not eligible instead of
 failing in `_Frame.pointer`. `segment_sum`, `segment_max`, `take`, `dynamic_slice`, `index_add` and
 `index_set` are builders. Snapshots byte-identical for constant indices.
+*Replaced in #35: constant-index zero-base add scatters in promise_in_bounds mode retain their zero-fill loops to preserve C snapshots; other zero-base scatters emit memset.*
 
 **[#36]. In-place loop carries.** Buffer reuse in `passes/lowering/in_place.py`. Semantics stay
 functional; writing into the old buffer is a lowering decision, by three rules, cheapest first:
@@ -1350,6 +1351,10 @@ functional; writing into the old buffer is a lowering decision, by three rules, 
 3. *Disjoint indices.* When the old value is read after an earlier write in the same step, devrush's
    proof applies: every index is evaluated at every step with one batched NumPy interpreter over the
    elementwise table, and the entries read must be disjoint from those later links write.
+
+*Replaced in #36: unrestricted NumPy evaluation becomes exact bounded integer and boolean
+evaluation, because floating NumPy and C math can choose different
+indices.*
 
 The entries an op reads are not its derivative pattern. Devrush's proof took `floor` and `ceil`,
 whose derivative is zero, for ops that read nothing, and a body writing `floor` of the entries it

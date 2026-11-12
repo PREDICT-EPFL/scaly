@@ -74,6 +74,9 @@ def _hoist_proc(
       continue
     rng, c = stmt.args
     n_in = int(c.attrs["n_in"])
+    if c.attrs.get("inout"):
+      new_body.append(stmt)
+      continue
     invariant = tuple(k for k in range(n_in) if not any(n.op == ProgramOp.VAR for n in walk_program(c.args[k])))
     written = {_resolve_alias(a.attrs.get("buffer", a.attrs.get("name")), aliases) for a in c.args[n_in:]}
     if not invariant or any(_resolve_alias(c.args[k].attrs.get("buffer", c.args[k].attrs.get("name")), aliases) in written for k in invariant):

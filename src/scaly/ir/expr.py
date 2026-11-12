@@ -20,7 +20,7 @@ from typing import Any, Generator, Iterable, Literal, Mapping
 
 import numpy as np
 
-from .support import Support, compute_support, reduce_entries, slice_entries, transpose_entries, _constant_condition
+from .support import Support, compute_support, index_entries, index_shape, reduce_entries, slice_entries, transpose_entries, _constant_condition
 from .types import (
   CanonicalPattern,
   SparsityPattern,
@@ -272,8 +272,8 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.RESHAPE: OpInfo(ExprOp.RESHAPE, 1, support_rule="preserve"),
   ExprOp.TRANSPOSE: OpInfo(ExprOp.TRANSPOSE, 1, support_rule="transpose"),
   ExprOp.SLICE: OpInfo(ExprOp.SLICE, 1, support_rule="slice"),
-  ExprOp.GATHER: OpInfo(ExprOp.GATHER, 1, support_rule="gather"),
-  ExprOp.SCATTER: OpInfo(ExprOp.SCATTER, 1, support_rule="scatter"),
+  ExprOp.GATHER: OpInfo(ExprOp.GATHER, 2, support_rule="gather"),
+  ExprOp.SCATTER: OpInfo(ExprOp.SCATTER, 3, support_rule="scatter"),
   ExprOp.STACK: OpInfo(ExprOp.STACK, None, support_rule="stack"),
   ExprOp.CONCAT: OpInfo(ExprOp.CONCAT, None, support_rule="concat"),
   ExprOp.MATMUL: OpInfo(ExprOp.MATMUL, 2, pattern_rule="matmul"),
@@ -304,7 +304,9 @@ def _broadcast_pattern(type_: TensorType, shape: tuple[int, int]) -> CanonicalPa
   return CanonicalPattern(shape, tuple(r for r, _ in coordinates), tuple(c for _, c in coordinates))
 
 
-def _movement_entries(op: ExprOp | str, types: tuple[TensorType, ...], shape: tuple[int, ...], attrs: Mapping[str, Any]) -> np.ndarray:
+def _movement_entries(
+  op: ExprOp | str, types: tuple[TensorType, ...], shape: tuple[int, ...], attrs: Mapping[str, Any], indices: np.ndarray | None
+) -> np.ndarray:
   chunks = []
   offset = 0
   for i, type_ in enumerate(types):
@@ -316,9 +318,11 @@ def _movement_entries(op: ExprOp | str, types: tuple[TensorType, ...], shape: tu
     elif op == ExprOp.SLICE:
       entries, _ = slice_entries(entries, type_.shape, attrs["index"])
     elif op == ExprOp.GATHER:
-      entries = np.flatnonzero(np.isin(attrs["indices"].reshape(-1), entries))
+      assert indices is not None
+      entries = np.flatnonzero(np.isin(indices.reshape(-1), entries))
     elif op == ExprOp.SCATTER:
-      entries = attrs["indices"].reshape(-1)[entries]
+      assert indices is not None
+      entries = indices.reshape(-1)[entries]
     elif op in (ExprOp.STACK, ExprOp.CONCAT):
       axis = attrs["axis"]
       coords = list(np.unravel_index(entries, type_.shape))
@@ -333,7 +337,12 @@ def _movement_entries(op: ExprOp | str, types: tuple[TensorType, ...], shape: tu
 
 
 def stored_pattern(
-  op: ExprOp | str, types: tuple[TensorType, ...], shape: tuple[int, ...], attrs: Mapping[str, Any] | None = None
+  op: ExprOp | str,
+  types: tuple[TensorType, ...],
+  shape: tuple[int, ...],
+  attrs: Mapping[str, Any] | None = None,
+  *,
+  indices: np.ndarray | None = None,
 ) -> CanonicalPattern | None:
   """Apply the fixed storage rule, also usable for support restricted to sparse operands."""
   if op == ExprOp.SELECT:
@@ -359,7 +368,7 @@ def stored_pattern(
   if op in (ExprOp.REDUCE, ExprOp.RESHAPE, ExprOp.TRANSPOSE, ExprOp.SLICE, ExprOp.GATHER, ExprOp.SCATTER, ExprOp.STACK, ExprOp.CONCAT):
     if len(shape) < 2:
       return None
-    entries = _movement_entries(op, types, shape, attrs or {})
+    entries = _movement_entries(op, types, shape, attrs or {}, indices)
     width = shape[-2] * shape[-1]
     local = np.unique(entries % width) if width else np.empty(0, dtype=np.int64)
     return CanonicalPattern((shape[-2], shape[-1]), tuple(map(int, local // shape[-1])), tuple(map(int, local % shape[-1])))
@@ -408,7 +417,19 @@ def check_stored_pattern(op: ExprOp | str, args: tuple[Expr, ...], type_: Tensor
     return
   if op in CALLEE_OPS:
     return  # The verifier checks the callee signature.
-  expected = stored_pattern(op, tuple(arg.type for arg in args), type_.shape, attrs)
+  indices = None
+  if op in (ExprOp.GATHER, ExprOp.SCATTER):
+    if args[1].value is None:
+      if type_.pattern is not None:
+        raise ValueError("runtime indexing requires a dense result")
+      return
+    indices = index_entries(args[0].shape, args[1].value, (attrs or {}).get("axis"))
+    if op == ExprOp.SCATTER and args[0].support != frozenset():
+      if type_.pattern is not None:
+        raise ValueError("scatter with a nonzero base requires a dense result")
+      return
+    args = args[2:] if op == ExprOp.SCATTER else args[:1]
+  expected = stored_pattern(op, tuple(arg.type for arg in args), type_.shape, attrs, indices=indices)
   if type_.pattern is not expected:
     raise ValueError(
       f"{op} output pattern disagrees with its stored-pattern rule:"
@@ -710,8 +731,8 @@ class Expr:
       lowering=self.lowering,
     )
 
-  def gather(self, indices: Any) -> Expr:
-    return gather(self, indices)
+  def gather(self, indices: Any, *, axis: int | None = None, mode: str = "promise_in_bounds", fill_value: float = 0.0) -> Expr:
+    return gather(self, indices, axis=axis, mode=mode, fill_value=fill_value)
 
   def values(self) -> Expr:
     """Return the stored values in row-major coordinate order, as ``sc.values`` does."""
@@ -1429,7 +1450,7 @@ def diag(x: Any, k: int = 0) -> Expr:
     n = x.size + abs(k)
     rows = np.arange(x.size, dtype=np.int64) + max(-k, 0)
     cols = np.arange(x.size, dtype=np.int64) + max(k, 0)
-    return scatter(x, rows * n + cols, (n, n))
+    return _scatter_zero(x, rows * n + cols, (n, n))
   if len(x.shape) == 2:
     rows, cols = x.shape
     count = max(0, min(rows + min(k, 0), cols - max(k, 0)))
@@ -1476,48 +1497,147 @@ def _index_array(indices: Any, upper_bound: int) -> np.ndarray:
   return idx
 
 
-def gather(x: Any, indices: Any) -> Expr:
-  """Read ``x`` at flat ``indices``. The result takes the shape of ``indices``."""
+def _index_values(node: Expr) -> np.ndarray:
+  indices = node.args[1].value
+  assert indices is not None
+  return index_entries(node.args[0].shape, indices, node.attrs.get("axis"))
+
+
+def _index_axis(shape: tuple[int, ...], axis: int | None) -> int | None:
+  if axis is None:
+    return None
+  if not -len(shape) <= axis < len(shape):
+    raise ValueError(f"index axis {axis} out of bounds for shape {shape}")
+  return axis % len(shape)
+
+
+def gather(x: Any, indices: Any, *, axis: int | None = None, mode: str = "promise_in_bounds", fill_value: float = 0.0) -> Expr:
+  """Read ``x`` at int64 ``indices``, preserving the index shape.
+
+  With ``axis=None``, indices address the flattened source. Otherwise, the
+  chosen axis is replaced by the index shape, as with NumPy's ``take``.
+  ``fill`` returns ``fill_value`` outside the source. ``promise_in_bounds``
+  requires every index to lie within the source.
+  """
   x = as_expr(x)
-  idx = _index_array(indices, x.size)
-  shape = tuple(idx.shape)
+  axis = _index_axis(x.shape, axis)
+  if mode not in ("fill", "promise_in_bounds"):
+    raise ValueError(f"unknown indexing mode {mode!r}")
+  idx = indices if isinstance(indices, Expr) else Expr.const(np.asarray(indices, dtype=np.int64), dtype=dtypes.int64)
+  if idx.type.dtype != dtypes.int64:
+    raise TypeError("indices must have dtype int64")
+  if mode == "promise_in_bounds" and idx.value is not None:
+    _index_array(idx.value, x.size if axis is None else x.shape[axis])
+  if x.type.pattern is not None and (idx.value is None or mode == "fill"):
+    x = to_dense(x)
+  shape = index_shape(x.shape, idx.shape, axis)
+  mapped = index_entries(x.shape, idx.value, axis) if idx.value is not None else None
+  pattern = stored_pattern(ExprOp.GATHER, (x.type,), shape, indices=mapped) if mapped is not None else None
   return Expr(
     ExprOp.GATHER,
-    (x,),
-    TensorType(shape, dtype=x.type.dtype, diff=x.type.diff, pattern=stored_pattern(ExprOp.GATHER, (x.type,), shape, {"indices": idx})),
-    attrs={"indices": idx},
+    (x, idx),
+    TensorType(shape, dtype=x.type.dtype, diff=x.type.diff, pattern=pattern),
+    attrs={"axis": axis, "mode": mode, "fill_value": np.asarray(fill_value, dtype=x.type.dtype.numpy()).item()},
     lowering=x.lowering,
   )
 
 
-def scatter(values: Any, indices: Any, shape: int | tuple[int, ...]) -> Expr:
-  """Place ``values`` at flat ``indices`` in a zero tensor of ``shape``.
+def scatter(base: Any, indices: Any, values: Any, *, axis: int | None = None, combine: str = "add", mode: str = "promise_in_bounds") -> Expr:
+  """Update a tensor at flat int64 indices, resolving duplicates in index order.
 
-  Repeated indices accumulate. ``indices`` must have as many entries as ``values``.
+  ``combine`` is ``set``, ``add``, ``max`` or ``min``. ``fill`` discards
+  out-of-range updates. ``axis=None`` addresses the flattened base. With an
+  axis, values have the shape a gather at the same indices would return.
   """
-  values = as_expr(values)
-  shape = as_shape(shape)
-  idx = _index_array(indices, int(np.prod(shape, dtype=int)))
-  if idx.size != values.size:
+  base, values = as_expr(base), as_expr(values)
+  if combine not in ("set", "add", "max", "min"):
+    raise ValueError(f"unknown scatter combination {combine!r}")
+  if mode not in ("fill", "promise_in_bounds"):
+    raise ValueError(f"unknown indexing mode {mode!r}")
+  idx = indices if isinstance(indices, Expr) else Expr.const(np.asarray(indices, dtype=np.int64), dtype=dtypes.int64)
+  if idx.type.dtype != dtypes.int64:
+    raise TypeError("indices must have dtype int64")
+  axis = _index_axis(base.shape, axis)
+  expected = index_shape(base.shape, idx.shape, axis)
+  if axis is not None and values.shape != expected:
+    raise ValueError(f"scatter values shape {values.shape} must match indexed shape {expected}")
+  if int(np.prod(expected, dtype=int)) != values.size:
     raise ValueError(f"scatter has {idx.size} indices but values shape {values.shape} has {values.size} entries")
+  if base.type.dtype != values.type.dtype:
+    raise TypeError("scatter base and values must have the same dtype")
+  if mode == "promise_in_bounds" and idx.value is not None:
+    _index_array(idx.value, base.size if axis is None else base.shape[axis])
+  if base.type.pattern is not None:
+    base = to_dense(base)
+  if values.type.pattern is not None and (idx.value is None or mode == "fill" or combine != "add" or base.support != frozenset()):
+    values = to_dense(values)
+  pattern = None
+  if idx.value is not None and base.support == frozenset() and mode == "promise_in_bounds":
+    pattern = stored_pattern(ExprOp.SCATTER, (values.type,), base.shape, indices=index_entries(base.shape, idx.value, axis))
   return Expr(
     ExprOp.SCATTER,
-    (values,),
-    TensorType(
-      shape, dtype=values.type.dtype, diff=values.type.diff, pattern=stored_pattern(ExprOp.SCATTER, (values.type,), shape, {"indices": idx})
-    ),
-    attrs={"indices": idx},
+    (base, idx, values),
+    TensorType(base.shape, dtype=values.type.dtype, diff=base.type.diff or values.type.diff, pattern=pattern),
+    attrs={"axis": axis, "combine": combine, "mode": mode},
     lowering=values.lowering,
   )
+
+
+def _scatter_zero(values: Any, indices: Any, shape: int | tuple[int, ...], *, axis: int | None = None, mode: str = "promise_in_bounds") -> Expr:
+  values = as_expr(values)
+  return scatter(_uniform(0, as_shape(shape), dtype=values.type.dtype, lowering=values.lowering), indices, values, axis=axis, mode=mode)
 
 
 def segment_sum(values: Any, ids: Any, n: int) -> Expr:
   """Sum flat ``values`` by segment id into a vector of length ``n``.
 
-  Segment ids are fixed integers in ``[0, n)``. Empty segments are zero, and
+  Segment ids are int64 values in ``[0, n)``. Empty segments are zero, and
   repeated ids accumulate in input order.
   """
-  return scatter(values, ids, n)
+  return _scatter_zero(values, ids, n)
+
+
+def segment_max(values: Any, ids: Any, n: int, *, fill_value: float = -np.inf) -> Expr:
+  """Take the maximum in each segment, using ``fill_value`` for empty segments.
+
+  Out-of-range segment ids are discarded. NaN propagates within a segment.
+  Derivatives split equally between tied values, including the initial fill.
+  """
+  values = as_expr(values)
+  return scatter(_uniform(fill_value, (n,), dtype=values.type.dtype), ids, values, combine="max", mode="fill")
+
+
+def take(x: Any, indices: Any, *, axis: int = -1, mode: str = "fill", fill_value: float = 0.0) -> Expr:
+  """Read entries along ``axis``, inserting the shape of the int64 indices.
+
+  Negative indices are out of range. Under ``fill`` they return ``fill_value``.
+  """
+  return gather(x, indices, axis=axis, mode=mode, fill_value=fill_value)
+
+
+def dynamic_slice(x: Any, start: Any, size: int, *, axis: int = -1, mode: str = "fill", fill_value: float = 0.0) -> Expr:
+  """Read a fixed-size interval with an int64 start that may vary at runtime.
+
+  Positions past either end of the selected axis return ``fill_value`` under
+  ``fill``, with the start left unchanged.
+  """
+  if size < 0:
+    raise ValueError("dynamic slice size must be nonnegative")
+  start = start if isinstance(start, Expr) else Expr.const(start, dtype=dtypes.int64)
+  if start.shape != () or start.type.dtype != dtypes.int64:
+    raise TypeError("dynamic slice start must be an int64 scalar")
+  indices = start + Expr.const(np.arange(size, dtype=np.int64), dtype=dtypes.int64)
+  return take(x, indices, axis=axis, mode=mode, fill_value=fill_value)
+
+
+def index_add(base: Any, indices: Any, values: Any, *, axis: int = -1, mode: str = "fill") -> Expr:
+  """Add updates along ``axis``, summing duplicate indices in input order."""
+  return scatter(base, indices, as_expr(values), axis=axis, combine="add", mode=mode)
+
+
+def index_set(base: Any, indices: Any, values: Any, *, axis: int = -1, mode: str = "fill") -> Expr:
+  """Replace entries along ``axis``. The last update to each entry wins."""
+  return scatter(base, indices, as_expr(values), axis=axis, combine="set", mode=mode)
 
 
 def split(x: Any, sections: int | Iterable[int], *, axis: int = 0) -> tuple[Expr, ...]:
@@ -1654,7 +1774,7 @@ def to_dense(value: Any) -> Expr:
   x = as_expr(value)
   if x.type.pattern is None:
     return x
-  return scatter(values(x).vec(), stored_indices(x.type), x.size).reshape(x.shape)
+  return _scatter_zero(values(x).vec(), stored_indices(x.type), x.size).reshape(x.shape)
 
 
 def from_dense(value: Any, pattern: CanonicalPattern | SparsityPattern) -> Expr:

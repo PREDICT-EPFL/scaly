@@ -1,0 +1,56 @@
+{
+  "counting": "Scalar-equivalent Program IR operations before lane widening, including constant-table loads",
+  "compile_command": "cc -O3 -c <label>.c -o <label>.o",
+  "carry_entries": 100000,
+  "updated_entries_per_step": 4,
+  "steps": 100,
+  "baseline": {
+    "source_bytes": 5123,
+    "compile_seconds": 0.032073620008304715,
+    "step_operations": {
+      "store": 100004,
+      "load": 100012,
+      "add": 4
+    },
+    "workspace_elements": 200000,
+    "parameters": [
+      {
+        "name": "carry",
+        "shape": [
+          100000
+        ],
+        "intent": "input"
+      },
+      {
+        "name": "update_four_2",
+        "shape": [
+          100000
+        ],
+        "intent": "output"
+      }
+    ],
+    "carry_slots": 2,
+    "carry_buffer_bytes": 1600000
+  },
+  "reused": {
+    "source_bytes": 4147,
+    "compile_seconds": 0.04183858004398644,
+    "step_operations": {
+      "load": 8,
+      "store": 4,
+      "add": 4
+    },
+    "workspace_elements": 100000,
+    "parameters": [
+      {
+        "name": "carry",
+        "shape": [
+          100000
+        ],
+        "intent": "inout"
+      }
+    ],
+    "carry_slots": 1,
+    "carry_buffer_bytes": 800000
+  }
+}

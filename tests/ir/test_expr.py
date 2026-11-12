@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 
@@ -10,6 +12,251 @@ import scaly as sc
 from scaly.ir.expr import Expr, ExprOp, substitute
 from scaly.ir.types import TensorType, frozen
 from scaly.passes.expr import cse_many
+
+
+def test_scatter_accepts_tuple_values() -> None:
+  result = sc.scatter(sc.const([10.0, 20.0]), [0, 1], (2.0, 3.0), combine="set")
+  assert result.shape == (2,)
+  from scaly.passes.expr import simplify_cse_fixpoint
+
+  np.testing.assert_array_equal(simplify_cse_fixpoint(result).value, [2.0, 3.0])
+
+
+def test_scatter_sparse_values_into_nonzero_base() -> None:
+  from scaly.ir.expr import from_dense
+  from scaly.ir.types import CanonicalPattern
+
+  pattern = CanonicalPattern((2, 2), (0, 1), (0, 1))
+
+  @sc.function(sc.arg("base", 6), sc.arg("v", (2, 2)), outputs=sc.arg("y"))
+  def indexed(base, v):
+    return sc.scatter(base, [[5, 4], [1, 0]], from_dense(v, pattern))
+
+  base = np.arange(6.0) + 10
+  expected = base.copy()
+  np.add.at(expected, [5, 4, 1, 0], [1, 0, 0, 4])
+  np.testing.assert_array_equal(indexed(base, np.array([[1.0, 2.0], [3.0, 4.0]])), expected)
+
+
+def test_axis_scatter_rejects_transposed_update_shape() -> None:
+  with pytest.raises(ValueError, match="shape"):
+    sc.index_add(sc.const(np.zeros((2, 4))), [0, 1, 3], sc.sym("wrong_updates", (3, 2)))
+
+
+def test_fill_accepts_constant_int64_extremes() -> None:
+  indices = np.array([np.iinfo(np.int64).min, 0, np.iinfo(np.int64).max, 1])
+
+  @sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("g"), sc.arg("s")))
+  def indexed(x):
+    return sc.gather(x, indices, mode="fill"), sc.scatter(x, indices, sc.const([99.0, 2.0, 99.0, 3.0]), mode="fill")
+
+  g, s = indexed(np.array([5.0, 7.0, 11.0]))
+  np.testing.assert_array_equal(g, [0, 5, 0, 7])
+  np.testing.assert_array_equal(s, [7, 10, 11])
+
+
+@pytest.mark.parametrize("kind", ["gather", "add", "set", "max", "min"])
+def test_runtime_index_forward_graph_size_does_not_grow_with_seed_count(kind) -> None:
+  from scaly.ir.expr import topo
+
+  x, updates = sc.sym("batch_x", 8), sc.sym("batch_updates", 4)
+  indices = sc.sym("batch_indices", 4, dtype=sc.dtypes.int64)
+  y = sc.gather(x, indices, mode="fill") if kind == "gather" else sc.scatter(x, indices, updates, combine=kind, mode="fill")
+  sizes = []
+  for count in (2, 8):
+    derivative = sc.jvp_many(y * y, x, sc.sym(f"batch_seeds_{count}", (count, 8)))
+    sizes.append(sum(node.op in (ExprOp.GATHER, ExprOp.SCATTER) for node in topo((derivative,))))
+  assert sizes[0] == sizes[1]
+
+
+def test_gather_has_an_int64_index_operand() -> None:
+  x = sc.sym("indexed_x", 4)
+  result = sc.gather(x, np.array([[3, 1], [1, 0]], dtype=np.int64))
+  assert len(result.args) == 2
+  assert result.args[1].type.dtype == sc.dtypes.int64
+  np.testing.assert_array_equal(result.args[1].value, [[3, 1], [1, 0]])
+  assert "indices" not in result.attrs
+
+
+def test_runtime_gather_fill_matches_numpy() -> None:
+  @sc.function(sc.group(sc.arg("x", 4), sc.arg("idx", (2, 3))), outputs=sc.arg("y"))
+  def indexed(inputs):
+    x, idx = inputs
+    return sc.gather(x, sc.cast(idx, sc.dtypes.int64), mode="fill", fill_value=-7.0)
+
+  x = np.array([2.0, 3.0, 5.0, 11.0])
+  idx = np.array([[3, 1, -1], [4, 0, 1]], dtype=np.int64)
+  expected = np.where((idx >= 0) & (idx < len(x)), x[np.clip(idx, 0, len(x) - 1)], -7.0)
+  np.testing.assert_array_equal(indexed((x, idx)), expected)
+
+
+@pytest.mark.parametrize("size", [0, 4])
+def test_constant_gather_fill_matches_numpy(size) -> None:
+  from scaly.passes.expr import simplify_cse_fixpoint
+
+  x = np.arange(size, dtype=np.float64)
+  idx = np.array([-2, 0, 3, 4])
+  result = simplify_cse_fixpoint(sc.gather(sc.const(x), idx, mode="fill", fill_value=-7.0))
+  expected = np.full(idx.shape, -7.0)
+  valid = (idx >= 0) & (idx < size)
+  expected[valid] = x[idx[valid]]
+  np.testing.assert_array_equal(result.value, expected)
+
+
+def test_runtime_gather_forward_derivative_matches_finite_difference() -> None:
+  @sc.function(sc.group(sc.arg("x", 4), sc.arg("idx", 5), sc.arg("seed", 4)), outputs=sc.group(sc.arg("y"), sc.arg("dy"), sc.arg("adjoint")))
+  def indexed(inputs):
+    x, idx, seed = inputs
+    y = sc.gather(x, idx.cast(sc.dtypes.int64), mode="fill", fill_value=-7.0)
+    return y, sc.jvp(y, x, seed), sc.vjp((y,), (x,), (sc.const(np.ones(5)),))[0]
+
+  x, seed = np.array([2.0, 3.0, 5.0, 11.0]), np.array([0.2, -0.3, 0.7, 0.9])
+  idx = np.array([3.0, 1.0, -1.0, 4.0, 1.0])
+  _, tangent, adjoint = indexed((x, idx, seed))
+  plus, _, _ = indexed((x + 1e-5 * seed, idx, seed))
+  minus, _, _ = indexed((x - 1e-5 * seed, idx, seed))
+  np.testing.assert_allclose(np.asarray(tangent), (np.asarray(plus) - np.asarray(minus)) / 2e-5, rtol=1e-8, atol=1e-9)
+  np.testing.assert_array_equal(adjoint, [0, 2, 0, 1])
+  np.testing.assert_allclose(np.dot(np.asarray(adjoint), seed), ((np.asarray(plus) - np.asarray(minus)) / 2e-5).sum(), rtol=1e-8, atol=1e-9)
+
+
+@pytest.mark.parametrize("combine", ["set", "add", "max", "min"])
+def test_scatter_base_and_runtime_indices_match_numpy(combine) -> None:
+  @sc.function(sc.group(sc.arg("base", 4), sc.arg("idx", 6), sc.arg("values", 6)), outputs=sc.arg("y"))
+  def indexed(inputs):
+    base, idx, values = inputs
+    return sc.scatter(base, idx.cast(sc.dtypes.int64), values, combine=combine, mode="fill")
+
+  base = np.array([3.0, 5.0, -1.0, 7.0])
+  idx = np.array([1, -1, 1, 4, 3, 1])
+  values = np.array([2.0, 99.0, 9.0, 99.0, np.nan, 4.0])
+  expected = base.copy()
+  for i, value in zip(idx, values, strict=True):
+    if 0 <= i < base.size:
+      expected[i] = value if combine == "set" else {"add": np.add, "max": np.maximum, "min": np.minimum}[combine](expected[i], value)
+  np.testing.assert_array_equal(indexed((base, idx.astype(float), values)), expected)
+
+
+@pytest.mark.parametrize("combine", ["set", "add", "max", "min"])
+def test_runtime_scatter_derivatives_match_finite_differences(combine) -> None:
+  @sc.function(
+    sc.group(sc.arg("base", 4), sc.arg("idx", 6), sc.arg("values", 6)),
+    outputs=sc.group(sc.arg("y"), sc.arg("db"), sc.arg("dv"), sc.arg("vb"), sc.arg("vv")),
+  )
+  def indexed(inputs):
+    base, idx, values = inputs
+    y = sc.scatter(base, idx.cast(sc.dtypes.int64), values, combine=combine, mode="fill").sum()
+    db = sc.jvp(y, base, sc.const([0.2, -0.3, 0.7, 0.9]))
+    dv = sc.jvp(y, values, sc.const([0.4, 0.2, -0.8, 0.6, 0.7, -0.5]))
+    vb, vv = sc.vjp((y,), (base, values), (sc.const(1.0),))
+    return y, db, dv, vb, vv
+
+  base = np.array([3.0, 5.0, -1.0, 7.0])
+  idx = np.array([1.0, -1.0, 1.0, 4.0, 3.0, 1.0])
+  values = np.array([2.0, 99.0, 9.0, 99.0, 6.0, 4.0])
+  sb, sv = np.array([0.2, -0.3, 0.7, 0.9]), np.array([0.4, 0.2, -0.8, 0.6, 0.7, -0.5])
+  _, db, dv, vb, vv = indexed((base, idx, values))
+  for seed, forward, reverse, is_base in [(sb, db, vb, True), (sv, dv, vv, False)]:
+    plus = indexed((base + 1e-5 * seed if is_base else base, idx, values if is_base else values + 1e-5 * seed))[0]
+    minus = indexed((base - 1e-5 * seed if is_base else base, idx, values if is_base else values - 1e-5 * seed))[0]
+    finite = (np.asarray(plus) - np.asarray(minus)) / 2e-5
+    np.testing.assert_allclose(np.asarray(forward), finite, rtol=1e-7, atol=1e-8)
+    np.testing.assert_allclose(np.dot(np.asarray(reverse), seed), finite, rtol=1e-7, atol=1e-8)
+
+
+@pytest.mark.parametrize(("axis", "runtime"), [(0, True), (1, False), (-1, True)])
+def test_axis_gather_and_scatter_match_numpy(axis, runtime) -> None:
+  shape = (2, 3)
+  selected_axis = axis % 2
+  ids = np.array([[1, -1], [0, 1]], dtype=np.int64)
+  result_shape = (*shape[:selected_axis], *ids.shape, *shape[selected_axis + 1 :])
+
+  @sc.function(sc.group(sc.arg("x", shape), sc.arg("idx", ids.shape), sc.arg("v", result_shape)), outputs=sc.group(sc.arg("g"), sc.arg("s")))
+  def indexed(inputs):
+    x, idx, v = inputs
+    index = idx.cast(sc.dtypes.int64) if runtime else ids
+    return sc.gather(x, index, axis=axis, mode="fill", fill_value=-7), sc.scatter(x, index, v, axis=axis, mode="fill")
+
+  x = np.arange(6, dtype=float).reshape(shape) + 1
+  values = np.arange(np.prod(result_shape), dtype=float).reshape(result_shape) / 10
+  mask_shape = (1,) * selected_axis + ids.shape + (1,) * (1 - selected_axis)
+  expected_gather = np.where((ids >= 0).reshape(mask_shape), np.take(x, np.clip(ids, 0, shape[selected_axis] - 1), axis=selected_axis), -7)
+  expected_scatter = x.copy()
+  for coord in np.ndindex(result_shape):
+    index = ids[coord[selected_axis : selected_axis + ids.ndim]]
+    if 0 <= index < shape[selected_axis]:
+      dest = (*coord[:selected_axis], index, *coord[selected_axis + ids.ndim :])
+      expected_scatter[dest] += values[coord]
+  actual_gather, actual_scatter = indexed((x, ids.astype(float), values))
+  np.testing.assert_array_equal(actual_gather, expected_gather)
+  np.testing.assert_allclose(np.asarray(actual_scatter), expected_scatter)
+
+
+def test_index_builders_match_numpy() -> None:
+  @sc.function(sc.arg("x", (2, 4)), sc.arg("start"), outputs=sc.group(*(sc.arg(name) for name in ("take", "slice", "add", "set", "sum", "max"))))
+  def indexed(x, start):
+    index = start.cast(sc.dtypes.int64)
+    ids = sc.stack([index, index, index + sc.const(2, dtype=sc.dtypes.int64)])
+    updates = sc.const([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    return (
+      sc.take(x, ids),
+      sc.dynamic_slice(x, index, 3),
+      sc.index_add(x, ids, updates),
+      sc.index_set(x, ids, updates),
+      sc.segment_sum(updates[0], ids, 4),
+      sc.segment_max(updates[0], ids, 4),
+    )
+
+  x = np.arange(8, dtype=float).reshape(2, 4)
+  take, sliced, added, assigned, summed, maxima = indexed(x, np.array(1.0))
+  np.testing.assert_array_equal(take, x[:, [1, 1, 3]])
+  np.testing.assert_array_equal(sliced, x[:, 1:4])
+  expected_add, expected_set = x.copy(), x.copy()
+  for lane, column in enumerate([1, 1, 3]):
+    expected_add[:, column] += np.array([[1, 2, 3], [4, 5, 6]])[:, lane]
+    expected_set[:, column] = np.array([[1, 2, 3], [4, 5, 6]])[:, lane]
+  np.testing.assert_array_equal(added, expected_add)
+  np.testing.assert_array_equal(assigned, expected_set)
+  np.testing.assert_array_equal(summed, [0, 3, 0, 3])
+  np.testing.assert_array_equal(maxima, [-np.inf, 2, -np.inf, 3])
+
+
+@pytest.mark.parametrize(("combine", "sign", "runtime"), [("max", 1, True), ("min", -1, False)])
+def test_scatter_extrema_split_ties_with_base(combine, sign, runtime) -> None:
+  @sc.function(sc.arg("base", 2), sc.arg("updates", 3), sc.arg("idx", 3), outputs=sc.group(sc.arg("db"), sc.arg("dv")))
+  def indexed(base, updates, idx):
+    indices = idx.cast(sc.dtypes.int64) if runtime else [0, 0, 1]
+    y = sc.scatter(base, indices, updates, combine=combine, mode="fill").sum()
+    return sc.vjp((y,), (base, updates), (sc.const(1.0),))
+
+  db, dv = indexed(sign * np.array([2.0, 1.0]), sign * np.array([2.0, 2.0, 0.0]), np.array([0.0, 0.0, 1.0]))
+  np.testing.assert_allclose(np.asarray(db), [1 / 3, 1])
+  np.testing.assert_allclose(np.asarray(dv), [1 / 3, 1 / 3, 0])
+
+
+@pytest.mark.parametrize(("size", "hint"), [(0, "scalar"), (4, "block")])
+def test_runtime_index_extremes_and_empty_sources(size, hint) -> None:
+  @sc.function(sc.arg("x", size), sc.arg("idx", 3), outputs=sc.group(sc.arg("g"), sc.arg("s")))
+  def indexed(x, idx):
+    indices = idx.cast(sc.dtypes.int64)
+    read = sc.gather(x, indices, mode="fill", fill_value=-7)
+    written = sc.scatter(x, indices, sc.const([1.0, 2.0, 3.0]), mode="fill")
+    return (read.scalar(), written.scalar()) if hint == "scalar" else (read.block(), written.block())
+
+  x = np.arange(size, dtype=float)
+  read, written = indexed(x, np.array([-(2.0**62), 2.0**62, -1.0]))
+  np.testing.assert_array_equal(read, [-7, -7, -7])
+  np.testing.assert_array_equal(written, x)
+
+
+def test_set_sparsity_removes_overwritten_base_and_losing_updates() -> None:
+  base, updates = sc.sym("indexed_base", 3), sc.sym("indexed_updates", 4)
+  result = sc.scatter(base, [1, 1, -1, 2], updates, combine="set", mode="fill")
+  db, dv = sc.jacobian_sparsity(result, base), sc.jacobian_sparsity(result, updates)
+  assert set(zip(db.rows, db.cols, strict=True)) == {(0, 0)}
+  assert set(zip(dv.rows, dv.cols, strict=True)) == {(1, 1), (2, 3)}
+  known = sc.scatter(sc.const([2.0, 3.0, 4.0]), [1, 1, -1, 2], sc.const([8.0, 0.0, 9.0, 0.0]), combine="set", mode="fill")
+  assert known.support == frozenset({0})
 
 
 @pytest.mark.parametrize(
@@ -240,7 +487,8 @@ def test_constants_and_attributes_are_frozen_copies() -> None:
   indices = np.array([1, 0])
   g = sc.sym("intern_x", 2).gather(indices)
   indices[0] = 0
-  assert g.attrs["indices"].tolist() == [1, 0] and not g.attrs["indices"].flags.writeable
+  assert g.args[1].value is not None
+  assert g.args[1].value.tolist() == [1, 0] and not g.args[1].value.flags.writeable
   with pytest.raises(TypeError):
     g.attrs["indices"] = indices  # ty: ignore[invalid-assignment]
 
@@ -287,7 +535,7 @@ def test_differentiability_metadata_propagates_through_exprs() -> None:
   assert not (p + c).type.diff
   assert x.reshape((3, 1)).T.type.diff
   assert x.gather([2, 0]).type.diff
-  assert sc.scatter(p.gather([1, 2]), [0, 2], 3).type.diff is False
+  assert _scatter_zero(p.gather([1, 2]), [0, 2], 3).type.diff is False
   assert sc.stack([p, c]).type.diff is False
   assert sc.concat([x[:1], p[:1]]).type.diff
   assert x.floor().type.diff

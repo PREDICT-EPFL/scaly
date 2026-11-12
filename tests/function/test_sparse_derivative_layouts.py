@@ -105,3 +105,16 @@ def test_a_transposed_sparse_output_keeps_its_pattern_through_a_call() -> None:
 def test_a_coordinate_layout_must_list_the_derivative_pattern() -> None:
   with pytest.raises(ValueError, match="different stored pattern"):
     sc.sparse_jacobian(defect, "d", "z", layout=sc.SparsityPattern((2, 2), (0,), (0,)))
+
+
+@pytest.mark.parametrize("layout", ["csr", "csc"])
+def test_declared_sparse_output_preserves_gather_fill(layout):
+  from scaly.ir.types import CanonicalPattern
+
+  pattern = CanonicalPattern((2, 2), (0, 1), (1, 0))
+
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("y", sc.TensorType(pattern.shape, pattern=pattern), layout=layout))
+  def filled(x):
+    return sc.pack(sc.gather(x, [9, 0], mode="fill", fill_value=-7), pattern)
+
+  np.testing.assert_array_equal(filled(np.array([2.0, 3.0])).toarray(), [[0.0, -7.0], [2.0, 0.0]])

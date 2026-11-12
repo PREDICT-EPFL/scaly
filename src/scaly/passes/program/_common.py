@@ -149,7 +149,7 @@ def buffer_refs(stmt: ProgramNode, aliases: dict[str, str] | None = None) -> Buf
         if name is not None:
           if n_in is None or k < n_in:
             call_inputs.add(name)
-          if n_in is None or n_out is None or n_in <= k < n_in + n_out:
+          if k in n.attrs.get("inout", ()) or n_in is None or n_out is None or n_in <= k < n_in + n_out:
             call_outputs.add(name)
   if aliases is not None:
     alias_map = aliases

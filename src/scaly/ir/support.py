@@ -14,6 +14,23 @@ if TYPE_CHECKING:
   from .expr import Expr, ExprOp, OpInfo
 
 
+def index_shape(shape: tuple[int, ...], indices: tuple[int, ...], axis: int | None) -> tuple[int, ...]:
+  """Shape produced by inserting index dimensions at the selected source axis."""
+  return indices if axis is None else (*shape[:axis], *indices, *shape[axis + 1 :])
+
+
+def index_entries(shape: tuple[int, ...], indices: np.ndarray, axis: int | None) -> np.ndarray:
+  """Map constant axis indices to flat source coordinates, retaining invalid lanes."""
+  if axis is None:
+    return np.where((indices >= 0) & (indices < int(np.prod(shape, dtype=int))), indices, -1)
+  before = int(np.prod(shape[:axis], dtype=int))
+  after = int(np.prod(shape[axis + 1 :], dtype=int))
+  index = indices.reshape(1, -1, 1)
+  flat = (np.arange(before)[:, None, None] * shape[axis] + index) * after + np.arange(after)
+  flat = np.where((index >= 0) & (index < shape[axis]), flat, -1)
+  return flat.reshape(index_shape(shape, indices.shape, axis))
+
+
 @dataclass(frozen=True, slots=True, eq=False)
 class _SupportSet(Set[int]):
   _entries: np.ndarray
@@ -391,6 +408,9 @@ def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> 
   if op in {"transpose", "slice", "gather"}:
     support = support_of(node.args[0])
     if support is None:
+      if op == "gather" and node.args[1].value is not None and node.attrs.get("mode") == "fill" and node.attrs.get("fill_value", 0) == 0:
+        indices = index_entries(node.args[0].shape, node.args[1].value, node.attrs.get("axis")).reshape(-1)
+        return _make_support(np.flatnonzero((indices >= 0) & (indices < node.args[0].size)))
       return None
     entries = support_indices(support)
     if op == "transpose":
@@ -398,12 +418,30 @@ def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> 
     elif op == "slice":
       entries, _ = slice_entries(entries, node.args[0].shape, node.attrs["index"])
     else:
-      entries = np.flatnonzero(np.isin(node.attrs["indices"].reshape(-1), entries))
+      if node.args[1].value is None:
+        return frozenset() if not len(entries) and node.attrs.get("fill_value", 0) == 0 else None
+      entries = np.flatnonzero(np.isin(index_entries(node.args[0].shape, node.args[1].value, node.attrs.get("axis")).reshape(-1), entries))
+      if node.attrs.get("mode") == "fill" and node.attrs.get("fill_value", 0) != 0:
+        indices = index_entries(node.args[0].shape, node.args[1].value, node.attrs.get("axis")).reshape(-1)
+        entries = np.union1d(entries, np.flatnonzero((indices < 0) | (indices >= node.args[0].size)))
     return _make_support(entries)
   if op == "scatter":
-    support = support_of(node.args[0])
-    indices = node.attrs["indices"].reshape(-1)
-    return _make_support(indices if support is None else indices[support_indices(support)])
+    base, index, values = node.args
+    support = support_of(values)
+    base_support = support_of(base)
+    if index.value is None:
+      return frozenset() if support == frozenset() and base_support == frozenset() else None
+    indices = index_entries(base.shape, index.value, node.attrs.get("axis")).reshape(-1)
+    valid = (indices >= 0) & (indices < node.size)
+    lanes = np.flatnonzero(valid)
+    if node.attrs["combine"] == "set":
+      _, reverse = np.unique(indices[lanes][::-1], return_index=True)
+      lanes = lanes[len(lanes) - 1 - reverse]
+      base_entries = np.arange(node.size) if base_support is None else support_indices(base_support)
+      base_support = _make_support(base_entries[~np.isin(base_entries, indices[lanes])])
+    if support is not None:
+      lanes = lanes[np.isin(lanes, support_indices(support))]
+    return _combine(base_support, _make_support(indices[lanes]), intersection=False)
   if op in {"stack", "concat"}:
     if all(support_of(arg) is None for arg in node.args):
       return None

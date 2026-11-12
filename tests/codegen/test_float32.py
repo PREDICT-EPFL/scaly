@@ -6,6 +6,8 @@ import ctypes
 import math
 import subprocess
 
+from scaly.ir.expr import _scatter_zero
+
 import numpy as np
 import pytest
 
@@ -310,7 +312,7 @@ def test_sparse_plans_use_zeros_of_the_value_dtype(dtype, mode):
   def fn(x):
     a = sc.pack(sc.cast(x, dtype), diagonal)
     b = sc.pack(sc.const(np.array([3, 4], dtype=dtype)), off_diagonal)
-    scattered = sc.scatter(a, [0, 1, 1, 3], (2, 2))
+    scattered = _scatter_zero(a, [0, 1, 1, 3], (2, 2))
     return tuple(sc.cast(value.to_dense(), "float64").with_lowering(mode) for value in (a + b, scattered))
 
   lower_function(fn)
@@ -400,7 +402,7 @@ def test_float32_structural_operations_match_numpy(mode):
   def fn(x):
     a = sc.const(values) if mode == "folded" else sc.cast(x, "float32")
     moved = sc.concat([a.T.reshape(12)[::2], a.gather([0, 3, 7, 11])])
-    scattered = sc.scatter(a.vec(), np.repeat(np.arange(6), 2), (6,))
+    scattered = _scatter_zero(a.vec(), np.repeat(np.arange(6), 2), (6,))
     return tuple(sc.cast(v, "float64").with_lowering("scalar" if mode == "scalar" else "block") for v in (a @ a.T, moved, scattered, a.sum()))
 
   expected = [
@@ -421,7 +423,7 @@ def test_scatter_and_sum_constants_preserve_each_dtype(mode):
   @sc.function(sc.arg("x", 3), outputs=sc.group(sc.arg("scatter"), sc.arg("exact")), name=f"typed_scatter_{mode}")
   def fn(x):
     a = sc.const(values) if mode == "folded" else sc.cast(x, "float32")
-    scattered = sc.scatter(a, [0, 0, 0], (1,))
+    scattered = _scatter_zero(a, [0, 0, 0], (1,))
     exact = sc.equal(sc.const(ints).sum(), np.int64(2**53 + 1))
     return sc.cast(scattered, "float64").with_lowering("scalar" if mode == "scalar" else "block"), sc.cast(exact, "float64")
 
