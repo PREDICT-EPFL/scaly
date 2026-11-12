@@ -390,8 +390,8 @@ def accumulate(total: Expr, cot: Expr) -> Expr:
 
 # A flag is a top-level where(c, inner, 0), also recognised under PACK or with its branches reversed.
 # Activity comes from c, never from the numerical value of a tangent or cotangent.
-# Elementwise partials, movements, calls and maps carry it. Reverse dense matrix products drop it;
-# COND, LOOP, custom derivative rules, externs and solver calls have no flag protocol.
+# Elementwise partials, movements, calls, maps and forward carried loops carry it. Reverse dense matrix products drop it;
+# COND, custom derivative rules, externs and solver calls have no flag protocol.
 # Sampled sparse-product adjoints reconstruct guards only from the producers they recognise.
 # A sum with an unflagged active term has no flag; _accumulate skips proven-zero terms instead.
 def _mask_of(cot: Expr) -> tuple[Expr, Expr] | None:

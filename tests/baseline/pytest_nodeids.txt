@@ -4252,7 +4252,6 @@ tests/function/test_loop.py::test_trajectories_and_zero_fill[True-None-False]
 tests/function/test_loop.py::test_while_loop_edge_counts
 tests/function/test_loop.py::test_while_loop_newton_matches_a_python_loop
 tests/function/test_loop.py::test_while_step_counts_at_every_boundary
-tests/function/test_loop_forward.py::test_carried_loop_drops_incoming_select_flags
 tests/function/test_loop_forward.py::test_custom_jvp_with_nonfloating_stacked_output[dtype0]
 tests/function/test_loop_forward.py::test_custom_jvp_with_nonfloating_stacked_output[dtype1]
 tests/function/test_loop_forward.py::test_matrix_slices_and_shared_initial_dependency[shape0]
@@ -4269,6 +4268,11 @@ tests/function/test_loop_forward.py::test_scan_forward_matches_unrolled[False-4]
 tests/function/test_loop_forward.py::test_scan_forward_matches_unrolled[True-0]
 tests/function/test_loop_forward.py::test_scan_forward_matches_unrolled[True-1]
 tests/function/test_loop_forward.py::test_scan_forward_matches_unrolled[True-4]
+tests/function/test_loop_forward.py::test_select_activity_across_carry[created_inside_body-rolled]
+tests/function/test_loop_forward.py::test_select_activity_across_carry[created_inside_body-static]
+tests/function/test_loop_forward.py::test_select_activity_across_carry[incoming-rolled]
+tests/function/test_loop_forward.py::test_select_activity_across_carry[incoming-static]
+tests/function/test_loop_forward.py::test_select_activity_on_slices_and_stacked_outputs
 tests/function/test_loop_forward.py::test_symbolic_seeds_and_forward_over_forward
 tests/function/test_loop_forward.py::test_tangent_support_and_sparsity_follow_loop_fixed_point
 tests/function/test_loop_forward.py::test_trip_index_windows_mixed_carries_and_trajectories[0-False]
@@ -4279,11 +4283,13 @@ tests/function/test_loop_forward.py::test_trip_index_windows_mixed_carries_and_t
 tests/function/test_loop_forward.py::test_trip_index_windows_mixed_carries_and_trajectories[3-True]
 tests/function/test_loop_forward.py::test_trip_index_windows_mixed_carries_and_trajectories[9-False]
 tests/function/test_loop_forward.py::test_trip_index_windows_mixed_carries_and_trajectories[9-True]
+tests/function/test_loop_forward.py::test_while_loop_select_activity_and_second_forward_derivative
 tests/function/test_loop_forward.py::test_while_primal_steps[0-5.0]
 tests/function/test_loop_forward.py::test_while_primal_steps[1-5.0]
 tests/function/test_loop_forward.py::test_while_primal_steps[6--1.0]
 tests/function/test_loop_forward.py::test_while_primal_steps[6-100.0]
 tests/function/test_loop_forward.py::test_while_primal_steps[6-2.5]
+tests/function/test_loop_forward.py::test_zero_valued_active_tangent_keeps_its_activity
 tests/function/test_model.py::test_build_takes_trees_and_records_descriptor_and_role
 tests/function/test_model.py::test_call_helpers_record_their_role
 tests/function/test_model.py::test_declaration_rejects_wrong_body_arity

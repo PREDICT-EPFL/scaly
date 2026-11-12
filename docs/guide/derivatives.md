@@ -425,6 +425,16 @@ even when its local derivative is NaN or infinite.
 
 A selected zero also guards later partial derivatives across ordinary and mapped
 calls. For example, `sqrt(maximum(x, 0))` has derivative zero at `x = -1` in both modes.
+Activity comes from select conditions and structural zeros, never from the
+numerical value of a derivative. Nested conditions intersect, and contributions
+combine by union.
+
+| Boundary | Forward select activity | Reverse select activity |
+| --- | --- | --- |
+| Ordinary calls and `vmap` | Preserved | Preserved |
+| Carried `scan` and `while_loop` | Preserved through iterations and on results | Not supported |
+| Conditional branches | Dropped | Dropped |
+| Custom rules, external functions and solver calls | No activity protocol | No activity protocol |
 
 `argmin` and `argmax` return integer indices and have no derivative.
 Quadratic-program backends refuse variable-dependent nonsmooth operations,

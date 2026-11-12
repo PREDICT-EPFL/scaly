@@ -1225,9 +1225,14 @@ only by loops that have one.
 
 **[#32]. Forward AD through `LOOP`.** The tangent loop is the same loop with tangent carries added,
 seed axis leading. The condition reads primal carries only, so the tangent loop takes the primal's
-steps. Integer and boolean carries get no tangent. Devrush's per-step Jacobian compression (when the
-seeded local dimension is smaller than the seed count, form the body's Jacobian once per step and
-multiply) is a later optimization with measured thresholds.
+steps. Integer and boolean carries get no tangent. Selected tangent contributions carry parallel
+boolean activity through iterations and results. A loop with no activity flags keeps its existing
+generated code. Devrush's per-step Jacobian compression (when the seeded local dimension is smaller
+than the seed count, form the body's Jacobian once per step and multiply) is a later optimization
+with measured thresholds.
+
+*Replaced in the compiler run, 2026-11-12: dropping forward select activity at carried `LOOP`
+boundaries, because a clipped carry's zero tangent must remain inactive through a singular partial.*
 
 **[#33]. Reverse AD through `LOOP`.** The rule requests the trajectory result of the same
 invocation, so the primal loop stores it once. One backward loop (`reverse=True`, same starts and

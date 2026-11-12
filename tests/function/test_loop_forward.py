@@ -242,17 +242,78 @@ def test_runtime_index_update_through_an_in_place_scan():
   np.testing.assert_allclose(primal, expected, atol=1e-12)
 
 
-def test_carried_loop_drops_incoming_select_flags():
-  from scaly.ir.expr import ExprOp, topo
-  from scaly.ad.rules import _mask_of
-
-  @sc.function(sc.arg("carry", 2))
-  def step(carry):
+@pytest.mark.parametrize("rolled", [False, True], ids=["static", "rolled"])
+@pytest.mark.parametrize("inside", [False, True], ids=["incoming", "created_inside_body"])
+def test_select_activity_across_carry(inside, rolled):
+  @sc.function(sc.arg("carry", 2), sc.arg("k", sc.TensorType((), sc.dtypes.int64)))
+  def step(carry, k):
+    if inside:
+      return sc.where(sc.equal(k, 0), sc.where(carry > 0, carry, 0), carry.sqrt())
     return carry.sqrt()
 
   x = sc.sym("x", 2)
-  final, _ = sc.scan(step, sc.where(x > 0.0, x, 0.0), length=2)
+  init = x if inside else sc.where(x > 0, x, 0)
+  final, _ = sc.scan(step, init, length=2, index=True, trip=2 if rolled else None)
+  reference = init
+  for k in range(2):
+    reference = step(reference, sc.const(np.int64(k)))
   tangent = sc.jvp(final, x, sc.const(np.ones(2)))
-  loop = next(node for node in topo((tangent,)) if node.op == ExprOp.LOOP)
-  assert _mask_of(tangent) is None
-  assert all(not name.startswith("mask:") for name in loop.attrs["callee"].input_names)
+  got, want, many, after = evaluate(
+    [x],
+    [tangent, sc.jvp(reference, x, sc.const(np.ones(2))), sc.jacobian(final, x), sc.jvp(final.sqrt(), x, sc.const(np.ones(2)))],
+    [np.array([-1.0, 16.0])],
+  )
+  expected = [0.0, 0.125 if inside else 0.03125]
+  np.testing.assert_allclose(want, expected, atol=1e-12)
+  np.testing.assert_allclose(got, expected, atol=1e-12)
+  np.testing.assert_allclose(many, np.diag(expected), atol=1e-12)
+  np.testing.assert_allclose(after, [0.0, expected[1] / (2 * np.sqrt(4.0 if inside else 2.0))], atol=1e-12)
+
+
+def test_while_loop_select_activity_and_second_forward_derivative():
+  @sc.function(
+    sc.arg("a", 2),
+    sc.arg("b", 2),
+    sc.arg("k", sc.TensorType((), sc.dtypes.int64)),
+    outputs=sc.arg("go", sc.TensorType((), sc.dtypes.bool_)),
+  )
+  def cond(a, b, k):
+    return k < 2
+
+  @sc.function(sc.arg("a", 2), sc.arg("b", 2), sc.arg("k", sc.TensorType((), sc.dtypes.int64)))
+  def step(a, b, k):
+    return b.sqrt(), a.sqrt()
+
+  x = sc.sym("x", 2)
+  (final, _), _ = sc.while_loop(cond, step, (sc.where(x > 0, x, 0), sc.const(np.ones(2))), max_iter=4, index=True)
+  first = sc.jvp(final, x, sc.const(np.ones(2)))
+  second = sc.jvp(first, x, sc.const(np.ones(2)))
+  got, got_second = evaluate([x], [first, second], [np.array([-1.0, 16.0])])
+  np.testing.assert_allclose(got, [0.0, 0.03125], atol=1e-12)
+  np.testing.assert_allclose(got_second, [0.0, -3.0 / 2048.0], atol=1e-12)
+
+
+def test_select_activity_on_slices_and_stacked_outputs():
+  @sc.function(sc.arg("carry", ()), sc.arg("u", ()))
+  def step(carry, u):
+    return (carry + u).sqrt(), u.sqrt()
+
+  x = sc.sym("x", 2)
+  final, (ys,) = sc.scan(step, sc.const(0.0), (sc.where(x > 0, x, 0),), length=2, trip=2)
+  jac, stacked = evaluate([x], [sc.jacobian(final, x), sc.jacobian(ys.sqrt(), x)], [np.array([-1.0, 16.0])])
+  np.testing.assert_allclose(jac, [[0.0, 0.125]], atol=1e-12)
+  np.testing.assert_allclose(stacked, [[0.0, 0.0], [0.0, 0.03125]], atol=1e-12)
+
+
+def test_zero_valued_active_tangent_keeps_its_activity():
+  @sc.function(sc.arg("carry", 3), sc.arg("k", sc.TensorType((), sc.dtypes.int64)))
+  def step(carry, k):
+    return sc.where(sc.equal(k, 0), carry * carry, carry.sqrt())
+
+  x = sc.sym("x", 3)
+  init = sc.where(x >= 0, x, 0)
+  final, _ = sc.scan(step, init, length=2, index=True, trip=2)
+  reference = step(step(init, sc.const(np.int64(0))), sc.const(np.int64(1)))
+  got, want = evaluate([x], [sc.jvp(final, x, sc.const(np.ones(3))), sc.jvp(reference, x, sc.const(np.ones(3)))], [np.array([0.0, -1.0, 2.0])])
+  np.testing.assert_allclose(got, want, equal_nan=True)
+  np.testing.assert_allclose(got, [np.nan, 0.0, 1.0], equal_nan=True)
