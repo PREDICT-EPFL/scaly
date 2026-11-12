@@ -125,7 +125,11 @@ def _declared_values(stored: Expr, layout: SparseLayout) -> Expr | None:
   if stored.op != ExprOp.GATHER or stored.size != len(order) or stored.args[0].type.pattern is not None or stored.args[1].value is None:
     return None
   source, indices = stored.args[0], _index_values(stored).reshape(-1)[order]
-  return source if source.size == len(order) and np.array_equal(indices, identity) else gather(source, indices)
+  return (
+    source
+    if source.size == len(order) and np.array_equal(indices, identity)
+    else gather(source, indices, mode=stored.attrs["mode"], fill_value=stored.attrs["fill_value"])
+  )
 
 
 def _normalize_function(fun: ConcreteFunction, *, residuals: bool = False) -> ConcreteFunction:
