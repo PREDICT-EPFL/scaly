@@ -7,6 +7,7 @@ import pytest
 from scaly.passes.lowering import plans
 from scaly.codegen import render_c_module
 from scaly.ir.program import ProgramOp
+from scaly.ir.expr import _scatter_zero
 
 
 def _mapped_tangents():
@@ -69,8 +70,8 @@ def test_supported_scatter_sum_keeps_its_absorbed_operands():
 
   @sc.function(sc.arg("x", (2, 2)), name="seed_scatter_sum_inner")
   def inner(x):
-    left = sc.scatter(x.reshape((4,)), [0, 2, 4, 6], 8).reshape((2, 4))
-    right = sc.scatter((2 * x).reshape((4,)), [1, 3, 5, 7], 8).reshape((2, 4))
+    left = _scatter_zero(x.reshape((4,)), [0, 2, 4, 6], 8).reshape((2, 4))
+    right = _scatter_zero((2 * x).reshape((4,)), [1, 3, 5, 7], 8).reshape((2, 4))
     return (left + right).block()
 
   @sc.function(sc.arg("x", (2, 2)), name="seed_scatter_sum_host")
