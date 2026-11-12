@@ -107,7 +107,7 @@ runs:
         EOF
 
     - name: Restore the nightly compile cache
-      if: inputs.suite == 'ci' || inputs.suite == 'smoke'
+      if: ${{ false }}
       uses: actions/cache/restore@v6
       with:
         path: ${{ env.SCALY_CACHE_DIR }}
@@ -145,7 +145,7 @@ runs:
       shell: bash
       env:
         SCALY_JIT_KEY: ${{ inputs.suite == 'verify' && 'verify' || '' }}
-      run: uv run pytest -n=auto
+      run: uv run pytest -n=auto --durations=25
 
     - name: Benchmark smoke
       if: ${{ !cancelled() && (inputs.suite == 'toolchain' || inputs.suite == 'benchmarks' || inputs.suite == 'smoke') }}
@@ -156,7 +156,7 @@ runs:
       if: ${{ !cancelled() && inputs.suite == 'smoke' }}
       shell: bash
       run: |
-        uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
+        time uv run benchmarks/run.py closed-loop --smoke --problem chain --solver ipopt --oracle scaly
         uv run benchmarks/run.py closed-loop --smoke --problem race_cars --solver sqp --oracle scaly
         uv run benchmarks/run.py closed-loop --smoke --problem race_cars --solver ipopt --oracle casadi
         uv run benchmarks/run.py closed-loop --smoke --problem unbumpercars --solver ipopt --oracle scaly
