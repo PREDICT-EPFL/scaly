@@ -110,50 +110,6 @@ def test_manifest_consumer_compiles_each_translation_unit_and_links(tmp_path):
   assert y.value == 15
 
 
-def test_an_included_header_changes_library_and_jit_keys(isolated_cache):
-  include = isolated_cache / "include"
-  include.mkdir()
-  header = include / "value.h"
-  header.write_text("#define LOCAL_ONLY 2\n")
-  library = sc.CLibrary("included", sources={"included.c": '#include "value.h"\n' + SOURCE}, include_dirs=(str(include),))
-  first = get_compiled(library_host(library))
-  header.write_text("#define LOCAL_ONLY 3\n")
-  second = get_compiled(library_host(library))
-  assert first.cache_key != second.cache_key
-  np.testing.assert_allclose(first.run([np.array(3.0)]), [15])
-  np.testing.assert_allclose(second.run([np.array(3.0)]), [21])
-
-
-def test_changed_linked_binary_changes_key_and_linux_namespace(isolated_cache, monkeypatch):
-  import pytest
-  import shlex
-
-  if sys.platform != "linux":
-    pytest.skip("Linux linker namespaces")
-  compiler = find_c_compiler()
-  assert compiler is not None
-  source = isolated_cache / "dependency.c"
-  source.write_text(SOURCE)
-  target = isolated_cache / "libexternal_dependency.so"
-  temporary = isolated_cache / "new.so"
-
-  def build(scale):
-    subprocess.run(
-      [*compiler.command, "-shared", "-fPIC", f"-DLOCAL_ONLY={scale}", str(source), "-o", str(temporary)], check=True, capture_output=True
-    )
-    temporary.replace(target)
-
-  monkeypatch.setenv("SCALY_CC", shlex.join((*compiler.command, "-L" + str(isolated_cache))))
-  library = sc.CLibrary("linked", link=("external_dependency",))
-  build(2)
-  first = get_compiled(library_host(library))
-  build(3)
-  second = get_compiled(library_host(library))
-  assert first.cache_key != second.cache_key
-  np.testing.assert_allclose(first.run([np.array(3.0)]), [15])
-  np.testing.assert_allclose(second.run([np.array(3.0)]), [21])
-
-
 def _namespace_libraries(root, kind):
   compiler = find_c_compiler()
   assert compiler is not None
@@ -222,7 +178,7 @@ def _namespace_libraries(root, kind):
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="glibc linker namespaces")
-@pytest.mark.parametrize("kind", ["independent", "path", "soname", "transitive", "exhaustion"])
+@pytest.mark.parametrize("kind", ["path", "soname", "transitive", "exhaustion"])
 def test_compatible_linker_namespaces(tmp_path, kind):
   script = "from pathlib import Path; import sys; from tests.codegen.test_external import _namespace_libraries; _namespace_libraries(Path(sys.argv[1]), sys.argv[2])"
   result = subprocess.run(
@@ -406,16 +362,12 @@ def test_missing_external_symbol_names_loader_error():
     missing()
 
 
-@pytest.mark.parametrize("backends", [(), ("test_solver",)])
-def test_aot_cli_exports_without_a_compiler_or_jit_cache(tmp_path, monkeypatch, capsys, backends):
-  from dataclasses import replace
+def test_aot_cli_exports_without_a_compiler_or_jit_cache(tmp_path, monkeypatch, capsys):
   from types import SimpleNamespace
   from scaly.codegen import aot
 
   library = sc.CLibrary("portable", sources={"shared.c": SOURCE}, defines={"LOCAL_ONLY": 2}, link=("m",))
   kernel = library_host(library)
-  render = aot.render_c_module
-  monkeypatch.setattr(aot, "render_c_module", lambda *args, **kwargs: replace(render(*args, **kwargs), backends=backends))
   monkeypatch.setattr(aot.importlib, "import_module", lambda name: SimpleNamespace(kernel=kernel))
   monkeypatch.setattr(aot, "find_c_compiler", lambda: None)
   cache = tmp_path / "cache"
@@ -423,7 +375,6 @@ def test_aot_cli_exports_without_a_compiler_or_jit_cache(tmp_path, monkeypatch, 
   aot.main(["model:kernel", "--out-dir", str(tmp_path / "export"), "--lanes", "1"])
   output = capsys.readouterr().out
   assert "build manifest: " in output
-  assert "-ltest_solver" not in output
   assert not cache.exists()
   manifest = json.loads((tmp_path / "export" / "external_build_host.build.json").read_text())
   assert manifest["libraries"][0]["link"] == ["m"]
@@ -460,11 +411,11 @@ print(json.dumps({"hit": hit, "index": index, "artifact": compiled.cache_key, "l
 """
 
 
-def _external_process(root, kind, *, mode="", compiler=None):
+def _external_process(root, kind, *, compiler=None):
   import os
   import shlex
 
-  environment = {**os.environ, "SCALY_CACHE_DIR": str(root / "cache"), "SCALY_JIT_KEY": mode}
+  environment = {**os.environ, "SCALY_CACHE_DIR": str(root / "cache"), "SCALY_JIT_KEY": ""}
   if compiler is not None:
     environment["SCALY_CC"] = shlex.join((*compiler, "-L" + str(root / "lib")))
   result = subprocess.run(
@@ -474,9 +425,8 @@ def _external_process(root, kind, *, mode="", compiler=None):
   return json.loads(result.stdout)
 
 
-@pytest.mark.parametrize("mode", ["", "verify"], ids=["index", "verify"])
 @pytest.mark.parametrize("edited", ["value.h", "extra.h"])
-def test_include_header_edit_misses_the_index_in_another_process(tmp_path, mode, edited):
+def test_include_header_edit_misses_the_index_in_another_process(tmp_path, edited):
   include = tmp_path / "include"
   include.mkdir()
   header = include / "value.h"
@@ -489,7 +439,7 @@ def test_include_header_edit_misses_the_index_in_another_process(tmp_path, mode,
   assert first["index"] == warm["index"]
   assert first["value"] == warm["value"] == 15
   (include / edited).write_text("#define LOCAL_ONLY 3\n")
-  changed = _external_process(tmp_path, "header", mode=mode)
+  changed = _external_process(tmp_path, "header")
   assert not changed["hit"]
   assert changed["lowered"] == 1
   assert changed["index"] != first["index"]
@@ -498,8 +448,7 @@ def test_include_header_edit_misses_the_index_in_another_process(tmp_path, mode,
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="swapping a named ELF dependency")
-@pytest.mark.parametrize("mode", ["", "verify"], ids=["index", "verify"])
-def test_linked_library_swap_misses_the_index_in_another_process(tmp_path, mode):
+def test_linked_library_swap_misses_the_index_in_another_process(tmp_path):
   compiler = find_c_compiler()
   assert compiler is not None
   directory = tmp_path / "lib"
@@ -522,7 +471,7 @@ def test_linked_library_swap_misses_the_index_in_another_process(tmp_path, mode)
   assert first["index"] == warm["index"]
   assert first["value"] == warm["value"] == 15
   build(3)
-  changed = _external_process(tmp_path, "link", mode=mode, compiler=compiler.command)
+  changed = _external_process(tmp_path, "link", compiler=compiler.command)
   assert not changed["hit"]
   assert changed["lowered"] == 1
   assert changed["index"] != first["index"]

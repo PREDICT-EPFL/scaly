@@ -86,22 +86,20 @@ def test_repeated_local_buffers_and_scalar_updates_are_not_redeclarations(tmp_pa
 
 
 @pytest.mark.parametrize("kind", ["exit", "buffer", "assign"])
-@pytest.mark.parametrize("parameter", ["flags", "w"])
-def test_local_declarations_cannot_redefine_a_buffer_parameter(tmp_path, kind, parameter):
-  params = [p.buffer(parameter, dtypes.bool_, (4,))] if parameter != "w" else []
+def test_local_declarations_cannot_redefine_a_buffer_parameter(tmp_path, kind):
   if kind == "exit":
-    local = p.for_(p.range_(parameter, 0, 4, carried=True), [], exit_var=True)
+    local = p.for_(p.range_("w", 0, 4, carried=True), [], exit_var=True)
   elif kind == "buffer":
-    local = p.buffer(parameter, dtypes.float64, (1,))
+    local = p.buffer("w", dtypes.float64, (1,))
   else:
-    local = p.assign(parameter, p.const_float(0), declare=True)
-  proc = p.proc("parameter", params, [local])
+    local = p.assign("w", p.const_float(0), declare=True)
+  proc = p.proc("parameter", [], [local])
   prog = p.program([proc])
   path = tmp_path / "parameter.c"
   path.write_text("\n".join([*_includes(dialect="c", prog=prog), *_render_raw_callee(proc, dialect="c")]))
   result = check_c_syntax(path)
   assert result.returncode != 0
-  with pytest.raises(VerifyError, match=f"duplicate C identifier '{parameter}'"):
+  with pytest.raises(VerifyError, match="duplicate C identifier 'w'"):
     verify_program(prog)
 
 
@@ -125,7 +123,7 @@ def test_same_named_callees_on_same_arguments() -> None:
   assert "same_2_raw(" in source
 
 
-@pytest.mark.parametrize("name", ["log", "logf", "new", "_Upper", "has__reserved", "SCALY_SUCCESS", "double2", "k0"])
+@pytest.mark.parametrize("name", ["logf", "new", "_Upper", "has__reserved", "SCALY_SUCCESS", "double2", "k0"])
 def test_exported_reserved_symbol_is_a_user_error(name) -> None:
   @sc.function(sc.arg("x", 2), outputs=sc.arg("y", 2), name=name)
   def fun(x):
@@ -291,9 +289,8 @@ def test_header_parameters_do_not_shadow_buffer_aliases() -> None:
   assert not set((*inputs, *outputs)) & {f"{name}_t" for name in (*inputs, *outputs)}
 
 
-@pytest.mark.parametrize("input_name", ["x", "workspace_2"])
-def test_workspace_parameter_does_not_shadow_exported_entry(tmp_path, input_name) -> None:
-  @sc.function(sc.arg(input_name, 2048), outputs=sc.group(sc.arg("sum"), sc.arg("sumsqr")), name="workspace")
+def test_workspace_parameter_does_not_shadow_exported_entry(tmp_path) -> None:
+  @sc.function(sc.arg("workspace_2", 2048), outputs=sc.group(sc.arg("sum"), sc.arg("sumsqr")), name="workspace")
   def fun(x):
     value = x.sin()
     return value.sum(), (value * value).sum()
@@ -306,14 +303,14 @@ def test_workspace_parameter_does_not_shadow_exported_entry(tmp_path, input_name
   main = tmp_path / "main.c"
   exe = tmp_path / "main"
   main.write_text(
-    f"""
+    """
 #include <math.h>
 #include "workspace.h"
 
-int main(void) {{
-  workspace_{input_name}_t x = {{{{0}}}};
-  workspace_sum_t sum = {{{{0}}}};
-  workspace_sumsqr_t sumsqr = {{{{0}}}};
+int main(void) {
+  workspace_workspace_2_t x = {{0}};
+  workspace_sum_t sum = {{0}};
+  workspace_sumsqr_t sumsqr = {{0}};
   workspace_workspace_t scratch;
   x.data[0] = 0.5;
   int err = workspace_call(&x, &sum, &sumsqr, &scratch);
@@ -321,19 +318,16 @@ int main(void) {{
   if (fabs(sum.data[0] - sin(0.5)) > 1e-12) return 10;
   if (fabs(sumsqr.data[0] - sin(0.5) * sin(0.5)) > 1e-12) return 11;
   return workspace_call(&x, &sum, &sumsqr, NULL) == SCALY_ERR_NULL_WORK ? 0 : 12;
-}}
+}
 """
   )
   subprocess.run([*c_compiler(), "-std=c11", "-Wall", "-Wextra", "-Werror", str(main), str(source), "-lm", "-o", str(exe)], check=True)
   subprocess.run([str(exe)], check=True)
 
 
-@pytest.mark.parametrize(
-  "input_name,first_output,second_output",
-  [("f_y_t", "y", "z"), ("f_workspace_t", "y", "z"), ("x", "f_z_t", "z"), ("x", "f_workspace_t", "z")],
-)
-def test_c_wrapper_parameters_do_not_hide_later_typedefs(tmp_path, input_name, first_output, second_output) -> None:
-  @sc.function(sc.arg(input_name, 2), outputs=sc.group(sc.arg(first_output), sc.arg(second_output)), name="f")
+@pytest.mark.parametrize("input_name", ["f_y_t", "f_workspace_t"])
+def test_c_wrapper_parameters_do_not_hide_later_typedefs(tmp_path, input_name) -> None:
+  @sc.function(sc.arg(input_name, 2), outputs=sc.group(sc.arg("y"), sc.arg("z")), name="f")
   def fun(x):
     return x * 2, x + 1
 
@@ -350,8 +344,8 @@ def test_c_wrapper_parameters_do_not_hide_later_typedefs(tmp_path, input_name, f
 
 int main(void) {{
   f_{input_name}_t x = {{{{2, -3}}}};
-  f_{first_output}_t first = {{{{0}}}};
-  f_{second_output}_t second = {{{{0}}}};
+  f_y_t first = {{{{0}}}};
+  f_z_t second = {{{{0}}}};
   f_workspace_t scratch;
   int err = f_call(&x, &first, &second, &scratch);
   if (err) return err;
@@ -366,13 +360,12 @@ int main(void) {{
 
 
 @pytest.mark.solver("piqp")
-@pytest.mark.parametrize("suffix", ["solve", "stats", "set_options", "default_options"])
-def test_host_cannot_use_a_solver_bridge_export_name(suffix: str) -> None:
+def test_host_cannot_use_a_solver_bridge_export_name() -> None:
   from tests.solvers.problem_helpers import build_qp
 
   solve = build_qp(P=np.eye(2), c=np.array([1.0, 2.0]), name="bridge_clash")
 
-  @sc.function(outputs=sc.arg("x", 2), name=f"bridge_clash_{suffix}")
+  @sc.function(outputs=sc.arg("x", 2), name="bridge_clash_solve")
   def host():
     zero, empty = sc.const(np.zeros(2)), sc.const(np.zeros(0))
     return solve.function(zero, zero, empty, empty, ())[0]

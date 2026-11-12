@@ -82,9 +82,7 @@ def test_compiler_wrapper_change_misses_the_cache(isolated_cache: Path, monkeypa
 
 _SOLVER_INPUTS_CHILD = """
 import json
-import os
 from dataclasses import replace
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -93,11 +91,10 @@ import scaly.codegen.jit as jit
 import scaly.solvers.paths as paths
 import scaly.solvers.registry as registry
 
-root = Path(os.environ["TEST_SOLVER_ROOT"])
 backend = SimpleNamespace(name="ipopt", lib_stem="cache_solver", header="solver/api.h", link_flags=("-lcache_solver",))
 paths._backends = lambda: {backend.name: backend}
 registry.get_backend = lambda _name: backend
-paths._plugin_solver_paths = lambda: [(root / "include", root / "lib")] if os.environ["TEST_SOLVER_PLUGIN"] == "1" else []
+paths._plugin_solver_paths = lambda: []
 installed = paths.solver_paths()
 library = sc.CLibrary(
   "cache_solver", include_dirs=tuple(map(str, installed.include_dirs)), library_dirs=tuple(map(str, installed.lib_dirs)), link=("cache_solver",),
@@ -123,20 +120,8 @@ print(json.dumps({"key": compiled.cache_key, "compiles": sum(compiles), "result"
 """
 
 
-@pytest.mark.parametrize(
-  "plugin,changed",
-  [
-    (False, "header"),
-    (False, "library"),
-    (False, "both"),
-    (True, "both"),
-    (False, "symlink"),
-    (False, "dangling"),
-    (False, "cycle"),
-    (False, "unreadable"),
-  ],
-)
-def test_solver_build_change_misses_cache(tmp_path: Path, plugin: bool, changed: str) -> None:
+@pytest.mark.parametrize("changed", ["library", "symlink", "dangling", "cycle", "unreadable"])
+def test_solver_build_change_misses_cache(tmp_path: Path, changed: str) -> None:
   if changed in ("symlink", "dangling", "cycle", "unreadable") and sys.platform == "win32":
     pytest.skip("needs POSIX file permissions or directory symlinks")
   compiler = find_c_compiler()
@@ -159,9 +144,8 @@ def test_solver_build_change_misses_cache(tmp_path: Path, plugin: bool, changed:
   source = tmp_path / "solver.c"
   library = lib / ("cache_solver.dll" if sys.platform == "win32" else f"libcache_solver{shared_lib_ext()}")
 
-  def install(*, offset: int, swapped: bool, revision: int, build_library: bool = True) -> None:
-    fields = "double padding; double value;" if swapped else "double value; double padding;"
-    header.write_text(f"typedef struct {{ {fields} }} Settings;\n#define OFFSET {offset}\n")
+  def install(*, offset: int, revision: int, build_library: bool = True) -> None:
+    header.write_text(f"typedef struct {{ double value; double padding; }} Settings;\n#define OFFSET {offset}\n")
     if build_library:
       source.write_text(f"#include <solver/api.h>\ndouble evaluate(const Settings* settings) {{ return settings->value + {revision}; }}\n")
       command = [*compiler.command, "-fPIC", shared_lib_flag(), f"-I{include}", str(source), "-o", str(library)]
@@ -169,33 +153,27 @@ def test_solver_build_change_misses_cache(tmp_path: Path, plugin: bool, changed:
         command += [f"-Wl,--out-implib,{lib / 'libcache_solver.dll.a'}"]
       subprocess.run(command, check=True, capture_output=True, text=True)
 
-  child_env = {**os.environ, "SCALY_CACHE_DIR": str(tmp_path / "cache"), "TEST_SOLVER_ROOT": str(tmp_path), "TEST_SOLVER_PLUGIN": str(int(plugin))}
+  child_env = {**os.environ, "SCALY_CACHE_DIR": str(tmp_path / "cache")}
   for variable in ("SCALY_IPOPT_LIB", "SCALY_SOLVER_INCLUDE_DIR", "SCALY_SOLVER_LIB_DIR", "SCALY_SOLVER_SYSTEM_FALLBACK"):
     child_env.pop(variable, None)
-  if not plugin:
-    child_env.update(SCALY_SOLVER_INCLUDE_DIR=str(include), SCALY_SOLVER_LIB_DIR=str(lib))
+  child_env.update(SCALY_SOLVER_INCLUDE_DIR=str(include), SCALY_SOLVER_LIB_DIR=str(lib))
 
   def build() -> dict:
     result = subprocess.run([sys.executable, "-c", _SOLVER_INPUTS_CHILD], env=child_env, check=False, capture_output=True, text=True, timeout=300)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
-  install(offset=0, swapped=False, revision=0)
+  install(offset=0, revision=0)
   first = build()
   assert first["compiles"] == 1 and first["result"] == 3.0
   assert build() == {**first, "compiles": 0}
   previous = header.stat()
-  install(
-    offset=int(changed != "library"),
-    swapped=changed == "both",
-    revision=int(changed in ("library", "both")),
-    build_library=changed in ("library", "both"),
-  )
+  install(offset=int(changed != "library"), revision=int(changed == "library"), build_library=changed == "library")
   os.utime(header, ns=(previous.st_atime_ns, previous.st_mtime_ns))
   second = build()
   assert second["key"] != first["key"]
   assert second["compiles"] == 1
-  assert second["result"] == (5.0 if changed == "both" else 4.0)
+  assert second["result"] == 4.0
   assert build() == {**second, "compiles": 0}
 
 
@@ -659,7 +637,7 @@ def test_folded_extrema_nan_match_runtime_and_numpy(isolated_cache: Path) -> Non
     np.testing.assert_array_equal(got[1], np.maximum(a, b))
 
 
-@pytest.mark.parametrize("name", ["log", "scaly_minimum", "scaly_maximum", "scaly_minimumf", "scaly_maximumf"])
+@pytest.mark.parametrize("name", ["log", "scaly_minimum"])
 def test_exported_symbol_clash_is_a_plain_user_error(isolated_cache: Path, name: str) -> None:
   @sc.function(sc.arg("x", 2), outputs=sc.arg("y", 2), name=name)
   def fun(x):

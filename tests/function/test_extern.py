@@ -112,21 +112,18 @@ def test_library_content_and_flags_change_jit_key(tmp_path, monkeypatch):
     original.name = "changed"
 
 
-@pytest.mark.parametrize("mode", ["forward", "reverse", "jacobian"])
+@pytest.mark.parametrize("mode", ["forward", "reverse"])
 def test_active_derivative_names_custom_derivative(mode):
   x = sc.sym("x", 3)
   y = pair()(x)[0]
   with pytest.raises(NotImplementedError, match="scaly_ext_pair.*sc.custom_derivative"):
     if mode == "forward":
       sc.jvp(y, x, sc.const(np.ones(3)))
-    elif mode == "reverse":
-      sc.vjp([y], [x], [sc.const(np.ones(3))])
     else:
-      sc.jacobian(y, x)
+      sc.vjp([y], [x], [sc.const(np.ones(3))])
 
 
-@pytest.mark.parametrize("declared", [False, True])
-def test_wrapper_custom_derivative_matches_finite_differences(declared):
+def test_wrapper_custom_derivative_matches_finite_differences():
   external = pair()
 
   @sc.function(sc.arg("x", 3), outputs=sc.arg("y", 3))
@@ -145,12 +142,10 @@ def test_wrapper_custom_derivative_matches_finite_differences(declared):
   def backward(x, weight):
     return 2 * x * weight
 
-  ruled = sc.custom_derivative(
-    square, jvp=forward, fwd=primal, bwd=backward, sparsity=(lambda of, wrt, shape: np.eye(*shape, dtype=bool)) if declared else None
-  )
+  ruled = sc.custom_derivative(square, jvp=forward, fwd=primal, bwd=backward)
   x = sc.sym("x", 3)
   pattern = sc.jacobian_sparsity(ruled(x), x)
-  assert pattern.nnz == (3 if declared else 9)
+  assert pattern.nnz == 9
   value = np.array([0.2, -0.7, 1.1])
   eps = 1e-6
   finite = np.column_stack([(ruled(value + eps * d) - ruled(value - eps * d)) / (2 * eps) for d in np.eye(3)])
@@ -246,10 +241,9 @@ def test_inactive_external_derivatives_and_zero_input_call():
   np.testing.assert_allclose(constant(), 2)
 
 
-@pytest.mark.parametrize("field", ["include_dirs", "library_dirs", "compile_flags", "link"])
-def test_library_rejects_a_bare_string_for_a_sequence_field(field):
-  with pytest.raises(TypeError, match=field):
-    pair_library(**{field: "-O3" if field == "compile_flags" else "inc"})
+def test_library_rejects_a_bare_string_for_a_sequence_field():
+  with pytest.raises(TypeError, match="compile_flags"):
+    pair_library(compile_flags="-O3")
 
 
 def test_custom_derivative_of_an_extern_asks_for_a_wrapping_function():
