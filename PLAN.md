@@ -43,16 +43,26 @@ this local extension. Do not claim the earlier reviews cover this new protocol.
 - Fourteen extra C/header files match main byte for byte, covering smooth gradients,
   maximum/shared-condition gradients and ordinary/mapped forward products without selects.
   /tmp/scaly-434-forward-proof.path. No snapshots regenerated.
+- Rebased cleanly onto main's CI-cache fix. The detached full hook passed on this state:
+  6,407 passed, 56 skipped, exit 0. Type, format, lint, snapshots, benchmark smoke,
+  documentation build and private-name checks passed.
+  /tmp/scaly-434-forward-suite-sMDjth/final.log and final.exit.
+- The local PR-body draft and semantic note contain identical rule text. Compared with
+  the section 4 decision on #24, only the two forward-call rows change under the Nov 12
+  instruction. Every other boundary row and the rule paragraph stay unchanged.
+  /tmp/scaly-434-forward-semantic-check.log. Neither draft has been published.
 - Prior Sol/Fable full reviews and deltas approved the previous #364/#414 scope only.
   Their threads are settled. Coordinator review of this extension is still needed.
 
 ## Finish
 
-- [ ] Refresh the base as required by the flush, preserve upstream work and rerun any
+- [x] Refresh the base as required by the flush, preserve upstream work and rerun any
       checks invalidated by a rebase. Regenerate only the node-ID baseline for added tests.
-- [ ] Update local PR-body draft/table for the Nov 12 scope change, keeping the rule itself
+- [x] Update local PR-body draft/table for the Nov 12 scope change, keeping the rule itself
       and all other boundary decisions. Do not publish or change #24 while held.
-- [ ] Full hook detached through ~/.scaly-suite/run; keep the turn alive until its exit file.
-- [ ] Commit the evidence here, retain this plan and report branch/head, ahead/behind main,
+- [x] Full hook detached through ~/.scaly-suite/run; keep the turn alive until its exit file.
+- [x] Commit the evidence here, retain this plan and report branch/head, ahead/behind main,
       hook counts, snapshot differences and the remaining coordinator review/push hold.
+- [ ] Coordinator review of the forward-helper extension, then any required fixes/checks.
+- [ ] Coordinator-authorized push, PR-body publication, readiness and queueing.
 - Stop after the report; do not wait, poll, watch, push, mark ready or queue.
