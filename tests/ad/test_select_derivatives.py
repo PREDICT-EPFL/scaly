@@ -919,6 +919,17 @@ def test_forward_calls_carry_selected_activity_in_both_directions(mapped: bool, 
     np.testing.assert_allclose(finite_difference(lambda v: np.asarray(derivatives(v, seeds)[0]), point), expected_jacobian, rtol=1e-7, atol=1e-9)
 
 
+def test_forward_helper_flags_only_masked_formals() -> None:
+  @sc.function(sc.arg("a", ()), sc.arg("b", ()), sc.arg("c", ()), outputs=sc.arg("y"), name="sd_masked_formals")
+  def mix(a: sc.Expr, b: sc.Expr, c: sc.Expr) -> sc.Expr:
+    return a.sqrt() * b
+
+  x = sc.sym("x", ())
+  sc.jvp(mix(sc.where(x > 0.0, x, 0.0), x * 3.0, x * 5.0), x, sc.const(1.0))
+  helpers = [helper[0] for key, helper in mix.instantiate()._memo.helpers.items() if key.role == "forward" and isinstance(helper, tuple)]
+  assert [helper.input_names for helper in helpers] == [("a", "b", "fwd:a", "mask:fwd:a")]
+
+
 def test_forward_map_keeps_activity_when_another_formal_has_zero_partial() -> None:
   @sc.function(sc.arg("a", ()), sc.arg("b", ()), outputs=sc.arg("y"), name="sd_forward_zero_formal")
   def stage(a: sc.Expr, b: sc.Expr) -> sc.Expr:

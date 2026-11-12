@@ -1,4 +1,4 @@
-# Select masks: forward call extension under the push hold
+# Select masks: final review fixes and merge
 
 PR #434 covers #364 and #414. The maintainer's latest instruction also includes
 forward call boundaries, so #432 is now in this PR rather than a follow-up.
@@ -6,13 +6,13 @@ The Nov 12 scope update supersedes the earlier deferral of #432 on #24.
 Reverse dense-product transport and structural-zero semantics from #435 remain
 separate. COND, LOOP and custom-rule protocols remain outside this change.
 
-## Standing hold
+## Latest authorization
 
-Read ~/.scaly-suite/super/flush-common.md and ~/.scaly-suite/RULES.md. Push nothing,
-mark nothing ready, queue nothing, publish no PR change and start no Claude review.
-The coordinator schedules reviews and authorizes the push order. Keep this plan.
-The live PR still points at the older pushed head; its green checks do not cover
-this local extension. Do not claim the earlier reviews cover this new protocol.
+The maintainer lifted the push hold after Fable reviewed the forward-call extension
+without correctness findings. Fix the two small points, run the full hook, delete
+this plan in the last commit, force-push with lease, publish the prepared description,
+mark ready and queue once. Keep #435 open. Watch for failed checks or an ejection.
+No further review is requested.
 
 ## Implemented locally
 
@@ -52,17 +52,22 @@ this local extension. Do not claim the earlier reviews cover this new protocol.
   instruction. Every other boundary row and the rule paragraph stay unchanged.
   /tmp/scaly-434-forward-semantic-check.log. Neither draft has been published.
 - Prior Sol/Fable full reviews and deltas approved the previous #364/#414 scope only.
-  Their threads are settled. Coordinator review of this extension is still needed.
+  Their threads are settled. The maintainer reports Fable high reviewed the forward-call
+  extension with no correctness findings. Its two small fixes are applied below.
+
+## Final review fixes
+
+- Only masked tangent formals get boolean inputs. The cache key records that tuple;
+  baked and unmasked unread formals get no dead flags.
+- Restored the original two-line stored-result reconstruction; the added mask movement
+  could never receive a masked value.
+- The requested helper-input-name regression failed with extra flags before the fix,
+  and all 89 select tests pass afterward. Ruff and ty pass. One node ID added.
 
 ## Finish
 
-- [x] Refresh the base as required by the flush, preserve upstream work and rerun any
-      checks invalidated by a rebase. Regenerate only the node-ID baseline for added tests.
-- [x] Update local PR-body draft/table for the Nov 12 scope change, keeping the rule itself
-      and all other boundary decisions. Do not publish or change #24 while held.
-- [x] Full hook detached through ~/.scaly-suite/run; keep the turn alive until its exit file.
-- [x] Commit the evidence here, retain this plan and report branch/head, ahead/behind main,
-      hook counts, snapshot differences and the remaining coordinator review/push hold.
-- [ ] Coordinator review of the forward-helper extension, then any required fixes/checks.
-- [ ] Coordinator-authorized push, PR-body publication, readiness and queueing.
-- Stop after the report; do not wait, poll, watch, push, mark ready or queue.
+- [x] Apply both Fable points and the single signature regression.
+- [ ] Full hook detached through ~/.scaly-suite/run; keep the turn alive to its exit file.
+- [ ] Confirm the fourteen C/header comparisons and the prepared semantic text.
+- [ ] Delete this plan in the last commit, then force-push with lease and update the PR body.
+- [ ] Mark ready, queue once and watch. Fix only an ejection or failed check.

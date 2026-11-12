@@ -37,11 +37,8 @@ _Pullback = Callable[[Sequence[Expr], Sequence[Expr], Sequence[Expr]], tuple[Exp
 
 
 def _stored_result(result: Expr, primal: Expr, batch: tuple[int, ...] = ()) -> Expr:
-  def reshape(t: Expr) -> Expr:
-    compact = t.reshape((*batch, *primal.type.storage_shape))
-    return pack(compact, primal.type.pattern, shape=(*batch, *primal.shape)) if primal.type.pattern is not None else compact
-
-  return move_mask(result, reshape)
+  compact = result.reshape((*batch, *primal.type.storage_shape))
+  return pack(compact, primal.type.pattern, shape=(*batch, *primal.shape)) if primal.type.pattern is not None else compact
 
 
 def _tangent_symbol(name: str, primal: Expr, batch: tuple[int, ...] = ()) -> Expr:
@@ -176,7 +173,7 @@ def _call_jvp_many_function(
   constants: tuple[np.ndarray | None, ...],
   *,
   pushforward: _Pushforward,
-  masked: bool = False,
+  masked: tuple[int, ...] = (),
 ) -> _JVPMany:
   key = HelperKey.of(
     callee,
@@ -185,7 +182,7 @@ def _call_jvp_many_function(
     formal_indices,
     nseed=nseed,
     constants=tuple(None if value is None else (value.dtype.str, value.tobytes()) for value in constants),
-    masked=masked,
+    masked=masked or False,
   )
   cache = callee._memo.helpers
   if key not in cache:
@@ -198,7 +195,7 @@ def _call_jvp_many_function(
       return name
 
     seed_names = {i: fresh(f"fwd:{callee.input_names[i]}") for i in formal_indices}
-    mask_names = {i: fresh(f"mask:{seed_names[i]}") for i in formal_indices} if masked else {}
+    mask_names = {i: fresh(f"mask:{seed_names[i]}") for i in masked}
     active = tuple(range(nseed))
     if all(value is not None for value in constants):
       active = tuple(row for row in range(nseed) if any(value is not None and np.any(value[row] != 0) for value in constants))
@@ -208,12 +205,8 @@ def _call_jvp_many_function(
       else _stored_result(Expr.const(value[list(active)], dtype=callee.inputs[i].type.dtype), callee.inputs[i], (len(active),))
       for i, value in zip(formal_indices, constants, strict=True)
     }
-    masks = (
-      {i: Expr(ExprOp.INPUT, type=TensorType(seeds[i].type.storage_shape, dtypes.bool_), name=mask_names[i]) for i in formal_indices}
-      if masked
-      else {}
-    )
-    masked_seeds = {i: _masked_seed(seed, masks[i]) if masked else seed for i, seed in seeds.items()}
+    masks = {i: Expr(ExprOp.INPUT, type=TensorType(seeds[i].type.storage_shape, dtypes.bool_), name=mask_names[i]) for i in masked}
+    masked_seeds = {i: _masked_seed(seed, masks[i]) if i in masks else seed for i, seed in seeds.items()}
     single_constant = len(formal_indices) == 1 and constants[0] is not None
     (deriv,) = body_tangents(callee, (output_index,), masked_seeds, len(active), pushforward)
     assert deriv is not None
@@ -482,16 +475,15 @@ def _vmap_jvp_many(
     generic_seeds[formal_idx] = seed_buffer
   if generic_seeds:
     formals = tuple(generic_seeds)
-    masked = any(_mask_of(t) is not None for t in generic_seeds.values())
+    masked = tuple(i for i, t in generic_seeds.items() if _mask_of(t) is not None)
     inner_fn, primal_arg_indices, seed_indices, _ = _call_jvp_many_function(
       callee, output_idx, formals, nseed, (None,) * len(formals), pushforward=pushforward, masked=masked
     )
     primal_specs = [(expr.args[i], starts[i], strides[i]) for i in primal_arg_indices]
     seed_specs = [(generic_seeds[i], 0, nseed * callee.inputs[i].type.storage_size) for i in seed_indices]
-    if masked:
-      seed_specs.extend(
-        (stop_gradient(cast_expr(values(activity(generic_seeds[i])), dtypes.bool_)), 0, nseed * callee.inputs[i].type.storage_size) for i in formals
-      )
+    seed_specs.extend(
+      (stop_gradient(cast_expr(values(activity(generic_seeds[i])), dtypes.bool_)), 0, nseed * callee.inputs[i].type.storage_size) for i in masked
+    )
     mapped_flat = mapped_call(inner_fn, length, [*primal_specs, *seed_specs])
     term = move_mask(mapped_flat, lambda t: t.reshape((length, nseed, slice_size)).transpose((1, 0, 2)).reshape((nseed, length * slice_size)))
     ret = term if ret is None else _add_tangents(ret, term)
@@ -507,7 +499,7 @@ def _call_jvp_many(expr: Expr, tangents: Sequence[Expr | None], nseed: int, *, p
       Expr.const(np.zeros((nseed, *expr.type.storage_shape), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype), expr, (nseed,)
     )
   active_tangents = {i: t for i in formals if (t := tangents[i]) is not None}
-  masked = any(_mask_of(t) is not None for t in active_tangents.values())
+  masked = tuple(i for i, t in active_tangents.items() if _mask_of(t) is not None)
   constants = tuple(values(t).value if values(t).op == ExprOp.CONST else None for t in active_tangents.values())
   fn, arg_indices, seed_indices, active = _call_jvp_many_function(
     expr.attrs["callee"], expr.attrs["output"], formals, nseed, constants, pushforward=pushforward, masked=masked
@@ -517,8 +509,7 @@ def _call_jvp_many(expr: Expr, tangents: Sequence[Expr | None], nseed: int, *, p
       Expr.const(np.zeros((nseed, *expr.type.storage_shape), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype), expr, (nseed,)
     )
   call_args = [expr.args[i] for i in arg_indices] + [active_tangents[i] for i in seed_indices]
-  if masked:
-    call_args.extend(stop_gradient(cast_expr(values(activity(t)), dtypes.bool_)) for t in active_tangents.values())
+  call_args.extend(stop_gradient(cast_expr(values(activity(active_tangents[i])), dtypes.bool_)) for i in masked)
   outputs = fn._call(call_args)
   ret = outputs[0] if len(outputs) == 1 else _masked_seed(outputs[0], outputs[1])
   if len(active) != nseed:
