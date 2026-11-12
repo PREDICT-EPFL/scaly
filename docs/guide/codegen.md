@@ -583,19 +583,21 @@ heap. Supply the target's math library for any libm calls it uses.
 
 The [embedded oracle example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/embedded_oracle.py)
 exports the nonlinear stages from the mapped-derivatives example and their sparse
-Jacobian in `float32`. From a repository checkout, generate it with a zero frame
+Jacobian in `float32`. The `.block()` hint forces a workspace for this check,
+and omitting it gives an object of 206 bytes with no workspace.
+From a repository checkout, generate it with a zero frame
 budget and compile it with Zig:
 
 ```bash
-PYTHONPATH=. uv run scaly_codegen examples.embedded_oracle:oracle -o generated/embedded \
+PYTHONPATH=. uv run scaly_codegen examples.embedded_oracle:oracle -o examples/generated/embedded \
     --dialect c --lanes 1 --frame-budget 0
 uv run --extra toolchain zig cc -target thumb-freestanding-eabihf \
     -mcpu=cortex_m4+vfp4d16sp -ffreestanding -Os \
     -fno-unwind-tables -fno-asynchronous-unwind-tables \
     '-DSCALY_PRINTF(...)=' -Iexamples/embedded \
-    -c generated/embedded/embedded_oracle.c -o generated/embedded/oracle.o
-size generated/embedded/oracle.o
-nm --undefined-only generated/embedded/oracle.o
+    -c examples/generated/embedded/embedded_oracle.c -o examples/generated/embedded/oracle.o
+size examples/generated/embedded/oracle.o
+nm --undefined-only examples/generated/embedded/oracle.o
 ```
 
 Zig spells Clang's `thumbv7em-none-eabihf` target as
@@ -794,9 +796,10 @@ conversion can require additional workspace.
 in bytes, and defaults to 65,536. Scaly adds up its temporary arrays, counting
 a called Function's arrays once for each call that can be inlined, plus 4,096
 bytes for scalars the C compiler keeps on the stack. While the total is over
-the budget, Scaly moves the largest float64 array into `w`, so a smaller budget
-raises `<name>_SZ_W`. `frame_budget=0`, or `--frame-budget 0`, moves every float64
-temporary array. The 4,096 bytes remain, so a budget below that behaves like zero.
+the budget, Scaly moves the largest eligible array into `w`, so a smaller budget
+raises `<name>_SZ_W`. `frame_budget=0`, or `--frame-budget 0`, moves every temporary
+array eligible for its [workspace dtype](#float32-and-integer-functions).
+The 4,096 bytes remain, so a budget below that behaves like zero.
 
 `module.frame_bytes` and `<name>_FRAME_BYTES` give the largest estimate over the
 generated C functions. A function that is not inlined adds its own frame on top

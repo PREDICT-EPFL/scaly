@@ -3075,6 +3075,9 @@ tests/codegen/test_cpp.py::test_cpp_workspace_parameter_does_not_shadow_exported
 tests/codegen/test_cpp.py::test_cpp_workspace_parameter_does_not_shadow_exported_entry[x-workspace_2]
 tests/codegen/test_cpp.py::test_headers_split_names_shared_by_an_input_and_an_output
 tests/codegen/test_cpp.py::test_headers_survive_buffer_names_that_collide_with_the_wrapper
+tests/codegen/test_embedded.py::test_cortex_m_oracle_has_only_libm_symbols[cortex_m4]
+tests/codegen/test_embedded.py::test_cortex_m_oracle_has_only_libm_symbols[cortex_m7]
+tests/codegen/test_embedded.py::test_embedded_values_and_jacobian_match_numpy
 tests/codegen/test_external.py::test_an_included_header_changes_library_and_jit_keys
 tests/codegen/test_external.py::test_aot_cli_exports_without_a_compiler_or_jit_cache[backends0]
 tests/codegen/test_external.py::test_aot_cli_exports_without_a_compiler_or_jit_cache[backends1]
@@ -3169,9 +3172,6 @@ tests/codegen/test_float32.py::test_empty_axis_sums_keep_typed_zero[folded-int64
 tests/codegen/test_float32.py::test_empty_axis_sums_keep_typed_zero[scalar-float32]
 tests/codegen/test_float32.py::test_empty_axis_sums_keep_typed_zero[scalar-int32]
 tests/codegen/test_float32.py::test_empty_axis_sums_keep_typed_zero[scalar-int64]
-tests/codegen/test_embedded.py::test_cortex_m_oracle_has_only_libm_symbols[cortex_m4]
-tests/codegen/test_embedded.py::test_cortex_m_oracle_has_only_libm_symbols[cortex_m7]
-tests/codegen/test_embedded.py::test_embedded_values_and_jacobian_match_numpy
 tests/codegen/test_float32.py::test_every_elementwise_op_has_a_float32_twin[block]
 tests/codegen/test_float32.py::test_every_elementwise_op_has_a_float32_twin[folded]
 tests/codegen/test_float32.py::test_every_elementwise_op_has_a_float32_twin[scalar]
