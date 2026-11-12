@@ -11,7 +11,7 @@ import scaly as sc
 from scaly.codegen.toolchain import find_c_compiler
 from scaly.function.sugar import _mapped_call
 from scaly.ir import program as p
-from scaly.ir.expr import Expr
+from scaly.ir.expr import Expr, _scatter_zero
 from scaly.ir.types import CanonicalPattern
 from scaly.ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
 from scaly.passes.lowering import ctx, lower_function, main_proc
@@ -201,6 +201,42 @@ def test_sampled_product_counts_its_select_condition_read() -> None:
 
 
 @needs_cc
+@pytest.mark.parametrize("case", ["private_alias", "carry", "scatter_sum"])
+def test_deferred_reads_keep_the_value_before_an_indexed_write(case: str) -> None:
+  def update(carry, alias=False):
+    old = sc.gather(carry, [0])
+    base = carry.reshape((2, 2)) if alias else carry
+    first = sc.scatter(base, [0], old + 1, combine="set")
+    return sc.scatter(first.reshape((4,)), [1], old + 2, combine="set")
+
+  @sc.function(sc.arg("carry", 4), name="shared_before_update")
+  def stage(carry):
+    return update(carry)
+
+  @sc.function(sc.arg("x", 4), name=f"read_before_update_{case}")
+  def fn(x):
+    if case == "carry":
+      return sc.scan(stage, x, length=1, in_place=(0,))[0].block()
+    if case == "scatter_sum":
+      base = x + 1
+      first = _scatter_zero(base, [1, 0, 3, 2], 4)
+      updated = sc.scatter(base, [0], sc.const([99.0]), combine="set")
+      return first + _scatter_zero(updated.sum().reshape((1,)), [0], 4)
+    return update(x + 1, alias=True)
+
+  x = np.arange(4.0)
+  before = x if case == "carry" else x + 1
+  expected = before.copy()
+  if case == "scatter_sum":
+    expected = before[[1, 0, 3, 2]]
+    expected[0] += 99 + before[1:].sum()
+  else:
+    expected[[0, 1]] = before[0] + np.array([1, 2])
+  np.testing.assert_array_equal(fn(x), expected)
+  np.testing.assert_array_equal(x, np.arange(4.0))
+
+
+@needs_cc
 def test_reduction_evaluates_its_operand_in_the_reduction_loop() -> None:
   fn = _function("reduce_fused", ((5, 6),), lambda x: x.sin().sum(axis=1))
   proc = _lowered(fn)
@@ -235,7 +271,7 @@ def test_sum_of_scatters_accumulates_into_one_buffer(overlap: bool) -> None:
 
   @sc.function(sc.arg("x", 4), outputs=sc.arg("y"), name=f"scatter_sum_{overlap}")
   def fn(x):
-    return sc.scatter(x.sin(), [0, 2, 4, 6], 8) + sc.scatter(2 * x, second, 8) + sc.scatter(-x, [6, 7, 0, 2], 8)
+    return _scatter_zero(x.sin(), [0, 2, 4, 6], 8) + _scatter_zero(2 * x, second, 8) + _scatter_zero(-x, [6, 7, 0, 2], 8)
 
   proc = _lowered(fn)
   zero_fills = [s for s in proc.args if s.op == ProgramOp.FOR and s.args[1].op == ProgramOp.STORE and s.args[1].args[1].op == ProgramOp.CONST_FLOAT]
@@ -259,7 +295,7 @@ def test_scatter_of_a_mapped_transpose_reads_by_affine_indices() -> None:
   @sc.function(sc.arg("z", 6), outputs=sc.arg("y"), name="delinearize")
   def fn(z):
     mapped = _mapped_call(stage, 3, [(z, 0, 2)]).reshape((3, 2, 2)).transpose((1, 0, 2)).reshape((12,))
-    return sc.scatter(mapped, np.arange(12), 12) + sc.scatter(z * 0.5, np.arange(0, 12, 2), 12)
+    return _scatter_zero(mapped, np.arange(12), 12) + _scatter_zero(z * 0.5, np.arange(0, 12, 2), 12)
 
   proc = _lowered(fn)
   divides = [n for n in walk_program(proc) if n.op in (ProgramOp.DIV, ProgramOp.MOD)]

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from functools import reduce
 from operator import or_
 
@@ -11,7 +11,7 @@ import numpy as np
 
 from ...ad.rules import ELEMENTWISE, _mask_of
 from ...function.concrete import ConcreteFunction
-from ...ir.expr import Expr, ExprOp
+from ...ir.expr import Expr, ExprOp, _index_values, topo
 from ...ir.support import Support
 from ...ir.types import stored_indices
 
@@ -70,8 +70,8 @@ def _free(node: Expr) -> bool:
 
 def scatter_targets(node: Expr) -> np.ndarray:
   """The flat position each stored entry of a scatter's source lands at."""
-  indices = node.attrs["indices"].reshape(-1)
-  src = node.args[0]
+  indices = _index_values(node).reshape(-1)
+  src = node.args[2]
   return indices if src.type.pattern is None else indices[stored_indices(src.type)]
 
 
@@ -98,9 +98,15 @@ def _reads(node: Expr) -> list[tuple[Expr, int]]:
     trips = node.size * node.args[0].shape[-1]
     return [(a, _ONCE if trips == a.size else _MANY) for a in node.args]
   if op == ExprOp.GATHER:
-    indices = node.attrs["indices"].reshape(-1)
+    if node.args[1].value is None or node.attrs["mode"] == "fill":
+      return [(a, _BUFFER) for a in node.args]
+    indices = _index_values(node).reshape(-1)
     return [(node.args[0], _ONCE if len(np.unique(indices)) == len(indices) else _MANY)]
-  if op in ALIASES | {ExprOp.TRANSPOSE, ExprOp.SLICE, ExprOp.REDUCE, ExprOp.SCATTER, ExprOp.STACK, ExprOp.CONCAT}:
+  if op == ExprOp.SCATTER:
+    if node.args[0].support == frozenset() and node.args[1].value is not None and node.attrs["combine"] == "add" and node.attrs["mode"] != "fill":
+      return [(node.args[2], _ONCE)]
+    return [(a, _BUFFER) for a in node.args]
+  if op in ALIASES | {ExprOp.TRANSPOSE, ExprOp.SLICE, ExprOp.REDUCE, ExprOp.STACK, ExprOp.CONCAT}:
     return [(a, _ONCE) for a in node.args]
   return [(a, _BUFFER) for a in node.args]
 
@@ -109,6 +115,7 @@ def plan_fusion(
   fun: ConcreteFunction,
   invariant: frozenset[frozenset[int]],
   *,
+  roots: Sequence[Expr],
   scalar: bool,
   seed_pairs: bool,
   support_of: Callable[[Expr], Support],
@@ -122,7 +129,8 @@ def plan_fusion(
   Several reads of a stored input stay index remaps. A dense elementwise node is deferred when one
   consumer reads each of its elements once, through any chain of deferred movement ops; one that holds a libm call is deferred only into a
   single read, so the call is not duplicated. Everything else is stored: reductions, products,
-  scatters, concatenations, calls, outputs and sparse values.
+  scatters, concatenations, calls, outputs and sparse values. A read stays before a scatter that
+  may overwrite its source.
 
   ``invariant`` holds, for a function mapped or run as a loop body, the input positions each map or
   loop holds the same at every trip. The trip is a range that a node depending only on those inputs
@@ -136,7 +144,7 @@ def plan_fusion(
   reshape, is stored once: it zeroes its buffer and each scatter accumulates into it in order. A
   scatter that repeats an index joins only if no earlier operand writes that index, so each element
   still adds its terms in the order of the expression."""
-  nodes, outputs = fun.nodes, frozenset(o.id for o in fun.outputs)
+  nodes, outputs = tuple(topo(roots)), frozenset(o.id for o in roots)
   readers: dict[int, list[tuple[Expr, int]]] = {}
   for node in nodes:
     for arg, kind in _reads(node):
@@ -149,6 +157,21 @@ def plan_fusion(
 
   def hoistable(producer: int, consumer: int) -> bool:
     return any(depends[producer] & ~mask == 0 and depends[consumer] & ~mask for mask in fixed)
+
+  updates = [node for node in nodes if node.op == ExprOp.SCATTER and node.attrs["mode"] != "fill" and node.args[0].support != frozenset()]
+  aliases: dict[int, int] = {}
+  for node in nodes:
+    aliases[node.id] = aliases[node.args[0].id] if node.op in ALIASES | {ExprOp.SLICE, ExprOp.PRINT} else node.id
+  storage = {source: 1 << k for k, source in enumerate(dict.fromkeys(aliases[node.args[0].id] for node in updates))}
+  schedule = {node.id: k for k, node in enumerate(nodes)}
+  writes = [(schedule[node.id], storage[aliases[node.args[0].id]]) for node in updates]
+  reads_storage: dict[int, int] = {}
+  if writes:
+    for node in nodes:
+      reads_storage[node.id] = storage.get(aliases[node.id], 0) | reduce(or_, (reads_storage[a.id] for a in node.args), 0)
+
+  def crosses_write(producer: int, consumer: int) -> bool:
+    return any(schedule[producer] < at < schedule[consumer] and reads_storage[producer] & source for at, source in writes)
 
   def keep_zeros(node: Expr) -> bool:
     return (scalar and (support := support_of(node)) is not None and len(support) < node.size) or (
@@ -165,6 +188,7 @@ def plan_fusion(
       and uses[0][1] == _ONCE
       and all(e.type.pattern is None for e in (node, *node.args))
       and not hoistable(node.id, uses[0][0].id)
+      and not crosses_write(node.id, uses[0][0].id)
       and not (op in ELEMENTWISE and keep_zeros(node))
       and (op in ELEMENTWISE and ELEMENTWISE[op].expensive or any(a.id in inline_costly for a in node.args))
     ):
@@ -187,8 +211,10 @@ def plan_fusion(
       node.id not in outputs
       and dense
       and ExprOp(node.op) in MOVEMENT
+      and (node.op != ExprOp.GATHER or node.args[1].value is not None and node.attrs["mode"] != "fill")
       and (len(edges) <= 1 or _free(node) or not any(a.id in inline_costly for a in node.args))
       and all(k == _ONCE or k == _MANY and _free(node) for _, k, _ in edges)
+      and not any(crosses_write(node.id, consumer) for consumer, _, _ in edges)
     ):
       deferred.add(node.id)
 
@@ -198,7 +224,15 @@ def plan_fusion(
     edges = terminal[arg.id]
     if ExprOp(arg.op) != ExprOp.SCATTER or arg.id in outputs or arg.size != parent.size or len(edges) != 1 or edges[0][:2] != (parent.id, _ONCE):
       return None
-    return arg if arg.type.pattern is None else None
+    return (
+      arg
+      if arg.type.pattern is None
+      and arg.args[0].support == frozenset()
+      and arg.args[1].value is not None
+      and arg.attrs["combine"] == "add"
+      and arg.attrs["mode"] != "fill"
+      else None
+    )
 
   chains: dict[int, tuple[Expr, ...]] = {}
   extended: set[int] = set()
@@ -213,6 +247,8 @@ def plan_fusion(
     elif (first := scatter(left, node)) is not None:
       leaves = (first,)
     else:
+      continue
+    if any(crosses_write(leaf.id, node.id) for leaf in (*leaves, last)):
       continue
     written = {int(i) for leaf in leaves for i in scatter_targets(leaf)}
     indices = scatter_targets(last)
@@ -244,6 +280,7 @@ def plan_fusion(
       and all(k == _ONCE for _, k, _ in edges)
       and (len(edges) == 1 or not costly and all(d for *_, d in edges))
       and not hoistable(node.id, edges[0][0])
+      and not crosses_write(node.id, edges[0][0])
     ):
       deferred.add(node.id)
       if costly:

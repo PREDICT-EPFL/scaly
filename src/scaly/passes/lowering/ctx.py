@@ -357,6 +357,7 @@ class LowerCtx:
     self.deferred, self.sums = plan_fusion(
       self.fun,
       self.invariant,
+      roots=self._computed,
       scalar=self.scalarize,
       seed_pairs=self.seed_pairs,
       support_of=self.support_of,
@@ -820,7 +821,7 @@ def _source_positions(expr: Expr) -> np.ndarray:
   """The flat position in its source of each element of a transpose, a slice or a gather."""
   src = expr.args[0]
   if ExprOp(expr.op) == ExprOp.GATHER:
-    return expr.attrs["indices"].reshape(-1)
+    return _index_values(expr).reshape(-1)
   positions = np.arange(src.size, dtype=np.int64).reshape(src.shape)
   if ExprOp(expr.op) == ExprOp.TRANSPOSE:
     return positions.transpose(expr.attrs["axes"]).reshape(-1)
