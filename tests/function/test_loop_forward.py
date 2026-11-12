@@ -221,3 +221,38 @@ def test_custom_jvp_with_nonfloating_stacked_output(dtype):
       got, want = evaluate([c, xs], [sc.jacobian(actual, wrt), sc.jacobian(expected, wrt)], point)
       np.testing.assert_allclose(got, want, atol=1e-12)
   check_derivatives([c, xs], [final, ys], point)
+
+
+def test_runtime_index_update_through_an_in_place_scan():
+  @sc.function(sc.arg("carry", 4), sc.arg("pivot", sc.TensorType((), sc.dtypes.int64)), sc.arg("scale", ()))
+  def step(carry, pivot, scale):
+    return sc.scatter(carry, pivot, sc.gather(carry, pivot) * scale, combine="set")
+
+  initial, pivot, scale = sc.sym("initial", 4), sc.sym("pivot", ()), sc.sym("scale", ())
+  index = pivot.cast(sc.dtypes.int64)
+  final, _ = sc.scan(step, initial, (sc.broadcast(index), sc.broadcast(scale)), length=3, in_place=("carry",))
+  reference = initial
+  for _ in range(3):
+    reference = step(reference, index, scale)
+  point = [np.array([0.2, 0.4, 0.6, 0.8]), np.array(1.25), np.array(0.7)]
+  got, want, primal = evaluate([initial, pivot, scale], [sc.jacobian(final, initial), sc.jacobian(reference, initial), final], point)
+  np.testing.assert_allclose(got, want, atol=1e-12)
+  expected = point[0].copy()
+  expected[1] *= 0.7**3
+  np.testing.assert_allclose(primal, expected, atol=1e-12)
+
+
+def test_carried_loop_drops_incoming_select_flags():
+  from scaly.ir.expr import ExprOp, topo
+  from scaly.ad.rules import _mask_of
+
+  @sc.function(sc.arg("carry", 2))
+  def step(carry):
+    return carry.sqrt()
+
+  x = sc.sym("x", 2)
+  final, _ = sc.scan(step, sc.where(x > 0.0, x, 0.0), length=2)
+  tangent = sc.jvp(final, x, sc.const(np.ones(2)))
+  loop = next(node for node in topo((tangent,)) if node.op == ExprOp.LOOP)
+  assert _mask_of(tangent) is None
+  assert all(not name.startswith("mask:") for name in loop.attrs["callee"].input_names)

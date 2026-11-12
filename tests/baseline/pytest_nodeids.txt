@@ -4252,6 +4252,7 @@ tests/function/test_loop.py::test_trajectories_and_zero_fill[True-None-False]
 tests/function/test_loop.py::test_while_loop_edge_counts
 tests/function/test_loop.py::test_while_loop_newton_matches_a_python_loop
 tests/function/test_loop.py::test_while_step_counts_at_every_boundary
+tests/function/test_loop_forward.py::test_carried_loop_drops_incoming_select_flags
 tests/function/test_loop_forward.py::test_custom_jvp_with_nonfloating_stacked_output[dtype0]
 tests/function/test_loop_forward.py::test_custom_jvp_with_nonfloating_stacked_output[dtype1]
 tests/function/test_loop_forward.py::test_matrix_slices_and_shared_initial_dependency[shape0]
@@ -4261,6 +4262,7 @@ tests/function/test_loop_forward.py::test_nested_loop_and_loop_inside_map[scan]
 tests/function/test_loop_forward.py::test_nested_loop_and_loop_inside_map[while]
 tests/function/test_loop_forward.py::test_nonfloating_carry_with_floating_stacked_output[dtype0]
 tests/function/test_loop_forward.py::test_nonfloating_carry_with_floating_stacked_output[dtype1]
+tests/function/test_loop_forward.py::test_runtime_index_update_through_an_in_place_scan
 tests/function/test_loop_forward.py::test_scan_forward_matches_unrolled[False-0]
 tests/function/test_loop_forward.py::test_scan_forward_matches_unrolled[False-1]
 tests/function/test_loop_forward.py::test_scan_forward_matches_unrolled[False-4]
