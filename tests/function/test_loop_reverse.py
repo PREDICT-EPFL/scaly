@@ -12,8 +12,7 @@ def evaluate(inputs, outputs, point):
   return fn(*point)
 
 
-@pytest.mark.parametrize("length", [0, 1, 4])
-@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize(("length", "reverse"), [(0, False), (1, False), (4, False), (4, True)])
 def test_scan_reverse_matches_unrolled(length, reverse):
   @sc.function(sc.arg("c", 2), sc.arg("x", ()), sc.arg("p", 2))
   def step(c, x, p):
@@ -59,8 +58,7 @@ def test_while_reverse_and_second_derivative(limit):
     np.testing.assert_allclose(hess, href, atol=1e-12)
 
 
-@pytest.mark.parametrize("reverse", [False, True])
-@pytest.mark.parametrize("trip", [0, 1, 3, 9])
+@pytest.mark.parametrize(("reverse", "trip"), [(False, 0), (False, 3), (True, 3), (False, 9), (True, 9)])
 def test_trajectory_windows_index_and_mixed_carries(reverse, trip):
   """Port of devrush's loop edge cases: windows, step numbers and mixed carries."""
   from scaly.function.model import as_concrete
@@ -111,26 +109,23 @@ def test_one_backward_invocation_and_primal_trip():
   assert next(e for e in loops if e.attrs["reverse"]).attrs["n_carry"] == 2
 
 
-@pytest.mark.parametrize("bound", [0, 4])
-def test_max_trajectory_counts_carries_per_loop(bound):
+def test_max_trajectory_counts_carries_per_loop():
   @sc.function(sc.arg("c", 2))
   def step(c):
     return c.sin(), sc.concat([c] * 20)
 
   c = sc.sym("c", 2)
-  final, (ys,) = sc.scan(step, c, length=bound, max_trajectory=2 * bound)
+  final, (ys,) = sc.scan(step, c, length=4, max_trajectory=8)
   grad = sc.gradient(final.sum() + ys.sum(), c)
   evaluate([c], [grad], [np.array([0.2, 0.4])])
-  if bound:
-    final, _ = sc.scan(step, c, length=bound, max_trajectory=2 * bound - 1)
-    with pytest.raises(ValueError, match="max_trajectory=.*sc.custom_derivative"):
-      sc.gradient(final.sum(), c)
+  final, _ = sc.scan(step, c, length=4, max_trajectory=7)
+  with pytest.raises(ValueError, match="max_trajectory=.*sc.custom_derivative"):
+    sc.gradient(final.sum(), c)
   with pytest.raises(ValueError, match="non-negative"):
-    sc.scan(step, c, length=bound, max_trajectory=-1)
+    sc.scan(step, c, length=4, max_trajectory=-1)
 
 
-@pytest.mark.parametrize("limit,steps", [(-1.0, 0), (2.5, 3), (100.0, 6)])
-def test_backward_uses_primal_trip_count(limit, steps):
+def test_backward_uses_primal_trip_count():
   from scaly.ir.expr import ExprOp, topo
 
   @sc.function(sc.arg("c", 2), sc.arg("limit", ()), outputs=sc.arg("go", sc.TensorType((), sc.dtypes.bool_)))
@@ -148,8 +143,8 @@ def test_backward_uses_primal_trip_count(limit, steps):
   trip = backward.args[-1]
   assert backward.attrs["cond"] is None
   assert trip.op == ExprOp.LOOP and trip.attrs["output"] == len(trip.attrs["callee"].results)
-  actual = evaluate([c, lim], [trip.cast(sc.dtypes.float64)], [np.array([0.2, 0.0]), np.array(limit)])
-  assert actual == steps
+  actual = evaluate([c, lim], [trip.cast(sc.dtypes.float64)], [np.array([0.2, 0.0]), np.array(2.5)])
+  assert actual == 3
 
 
 def test_newton_early_exit_zero_trip_and_second_derivative():

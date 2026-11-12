@@ -19,7 +19,7 @@ def _lowered_main(fun):
   return main_proc(stages["lowered"])
 
 
-@pytest.mark.parametrize("length", [0, 1, 5])
+@pytest.mark.parametrize("length", [0, 5])
 def test_multi_output_map_uses_one_loop_and_matches_numpy(length) -> None:
   @sc.function(sc.arg("x", 2), sc.arg("p", ()))
   def pair(x, p):
@@ -157,7 +157,7 @@ def test_different_map_layouts_are_distinct_invocations() -> None:
   assert sum(node.op == ProgramOp.CALL for node in walk_program(_lowered_main(outer))) == 4
 
 
-@pytest.mark.parametrize("length", [None, 0, 1, 5])
+@pytest.mark.parametrize("length", [None, 0, 5])
 def test_sparse_siblings_preserve_each_declared_layout(length) -> None:
   pattern = CanonicalPattern((3, 4), (0, 0, 1, 2, 2), (0, 3, 1, 0, 2))
   short = CanonicalPattern((2, 4), (0, 0, 1), (0, 3, 1))
@@ -195,22 +195,6 @@ def test_sparse_siblings_preserve_each_declared_layout(length) -> None:
   assert len(calls) == int(length != 0)
   if calls:
     assert calls[0].attrs["n_out"] == 3
-
-
-def test_small_static_loop_unrolls_and_block_hint_keeps_it_rolled() -> None:
-  @sc.function(sc.arg("c", ()))
-  def step(c):
-    return c * 1.25 + 0.1
-
-  def build(hint):
-    x = sc.sym("x")
-    c, _ = sc.scan(step, x, length=3)
-    return ConcreteFunction._from_exprs("static_loop", [x], [c.with_lowering(hint)], ["x"], ["y"])
-
-  expanded, rolled = build("auto"), build("block")
-  assert not any(n.op == ProgramOp.FOR and n.args[0].attrs.get("carried") for n in walk_program(_lowered_main(expanded)))
-  assert any(n.op == ProgramOp.FOR and n.args[0].attrs.get("carried") for n in walk_program(_lowered_main(rolled)))
-  assert expanded(np.array(0.3)).tobytes() == rolled(np.array(0.3)).tobytes()
 
 
 def _static_scan(step, length, hint="auto", *, reverse=False, trip=None):

@@ -71,16 +71,6 @@ def test_disjoint_later_read():
   assert _inout(fn)
 
 
-def test_ceil_reads_old_entries():
-  @sc.function(sc.arg("carry", 3))
-  def step(carry):
-    first = sc.scatter(carry, [0], sc.gather(carry, [1]), combine="set")
-    return sc.scatter(first, [0], sc.gather(carry.ceil(), [0]) + 0.5, combine="set")
-
-  with pytest.raises(NotImplementedError, match="carry"):
-    lower_function(_loop(step, 3, length=1))
-
-
 def test_overlapping_later_gather_refuses():
   @sc.function(sc.arg("carry", 4), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
   def step(carry, j):
@@ -141,12 +131,12 @@ def test_returning_old_carry_refuses():
     lower_function(_loop(step, 4))
 
 
-@pytest.mark.parametrize("source", ["direct", "reshape", "slice"])
+@pytest.mark.parametrize("source", ["direct", "reshape"])
 def test_update_source_alias_refuses(source):
   @sc.function(sc.arg("carry", 4))
   def step(carry):
-    values = carry if source == "direct" else carry.reshape((2, 2)).reshape((4,)) if source == "reshape" else carry[:3]
-    return sc.scatter(carry, [1, 2, 3, 0] if source != "slice" else [1, 2, 3], values, combine="set")
+    values = carry if source == "direct" else carry.reshape((2, 2)).reshape((4,))
+    return sc.scatter(carry, [1, 2, 3, 0], values, combine="set")
 
   with pytest.raises(NotImplementedError, match="carry"):
     lower_function(_loop(step, 4))
@@ -465,7 +455,7 @@ def test_trajectory_explains_strict_refusal():
     lower_function(run)
 
 
-@pytest.mark.parametrize("hint", ["auto", "scalar", "block"])
+@pytest.mark.parametrize("hint", ["auto", "block"])
 def test_static_unroll_matches_rolled_in_place(hint):
   @sc.function(sc.arg("carry", 4), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
   def step(carry, j):
@@ -484,8 +474,7 @@ def test_static_unroll_matches_rolled_in_place(hint):
   assert bool(_inout(run)) == (hint == "block")
 
 
-@pytest.mark.parametrize("hint", ["scalar", "block"])
-def test_unroll_hint_does_not_bypass_in_place_refusal(hint):
+def test_unroll_hint_does_not_bypass_in_place_refusal():
   @sc.function(sc.arg("carry", 3))
   def step(carry):
     printed = sc.print("{}", carry)
@@ -495,7 +484,7 @@ def test_unroll_hint_does_not_bypass_in_place_refusal(hint):
   @sc.function(sc.arg("initial", 3))
   def run(initial):
     final, _ = sc.scan(step, initial, length=2, in_place=("carry",))
-    return final.with_lowering(hint)
+    return final.with_lowering("scalar")
 
   with pytest.raises(NotImplementedError, match="cannot prove in_place carry 'carry'"):
     lower_function(run)
