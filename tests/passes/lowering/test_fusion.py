@@ -237,6 +237,56 @@ def test_deferred_reads_keep_the_value_before_an_indexed_write(case: str) -> Non
 
 
 @needs_cc
+@pytest.mark.parametrize("variant", ["static", "runtime", "index_set", "index_add", "nested", "fill_control"])
+def test_shared_gather_from_earlier_carry_version(variant):
+  def update(base, index, value):
+    if variant in ("index_set", "index_add", "fill_control"):
+      method = sc.index_add if variant == "index_add" else sc.index_set
+      return method(base, index, value, mode="fill" if variant == "fill_control" else "promise_in_bounds")
+    return sc.scatter(base, index, value, combine="set")
+
+  def body(carry, j):
+    first = update(carry, [3], sc.const([10.0]))
+    second = update(first, [2], sc.const([20.0]))
+    old = sc.gather(first, [0])
+    third = update(second, j if variant == "runtime" else [0], old + 1)
+    return update(third, [1], old + 2)
+
+  @sc.function(sc.arg("carry", 4), sc.arg("j", sc.TensorType((), sc.dtypes.int64)), name="integration_step_" + variant)
+  def step(carry, j):
+    return body(carry, j)
+
+  @sc.function(sc.arg("carry", 4), name="integration_nested_step_" + variant)
+  def nested_step(carry):
+    return sc.scan(step, carry, length=1, index=True, in_place=(0,))[0].block()
+
+  @sc.function(sc.arg("x", 4), name="integration_run_" + variant)
+  def run(x):
+    if variant == "nested":
+      return sc.scan(nested_step, x, length=2)[0].block()
+    return sc.scan(step, x, length=1, index=True, in_place=() if variant == "fill_control" else (0,))[0].block()
+
+  initial = np.arange(4.0)
+  expected = initial.copy()
+  for _ in range(2 if variant == "nested" else 1):
+    if variant == "index_add":
+      expected[3] += 10
+      expected[2] += 20
+      old = expected[0].copy()
+      expected[0] += old + 1
+      expected[1] += old + 2
+    else:
+      expected[3] = 10
+      expected[2] = 20
+      old = expected[0].copy()
+      expected[0] = old + 1
+      expected[1] = old + 2
+  actual = run(initial)
+  np.testing.assert_array_equal(initial, np.arange(4.0))
+  np.testing.assert_array_equal(actual, expected)
+
+
+@needs_cc
 def test_reduction_evaluates_its_operand_in_the_reduction_loop() -> None:
   fn = _function("reduce_fused", ((5, 6),), lambda x: x.sin().sum(axis=1))
   proc = _lowered(fn)

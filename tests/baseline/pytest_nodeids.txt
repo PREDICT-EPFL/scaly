@@ -4998,6 +4998,12 @@ tests/passes/lowering/test_fusion.py::test_reused_selection_of_an_input_needs_no
 tests/passes/lowering/test_fusion.py::test_reused_selection_stores_only_the_selected_exp_values
 tests/passes/lowering/test_fusion.py::test_sampled_product_counts_its_select_condition_read
 tests/passes/lowering/test_fusion.py::test_scatter_of_a_mapped_transpose_reads_by_affine_indices
+tests/passes/lowering/test_fusion.py::test_shared_gather_from_earlier_carry_version[fill_control]
+tests/passes/lowering/test_fusion.py::test_shared_gather_from_earlier_carry_version[index_add]
+tests/passes/lowering/test_fusion.py::test_shared_gather_from_earlier_carry_version[index_set]
+tests/passes/lowering/test_fusion.py::test_shared_gather_from_earlier_carry_version[nested]
+tests/passes/lowering/test_fusion.py::test_shared_gather_from_earlier_carry_version[runtime]
+tests/passes/lowering/test_fusion.py::test_shared_gather_from_earlier_carry_version[static]
 tests/passes/lowering/test_fusion.py::test_single_consumer_chain_is_one_loop
 tests/passes/lowering/test_fusion.py::test_sum_of_scatters_accumulates_into_one_buffer[False]
 tests/passes/lowering/test_fusion.py::test_sum_of_scatters_accumulates_into_one_buffer[True]

@@ -158,13 +158,14 @@ def plan_fusion(
   def hoistable(producer: int, consumer: int) -> bool:
     return any(depends[producer] & ~mask == 0 and depends[consumer] & ~mask for mask in fixed)
 
-  updates = [node for node in nodes if node.op == ExprOp.SCATTER and node.attrs["mode"] != "fill" and node.args[0].support != frozenset()]
+  updates = {node.id: node for node in nodes if node.op == ExprOp.SCATTER and node.attrs["mode"] != "fill" and node.args[0].support != frozenset()}
   aliases: dict[int, int] = {}
   for node in nodes:
-    aliases[node.id] = aliases[node.args[0].id] if node.op in ALIASES | {ExprOp.SLICE, ExprOp.PRINT} else node.id
-  storage = {source: 1 << k for k, source in enumerate(dict.fromkeys(aliases[node.args[0].id] for node in updates))}
+    # A scatter may overwrite its base, so successive versions share the same write barrier.
+    aliases[node.id] = aliases[node.args[0].id] if node.op in ALIASES | {ExprOp.SLICE, ExprOp.PRINT} or node.id in updates else node.id
+  storage = {source: 1 << k for k, source in enumerate(dict.fromkeys(aliases[node.args[0].id] for node in updates.values()))}
   schedule = {node.id: k for k, node in enumerate(nodes)}
-  writes = [(schedule[node.id], storage[aliases[node.args[0].id]]) for node in updates]
+  writes = [(schedule[node.id], storage[aliases[node.args[0].id]]) for node in updates.values()]
   reads_storage: dict[int, int] = {}
   if writes:
     for node in nodes:
