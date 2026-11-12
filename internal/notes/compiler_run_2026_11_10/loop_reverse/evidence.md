@@ -114,3 +114,8 @@ tests. C snapshots remain byte-identical to the new base. The refreshed RK4
 measurements above retain identical program-node counts across all three horizons.
 The guide's Python fences, including the newly published cond example, ran with
 the stated outputs. The earlier validation counts describe the pre-rebase tree.
+
+The refreshed detached `~/.scaly-suite/run` exited 0: 6,611 passed and 56 skipped,
+with benchmark smoke, documentation build, type checking, Ruff checks and the
+private-name check all passing. No C snapshot was regenerated. The final record
+commit changes this evidence only.
