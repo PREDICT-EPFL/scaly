@@ -28,7 +28,6 @@ from .expr import (
   COMMON_ELEMENTWISE_TERNARY,
   COMMON_ELEMENTWISE_UNARY,
   OP_INFO,
-  PRINTABLE,
   Expr,
   ExprOp,
   _pattern_text,
@@ -455,8 +454,6 @@ def _print_format(expr: Expr) -> str | None:
     return f"PRINT format has {placeholders} placeholders for {len(expr.args)} values"
   if expr.type != expr.args[0].type:
     return f"PRINT type {expr.type} differs from its first value's {expr.args[0].type}"
-  if any(a.type.dtype not in PRINTABLE for a in expr.args):
-    return f"PRINT values must be {', '.join(map(str, PRINTABLE))}"
   return None
 
 

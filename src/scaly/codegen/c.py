@@ -46,10 +46,10 @@ _UNARY_C = {r.program: r.c for op, r in ELEMENTWISE.items() if OP_INFO[op].arity
 _BINARY_C = {r.program: r.c for op, r in ELEMENTWISE.items() if OP_INFO[op].arity == 2 and r.c.isidentifier()}
 _VECTOR_BINARY = _BINARY_C | {ProgramOp.MINIMUM: "fmin", ProgramOp.MAXIMUM: "fmax"}
 _INTEGER_C = {r.program: r.c_integer for r in ELEMENTWISE.values() if r.c_integer is not None}
-# printf conversion and argument by dtype. 17 significant digits read a double back exactly.
+# printf conversion and argument by dtype. Float64 round-trips with 17 significant digits, float32 with 9.
 _PRINTF = {
   "float64": ("%.17g", "{}"),
-  "float32": ("%.9g", "{}"),
+  "float32": ("%.9g", "(double)({})"),
   "int32": ("%lld", "(long long)({})"),
   "int64": ("%lld", "(long long)({})"),
   "bool": ("%s", '(({}) ? "True" : "False")'),

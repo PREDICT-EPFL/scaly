@@ -555,9 +555,9 @@ The format has one `{}` for each value, and `{{` and `}}` stand for literal
 braces. Each print ends its line. A float64 value prints with 17 significant
 digits, enough to read it back exactly, which is why `0.1` prints as
 `0.10000000000000001`. A float32 value prints with 9 significant digits, also
-enough to read it back exactly. An `int32` or `int64` value prints in full and a `bool`
-prints as `True` or `False`. A tensor prints flat as `[a, b, ...]` whatever its
-shape. Other data types cannot be printed.
+enough to read it back exactly. An `int32` or `int64` value prints in full,
+and a `bool` prints as `True` or `False`. A tensor prints flat as `[a, b, ...]`
+whatever its shape.
 
 A print runs whenever the generated code computes its value. Inside `vmap` it
 runs once per call, in call order. A mapped function with several outputs runs

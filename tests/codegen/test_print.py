@@ -50,7 +50,7 @@ def test_float32_print_evaluates_and_round_trips(capfd) -> None:
 
 
 def test_float32_print_renders_nine_significant_digits() -> None:
-  assert 'SCALY_PRINTF("x=%.9g\\n", ' in render_c_source(_float32_print())
+  assert 'SCALY_PRINTF("x=%.9g\\n", (double)(' in render_c_source(_float32_print())
 
 
 def test_float32_print_compiles_out(tmp_path) -> None:

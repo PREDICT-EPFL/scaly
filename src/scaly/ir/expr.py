@@ -1098,9 +1098,6 @@ def binary(op: ExprOp | str, x: Expr, y: Expr) -> Expr:
   )
 
 
-PRINTABLE = (dtypes.float64, dtypes.float32, dtypes.int32, dtypes.int64, dtypes.bool_)
-
-
 def print_pieces(fmt: str) -> tuple[str, ...]:
   """The literal text around each ``{}`` placeholder of a print format: one more piece than placeholders."""
   if "\0" in fmt:
@@ -1161,8 +1158,6 @@ def print_(fmt: str, *values: Any) -> Expr:
   placeholders = len(print_pieces(fmt)) - 1
   if placeholders != len(exprs):
     raise ValueError(f"print format {fmt!r} has {placeholders} placeholders for {len(exprs)} values")
-  if any(e.type.dtype not in PRINTABLE for e in exprs):
-    raise TypeError(f"print supports {', '.join(map(str, PRINTABLE))} values, got {', '.join(str(e.type.dtype) for e in exprs)}")
   node = Expr(ExprOp.PRINT, exprs, exprs[0].type, attrs={"format": fmt}, lowering=exprs[0].lowering)
   if (trace := _PRINT_TRACE.get()) is not None:
     trace.append(node)
