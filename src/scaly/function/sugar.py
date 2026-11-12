@@ -370,7 +370,7 @@ def cond(selector: Any, branches: tuple[Function | ConcreteFunction, ...], *oper
   branches. Integer selectors clamp to ``[0, len(branches) - 1]``. Only the selected branch
   runs, including its prints. Branches must have matching input and output structures,
   shapes, dtypes and stored patterns. Results follow the first branch's output tree.
-  The selector has no derivative. Derivatives follow the selected branch; structural
+  The selector has no derivative. Derivatives follow the selected branch. Structural
   sparsity is the union of the branches.
   """
   if not isinstance(branches, tuple) or not branches or not all(isinstance(fn, Function | ConcreteFunction) for fn in branches):
@@ -442,12 +442,15 @@ def _loop(
   reverse: bool,
   what: str,
   in_place: tuple[int | str, ...] = (),
+  max_trajectory: int | None = None,
 ) -> tuple[Any, Any, Expr]:
   if not isinstance(body, Function | ConcreteFunction) or cond is not None and not isinstance(cond, Function | ConcreteFunction):
     raise TypeError(f"{what} body and condition must be scaly Functions")
   length = int(length)
   if length < 0:
     raise ValueError(f"{what}: {'max_iter' if cond is not None else 'length'} must be non-negative")
+  if max_trajectory is not None and max_trajectory < 0:
+    raise ValueError(f"{what}: max_trajectory must be non-negative")
   inits = init if isinstance(init, tuple) else (init,)
   leaves = [as_expr(leaf) for leaf in _leaves(inits)]
   step = (broadcast(Expr.const(np.int64(0))),) if index else ()
@@ -472,6 +475,8 @@ def _loop(
     "reverse": bool(reverse),
     "in_place": tuple(carry_names[k] if isinstance(k, str) else k for k in in_place),
   }
+  if max_trajectory is not None:
+    attrs["max_trajectory"] = int(max_trajectory)
   args = (*leaves, *outers, *trips)
   parts = callee.output_tree.parts if isinstance(callee.output_tree, _G) else (callee.output_tree,)
   if sum(part.size for part in parts[: len(inits)]) != n_carry:
@@ -496,6 +501,7 @@ def scan(
   index: bool = False,
   reverse: bool = False,
   in_place: tuple[int | str, ...] = (),
+  max_trajectory: int | None = None,
 ) -> tuple[Any, Any]:
   """Run ``body`` for ``length`` steps, threading a carry and stacking per-step outputs.
 
@@ -507,28 +513,38 @@ def scan(
 
   Returns ``(carry, ys)``: the final carry, shaped like ``init``, and a tuple of the per-step
   outputs, each with a leading axis of ``length``. ``trip``, an int64 scalar, runs only the first
-  ``min(trip, length)`` steps; the unused entries of the stacked outputs are zero. With ``reverse``
+  ``max(0, min(trip, length))`` steps. The unused entries of the stacked outputs are zero. With ``reverse``
   the steps run from the last to the first, and step ``k`` still reads slice ``k`` and writes
   output ``k``. ``in_place`` names carry positions or input names that lowering must prove safe
-  to update in place. Forward derivatives follow the same steps as the primal loop.
-  Reverse derivatives raise ``NotImplementedError``.
+  to update in place. Forward derivatives follow the same steps
+  as the primal loop. Reverse derivatives store the entering carries and traverse the steps
+  backwards. ``max_trajectory`` limits the number of stored carry elements for this loop,
+  using the static length even when ``trip`` is smaller. ``None`` leaves it unlimited.
+  Exceeding the limit raises ``ValueError`` and suggests ``sc.custom_derivative``.
+  Derivative loops do not inherit the limit.
   """
-  carry, ys, _ = _loop(body, None, init, tuple(xs), length, trip, index, reverse, "scan", in_place)
+  carry, ys, _ = _loop(body, None, init, tuple(xs), length, trip, index, reverse, "scan", in_place, max_trajectory)
   return carry, ys
 
 
-def while_loop(cond: Any, body: Any, init: Any, *, max_iter: int, params: tuple[Any, ...] = (), index: bool = False) -> tuple[Any, Expr]:
+def while_loop(
+  cond: Any, body: Any, init: Any, *, max_iter: int, params: tuple[Any, ...] = (), index: bool = False, max_trajectory: int | None = None
+) -> tuple[Any, Expr]:
   """Apply ``body`` to a carry while ``cond`` holds, at most ``max_iter`` times.
 
   ``body`` and ``cond`` take the same parameters: one per entry of ``init`` (one carry when
   ``init`` is not a tuple), then the step number as an int64 scalar when ``index`` is true, then
   one per entry of ``params``, which every step reads whole. ``cond`` returns a bool scalar and is
-  evaluated before each step; ``body`` returns the new carries, each with its input's shape and
+  evaluated before each step. ``body`` returns the new carries, each with its input's shape and
   dtype. Returns ``(carry, count)``: the final carry, shaped like ``init``, and the number of
   steps taken as an int64 scalar. Forward derivatives take the same steps, with the condition
-  evaluated on primal carries. Reverse derivatives raise ``NotImplementedError``.
+  evaluated on primal carries. Reverse derivatives traverse exactly the steps taken backwards.
+  ``max_trajectory`` limits stored carry elements using ``max_iter`` times the stored carry
+  size, even when the loop exits early. Each nested loop has its own limit. ``None`` leaves
+  storage unlimited. Exceeding the limit raises ``ValueError`` and suggests ``sc.custom_derivative``.
+  Derivative loops do not inherit the limit.
   """
-  carry, ys, count = _loop(body, cond, init, _whole(tuple(params)), max_iter, None, index, False, "while_loop")
+  carry, ys, count = _loop(body, cond, init, _whole(tuple(params)), max_iter, None, index, False, "while_loop", max_trajectory=max_trajectory)
   if ys:
     raise ValueError("while_loop: the body must return only its carries")
   return carry, count

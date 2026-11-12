@@ -316,6 +316,8 @@ def _loop_attrs(expr: Expr) -> str | None:
   n_outer = len(starts)
   if length < 0 or n_carry < 0 or len(strides) != n_outer or len(expr.args) not in (n_carry + n_outer, n_carry + n_outer + 1):
     return f"LOOP length {length}, n_carry {n_carry}, {n_outer} starts, {len(strides)} strides and {len(expr.args)} args disagree"
+  if expr.attrs.get("max_trajectory", 0) < 0:
+    return "LOOP max_trajectory must be non-negative"
   formals = callee.inputs
   if len(formals) != n_carry + index + n_outer or len(callee.outputs) < n_carry:
     return (

@@ -356,7 +356,8 @@ The mapped stage code stays one loop body as the horizon grows, including in
 its derivatives. Numerical work and storage still grow with `N`, as can
 [sparsity tables in the generated header](codegen.md#sparse-output-patterns).
 `vmap` applies when calls can be evaluated independently, so it cannot replace
-the sequential recurrence in `rollout`.
+the sequential recurrence in `rollout`. Use [`sc.scan`](control_flow.md#a-fixed-number-of-steps)
+to record that recurrence as a loop.
 The [functions guide](functions.md#regular-repetition-vmap) covers inputs shared
 by every stage and overlapping windows. [Optimal control](ocp.md) states such a
 problem by the Functions of one stage and writes out the horizon in this form.

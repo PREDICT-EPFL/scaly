@@ -130,15 +130,14 @@ def test_a_no_carry_loop_with_step_control_keeps_its_loop_rules(kind: str) -> No
       node = _loop_node(node.attrs["callee"], positive.instantiate(), node.args, dict(node.attrs), 0)
       y = node
     assert not is_map(node)
-    with pytest.raises(NotImplementedError, match="scan and while_loop"):
-      sc.vjp((y,), (x,), (sc.const(np.ones(4)),))
-    return y, sc.jvp(y, x, sc.const(np.ones(4)))
+    (rev,) = sc.vjp((y,), (x,), (sc.const(np.ones(4)),))
+    return y, rev + sc.jvp(y, x, sc.const(np.ones(4)))
 
   x = np.array([1.0, 2.0, -3.0, 4.0])
   expected = x * x + np.arange(4) if kind == "index" else np.array([1.0, 4.0, 0.0, 0.0]) if kind in {"trip", "condition"} else x * x
   y, dy = host(x)
   np.testing.assert_array_equal(y, expected)
-  np.testing.assert_array_equal(dy, [2.0, 4.0, 0.0, 0.0] if kind in {"trip", "condition"} else 2 * x)
+  np.testing.assert_array_equal(dy, [4.0, 8.0, 0.0, 0.0] if kind in {"trip", "condition"} else 4 * x)
 
 
 @pytest.mark.parametrize("kind", ["transpose", "negative", "gapped", "nested_slice"])

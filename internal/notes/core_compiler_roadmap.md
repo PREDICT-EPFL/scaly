@@ -1245,6 +1245,8 @@ step `k`, which is what reverse over reverse needs. `max_trajectory=` is a per-l
 stored elements; nested loops each count their own, and the product is not bounded. Exceeding it
 raises and names `sc.custom_derivative`. Tests: finite differences, duality, zero-trip and early-exit
 loops, reverse scans, a trajectory output, and a Hessian of a while loop by forward over reverse.
+*Clarified by [#33]: the limit counts a user loop's primal trajectory, replacing inheritance by
+generated tangent and backward loops, which otherwise rejected Hessians at the gradient's limit.*
 
 **[#50]. Unrolling static loops by a straight-line budget.** `LOOP` lowering unrolls a loop whose
 length is static and whose per-step slices are constants when the body, times the length, fits a
