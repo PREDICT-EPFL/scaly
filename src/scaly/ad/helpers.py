@@ -19,6 +19,7 @@ class HelperKey:
   one cotangent shaped like its output) and the seed count of a seed-major ``(nseed, *shape)`` seed
   otherwise. ``constants`` holds, per active input, the dtype and bytes of a seed baked into the
   body, or ``None`` for a seed passed at run time. ``members`` are the helpers a pack concatenates.
+  ``n_carry`` distinguishes a loop body's carry partition from an ordinary call.
   ``rules`` names the callee's custom rules, so its helpers and those of the function it was made
   from are named apart. ``masked`` lists the forward formals with select conditions, or is a
   boolean for an adjoint helper's cotangent condition.
@@ -29,6 +30,7 @@ class HelperKey:
   active: tuple[int, ...]
   lowering: Lowering
   nseed: int | None = None
+  n_carry: int | None = None
   constants: tuple[tuple[str, bytes] | None, ...] = ()
   members: tuple[ConcreteFunction, ...] = ()
   rules: tuple[str, ...] = ()
@@ -47,9 +49,10 @@ def helper_name(callee: ConcreteFunction, key: HelperKey) -> str:
   Lowering reserves the emitted symbol through its ``NameScope``, which renames a clash between
   helpers of two callees sharing a name.
   """
-  stem = {"forward": "fwd", "adjoint": "adj"}[key.role] + ("_pack" if key.members else "")
+  stem = {"forward": "fwd", "adjoint": "adj"}[key.role] + ("_pack" if key.members and key.n_carry is None else "")
   fields = (key.role, key.outputs, key.active, key.lowering, key.nseed, key.constants, tuple(fn.name for fn in key.members))
   fields += (key.rules,) if key.rules else ()
   fields += (key.masked,) if key.masked else ()
   fields += ("cond",) if key.conditional else ()
+  fields += (key.n_carry,) if key.n_carry is not None else ()
   return f"{callee.name}_{stem}_{hashlib.sha1(repr(fields).encode()).hexdigest()[:10]}"

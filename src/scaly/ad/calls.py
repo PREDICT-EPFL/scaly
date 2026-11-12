@@ -8,10 +8,11 @@ import numpy as np
 from scipy.sparse import csr_array
 
 from ..function.concrete import ConcreteFunction, _JVP, _JVPMany, _VmapAdjoint
-from ..function.sugar import _mapped_call, _cond_node
+from ..function.sugar import _loop_node, _mapped_call, _cond_node
 from ..ir.expr import (
   Expr,
   ExprOp,
+  is_map,
   as_expr,
   cast as cast_expr,
   concat,
@@ -332,6 +333,149 @@ def _accumulate(total: Expr, tangent: Expr) -> Expr:
   if _mask_of(tangent) is not None and _prunable_support(total) == frozenset():
     return tangent
   return accumulate(total, tangent)
+
+
+def _loop_jvp_many(expr: Expr, tangents: Sequence[Expr | None], nseed: int, *, pushforward: _Pushforward) -> Expr:
+  if is_map(expr):
+    return _vmap_jvp_many(expr, tangents, nseed, pushforward=pushforward)
+  attrs = dict(expr.attrs)
+  callee, cond = attrs.pop("callee"), attrs.pop("cond")
+  output = attrs.pop("output")
+  nc, length = attrs["n_carry"], attrs["length"]
+  skip = nc + int(attrs["index"])
+  carries = tuple(i for i in range(nc) if callee.inputs[i].type.dtype.is_floating)
+  floating = tuple(i for i in range(nc, len(callee.results)) if callee.results[i].type.dtype.is_floating)
+  outers = tuple(i for i in range(len(attrs["starts"])) if tangents[nc + i] is not None)
+  active = (*carries, *(skip + i for i in outers))
+  masked_outers = tuple(i for i in outers if _mask_of(cast(Expr, tangents[nc + i])) is not None)
+  masked = (
+    *tuple(i for i in carries if tangents[i] is not None and _mask_of(cast(Expr, tangents[i])) is not None),
+    *(skip + i for i in masked_outers),
+  )
+  key = HelperKey.of(callee, "forward", tuple(range(len(callee.results))), active, nseed=nseed, n_carry=nc, masked=masked or False)
+  cache = callee._memo.helpers
+  if key not in cache:
+    names = set(callee.input_names)
+
+    def fresh(name: str) -> str:
+      while name in names:
+        name += "_"
+      names.add(name)
+      return name
+
+    seeds = {i: _tangent_symbol(fresh(f"fwd:{callee.input_names[i]}"), callee.inputs[i], (nseed,)) for i in active}
+    masks: dict[int, Expr] = {}
+    masked_formals = set(masked)
+    primal_nodes = set(topo(callee.results))
+    while True:
+      for i in sorted(masked_formals):
+        if i not in masks:
+          masks[i] = Expr(ExprOp.INPUT, type=TensorType(seeds[i].type.storage_shape, dtypes.bool_), name=fresh(f"mask:{seeds[i].name}"))
+      body_seeds = {i: _masked_seed(seed, masks[i]) if i in masks else seed for i, seed in seeds.items()}
+      derivs = body_tangents(callee, tuple(range(len(callee.results))), body_seeds, nseed, pushforward)
+      # An unflagged carry seed can hide a masked contribution in a sum.
+      propagated = masked_formals | {
+        i
+        for i in carries
+        if _mask_of(cast(Expr, derivs[i])) is not None
+        or any(node not in primal_nodes and _mask_of(node) is not None for node in topo((cast(Expr, derivs[i]),)))
+      }
+      if propagated == masked_formals:
+        break
+      masked_formals = propagated
+    masked_carries = tuple(i for i in carries if i in masked_formals)
+    masked_results = tuple(i for i in floating if _mask_of(cast(Expr, derivs[i])) is not None)
+    inputs = (
+      *callee.inputs[:nc],
+      *(seeds[i] for i in carries),
+      *(masks[i] for i in masked_carries),
+      *callee.inputs[nc:],
+      *(seeds[skip + i] for i in outers),
+      *(masks[skip + i] for i in masked_outers),
+    )
+    outputs = (
+      *callee.results[:nc],
+      *(cast(Expr, derivs[i]) for i in carries),
+      *(stop_gradient(cast_expr(values(activity(cast(Expr, derivs[i]))), dtypes.bool_)) for i in masked_carries),
+      *callee.results[nc:],
+      *(cast(Expr, derivs[i]) for i in floating),
+      *(stop_gradient(cast_expr(values(activity(cast(Expr, derivs[i]))), dtypes.bool_)) for i in masked_results),
+    )
+    helper_key = HelperKey.of(
+      callee,
+      "forward",
+      tuple(range(len(callee.results))),
+      active,
+      nseed=nseed,
+      n_carry=nc,
+      masked=tuple(sorted(masked_formals)) or False,
+    )
+    if helper_key not in cache:
+      fn = ConcreteFunction._from_exprs(
+        helper_name(callee, helper_key), inputs, outputs, [str(x.name) for x in inputs], [f"out{i}" for i in range(len(outputs))], role="forward"
+      )
+      cache[helper_key] = (fn, masked_carries, masked_results)
+    cache[key] = cache[helper_key]
+  fn, masked_carries, masked_results = cast(_JVP, cache[key])
+  if cond is not None:
+    cond_key = HelperKey.of(cond, "forward", (), active, nseed=nseed, n_carry=nc, members=(fn,))
+    if cond_key not in cond._memo.helpers:
+      replacements = dict(zip(cond.inputs, callee.inputs, strict=True))
+      cond._memo.helpers[cond_key] = ConcreteFunction._from_exprs(
+        helper_name(cond, cond_key), fn.inputs, [substitute(cond.outputs[0], replacements)], fn.input_names, ["go"], role="forward"
+      )
+    cond = cast(ConcreteFunction, cond._memo.helpers[cond_key])
+
+  def zero(i: int) -> Expr:
+    primal = callee.inputs[i]
+    return _stored_result(Expr.const(np.zeros((nseed, *primal.type.storage_shape)), dtype=primal.type.dtype), primal, (nseed,))
+
+  initial_tangents = {i: cast(Expr, tangents[i]) if tangents[i] is not None else zero(i) for i in carries}
+  args = [
+    *expr.args[:nc],
+    *initial_tangents.values(),
+    *(stop_gradient(cast_expr(values(activity(simplify_cse_fixpoint(initial_tangents[i]))), dtypes.bool_)) for i in masked_carries),
+    *expr.args[nc : nc + len(attrs["starts"])],
+  ]
+  starts, strides = list(attrs["starts"]), list(attrs["strides"])
+  outer_tangents = [(i, tangents[nc + i]) for i in outers]
+  outer_tangents.extend((i, stop_gradient(cast_expr(values(activity(cast(Expr, tangents[nc + i]))), dtypes.bool_))) for i in masked_outers)
+  for i, tangent in outer_tangents:
+    assert tangent is not None
+    formal = callee.inputs[skip + i]
+    width = formal.type.storage_size
+    start, stride = attrs["starts"][i], attrs["strides"][i]
+    count = length if stride else 1
+    indices = (
+      np.arange(nseed)[None, :, None] * expr.args[nc + i].size + start + np.arange(count)[:, None, None] * stride + np.arange(width)[None, None, :]
+    )
+    args.append(gather(values(tangent), indices.reshape(-1)))
+    starts.append(0)
+    strides.append(nseed * width if stride else 0)
+  args.extend(expr.args[nc + len(attrs["starts"]) :])
+  n_tangent_carries = len(carries) + len(masked_carries)
+  attrs.update(n_carry=nc + n_tangent_carries, starts=tuple(starts), strides=tuple(strides), in_place=())
+  mask_result = None
+  if output < nc:
+    result = nc + carries.index(output)
+    if output in masked_carries:
+      mask_result = nc + len(carries) + masked_carries.index(output)
+  elif output < len(callee.results):
+    result = len(callee.results) + n_tangent_carries + floating.index(output)
+    if output in masked_results:
+      mask_result = len(callee.results) + n_tangent_carries + len(floating) + masked_results.index(output)
+  else:
+    carry = output - len(callee.results) - 1
+    result = len(fn.results) + 1 + nc + carries.index(carry)
+    if carry in masked_carries:
+      mask_result = len(fn.results) + 1 + nc + len(carries) + masked_carries.index(carry)
+  tangent = _loop_node(fn, cond, tuple(args), attrs, result)
+  if mask_result is not None:
+    tangent = _masked_seed(tangent, _loop_node(fn, cond, tuple(args), attrs, mask_result))
+  if output < nc:
+    return tangent
+  width = expr.size // length if length else 0
+  return move_mask(tangent, lambda t: t.reshape((length, nseed, width)).transpose((1, 0, 2)).reshape((nseed, *expr.shape)))
 
 
 def _vmap_jvp_many(
