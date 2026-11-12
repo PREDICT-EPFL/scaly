@@ -842,12 +842,14 @@ def _loop_vjp(
   for j, i in enumerate(params):
     formal = callee.inputs[skip + i]
     grad = result(len(carries) + j)
-    ret.append((expr.args[nc + i], scatter(values(grad).vec(), attrs["starts"][i] + np.arange(formal.type.storage_size), expr.args[nc + i].shape)))
+    ret.append(
+      (expr.args[nc + i], _scatter_zero(values(grad).vec(), attrs["starts"][i] + np.arange(formal.type.storage_size), expr.args[nc + i].shape))
+    )
   for j, i in enumerate(sliced):
     formal = callee.inputs[skip + i]
     grad = result(backward["n_carry"] + j)
     indices = attrs["starts"][i] + np.arange(length)[:, None] * attrs["strides"][i] + np.arange(formal.type.storage_size)
-    ret.append((expr.args[nc + i], scatter(grad, indices.reshape(-1), expr.args[nc + i].shape)))
+    ret.append((expr.args[nc + i], _scatter_zero(grad, indices.reshape(-1), expr.args[nc + i].shape)))
   return ret
 
 

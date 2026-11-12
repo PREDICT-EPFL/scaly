@@ -370,7 +370,7 @@ def cond(selector: Any, branches: tuple[Function | ConcreteFunction, ...], *oper
   branches. Integer selectors clamp to ``[0, len(branches) - 1]``. Only the selected branch
   runs, including its prints. Branches must have matching input and output structures,
   shapes, dtypes and stored patterns. Results follow the first branch's output tree.
-  The selector has no derivative. Derivatives follow the selected branch; structural
+  The selector has no derivative. Derivatives follow the selected branch. Structural
   sparsity is the union of the branches.
   """
   if not isinstance(branches, tuple) or not branches or not all(isinstance(fn, Function | ConcreteFunction) for fn in branches):

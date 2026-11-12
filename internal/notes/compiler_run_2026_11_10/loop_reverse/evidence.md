@@ -25,8 +25,9 @@ and 2000 on la015. The workload is the `rk4` in `tests/function/test_loop.py`, w
 cost equal to terminal squared norm plus the sum of per-step costs. Both gradients
 come from a single `sc.vjp` request.
 
-At every horizon, the generated program contains 536 nodes. C size is 13,272,
-13,299 and 13,369 bytes. C compilation took 0.0844, 0.0785 and 0.0721 seconds using
+After integration with the refreshed forward-loop base, every horizon produces 551
+program nodes. C size is 13,933, 13,960 and 14,017 bytes. C compilation took
+0.0848, 0.0785 and 0.0786 seconds using
 `/usr/bin/cc`, the module's recipe and the JIT compile command. These are C compile
 times under concurrent compiler-run work, not run-time performance evidence.
 Bounds and storage literals account for the source-size changes. The constant
@@ -44,7 +45,8 @@ in full in the JSON. No C snapshots were regenerated.
 `docs/guide/control_flow.md` documents scan, while_loop, their differentiation and
 storage limits, and the print rule. Its Python fences were executed together.
 The API adds both loop builders and removes the LOOP enum filter. The cond issue #53
-has pull request #417, still open when this was written, so cond remains unpublished.
+and pull request #417 have merged. The guide and API now publish cond and remove its
+enum filter, while preserving the sparse-operation entries already published on main.
 
 The backward loop has no condition and takes the primal count as its trip operand.
 This needs no relaxation of #31's ban on conditional reverse loops. The roadmap
@@ -91,3 +93,24 @@ Both independent short delta checks approved the final fixes. The correctness
 checker independently reran all 39 reverse-loop cases. The main checker confirmed
 the technical fixes and every documentation note. No review finding remains open.
 The final changes after the checked source are validation and review records only.
+
+## Integration with the refreshed loop stack
+
+The rebase retained the index-operand gather/scatter implementation, conditional
+rules and in-place proofs from the new base. Loop adjoints use `_scatter_zero` for
+parameter and sliced-input cotangents and `_accumulate` for sibling seeds and
+returned cotangents. Carried boundaries still drop select activity, consistently
+with forward mode. Independent maps keep their existing mask protocol.
+
+The loop builders retain strict `in_place` requests. Lowering excludes a carry
+whose trajectory is used from reuse, and a strict request on it remains refused.
+A runtime-index scatter regression compares reverse derivatives with an unrolled
+reference and checks that the trajectory-bearing primal has no in-place procedure.
+A second regression checks that incoming select activity is dropped at the carried
+reverse boundary. No new select-mask protocol or in-place policy was added.
+
+The refreshed focused loop, map, conditional, in-place and snapshot run passed 225
+tests. C snapshots remain byte-identical to the new base. The refreshed RK4
+measurements above retain identical program-node counts across all three horizons.
+The guide's Python fences, including the newly published cond example, ran with
+the stated outputs. The earlier validation counts describe the pre-rebase tree.

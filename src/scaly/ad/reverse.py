@@ -6,13 +6,27 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ..ir.expr import _index_values, Expr, ExprOp, invocation_key, _uniform, gather, matmul, pack, _scatter_zero, topo, to_dense, values, where, zeros_like
+from ..ir.expr import (
+  _index_values,
+  Expr,
+  ExprOp,
+  invocation_key,
+  _uniform,
+  gather,
+  matmul,
+  pack,
+  _scatter_zero,
+  topo,
+  to_dense,
+  values,
+  where,
+  zeros_like,
+)
 from ..ir.support import slice_indices, support_indices
 from ..ir.types import CanonicalPattern, stored_indices
 from .calls import _accumulate, _call_vjp, _cond_vjp, _loop_vjp
 from .rules import (
   ELEMENTWISE,
-  accumulate,
   _mask_of,
   _masked,
   _nonzero_mask,
@@ -70,11 +84,11 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
       for node in siblings:
         if node.id in adjoints:
           output = node.attrs["output"]
-          seeds[output] = adjoints[node.id] if output not in seeds else accumulate(seeds[output], adjoints[node.id])
+          seeds[output] = adjoints[node.id] if output not in seeds else _accumulate(seeds[output], adjoints[node.id])
       if seeds and needed(expr):
         for arg, arg_cot in _loop_vjp(expr, seeds, wrts, dep_memo, pullback=vjp):
           if arg.id in expr_ids:
-            adjoints[arg.id] = arg_cot if arg.id not in adjoints else accumulate(adjoints[arg.id], arg_cot)
+            adjoints[arg.id] = arg_cot if arg.id not in adjoints else _accumulate(adjoints[arg.id], arg_cot)
       continue
     cot = adjoints.get(expr.id)
     if (

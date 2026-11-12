@@ -50,6 +50,11 @@ For several carries, pass a tuple as `init` and declare one body parameter for e
 returns the next carries before its per-step outputs. Each carry keeps its shape, dtype and sparse
 pattern throughout the loop. Carries may contain nested tuples.
 
+`in_place=` names carry positions or input names that lowering must prove safe to update in
+place. Reverse mode needs the entering carries, so it refuses a strict in-place request on a
+carry whose trajectory is used. Leave the argument unset when requesting these derivatives.
+Automatic carry reuse never overwrites a trajectory needed by the backward pass.
+
 With `index=True`, the body takes an int64 scalar step number after its carries and before its
 sliced inputs. `reverse=True` executes steps in descending order. Step `k` still reads input slice
 `k` and writes stacked output `k`, so reversing execution does not reverse the output layout.
@@ -90,6 +95,36 @@ carry and the count is zero. Reaching `max_iter` returns the current carry. It d
 convergence or raise an error. The condition can inspect carries and parameters, including the
 step number with `index=True`. Intermediate quantities needed by the next condition must be part
 of the carry.
+
+## A selected branch
+
+`sc.cond` calls one of several Functions. For a boolean selector, False selects the first branch
+and True the second. Only the selected branch runs, including any loops and prints inside it.
+For example, the square root of an absolute value can choose a branch whose argument is positive:
+
+```python
+@sc.function(sc.arg("x", ()), outputs=sc.arg("root", ()))
+def negative_root(x: sc.Expr) -> sc.Expr:
+    return (-x).sqrt()
+
+@sc.function(sc.arg("x", ()), outputs=sc.arg("root", ()))
+def positive_root(x: sc.Expr) -> sc.Expr:
+    return x.sqrt()
+
+@sc.function(sc.arg("x", ()), outputs=sc.arg("root", ()))
+def absolute_root(x: sc.Expr) -> sc.Expr:
+    return sc.cond(x > 0.0, (negative_root, positive_root), x)
+
+print(absolute_root(np.array(-4.0)))
+# 2.0
+print(sc.gradient(absolute_root, "root", "x")(np.array(-4.0)))
+# -0.25
+```
+
+The branches take the same operands and return matching tuple structures, shapes, dtypes and
+sparse patterns. An integer selector can choose among more than two branches. Its value is
+clamped to the range of branch indices. The selector has no derivative. Derivatives follow the
+selected branch, and structural sparsity includes the dependencies of every branch.
 
 ## Derivatives and trajectory storage
 

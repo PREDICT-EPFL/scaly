@@ -436,3 +436,48 @@ def test_adjoint_cache_distinguishes_step_number_formal(indexed_first):
     result = evaluate([c, xs], [*actual, *reference], [np.array(0.3), np.array([0.5, 0.7, 0.9])])
     for got, want in zip(result[:2], result[2:], strict=True):
       np.testing.assert_allclose(got, want, atol=1e-12)
+
+
+def test_runtime_index_reverse_preserves_primal_trajectory():
+  from scaly.codegen import render_c_module
+  from scaly.ir.program import ProgramOp, walk_program
+
+  @sc.function(sc.arg("carry", 4), sc.arg("pivot", sc.TensorType((), sc.dtypes.int64)), sc.arg("scale", ()))
+  def step(carry, pivot, scale):
+    return sc.scatter(carry, pivot, sc.gather(carry, pivot) * scale, combine="set")
+
+  initial, pivot, scale = sc.sym("initial", 4), sc.sym("pivot", ()), sc.sym("scale", ())
+  index = pivot.cast(sc.dtypes.int64)
+  final, _ = sc.scan(step, initial, (sc.broadcast(index), sc.broadcast(scale)), length=3)
+  reference = initial
+  for _ in range(3):
+    reference = step(reference, index, scale)
+  actual = sc.vjp((sc.sumsqr(final),), (initial, scale), (sc.const(1.0),))
+  expected = sc.vjp((sc.sumsqr(reference),), (initial, scale), (sc.const(1.0),))
+  point = [np.array([0.2, 0.4, 0.6, 0.8]), np.array(1.25), np.array(0.7)]
+  got = evaluate([initial, pivot, scale], [final, *actual, *expected], point)
+  for a, b in zip(got[1:3], got[3:], strict=True):
+    np.testing.assert_allclose(a, b, atol=1e-12)
+  fn = ConcreteFunction._from_exprs("index_reverse", [initial, pivot, scale], [final, *actual], ["initial", "pivot", "scale"], ["final", "di", "ds"])
+  module = render_c_module(fn)
+  assert not any(node.op == ProgramOp.PROC and node.attrs["name"].startswith("step_inplace") for node in walk_program(module.program))
+
+
+def test_carried_reverse_drops_select_activity():
+  from scaly.ad.rules import _mask_of
+  from scaly.ir.expr import ExprOp, topo
+
+  @sc.function(sc.arg("carry", 2))
+  def step(carry):
+    return carry.sin()
+
+  x = sc.sym("x", 2)
+  final, _ = sc.scan(step, x, length=2)
+  seed = sc.where(x > 0.0, sc.const(np.ones(2)), 0.0)
+  (grad,) = sc.vjp((final,), (x,), (seed,))
+  assert _mask_of(grad) is None
+  backward = next(node for node in topo((grad,)) if node.op == ExprOp.LOOP and node.attrs["reverse"])
+  assert all(not name.startswith("mask:") for name in backward.attrs["callee"].input_names)
+  point = np.array([-0.2, 0.4])
+  expected = np.where(point > 0.0, np.cos(np.sin(point)) * np.cos(point), 0.0)
+  np.testing.assert_allclose(evaluate([x], [grad], [point]), expected, atol=1e-12)
