@@ -79,6 +79,8 @@ def _atan2_denominator(e: Expr) -> Expr:
 
 
 def _mul_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
+  if any(t is not None and _mask_of(t) is not None for t in tangents):
+    return _tangent_sum(e, tangents)
   (x, y), (dx, dy) = e.args, tangents
   if x is y:
     return _seed_axis(_const(2, e) * x) * dx
@@ -93,6 +95,13 @@ def _mul_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
 def _div_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
   dx, db = tangents
   quotient = _seed_axis(e)
+  if any(t is not None and _mask_of(t) is not None for t in tangents):
+    numerator = dx
+    if db is not None:
+      term = _masked(db, lambda t: -(quotient * t))
+      numerator = term if dx is None else accumulate(dx, term)
+    assert numerator is not None
+    return _masked(numerator, lambda t: t / _seed_axis(e.args[1], e))
   numerator = dx if db is None else -(quotient * db) if dx is None else dx - quotient * db
   return numerator / _seed_axis(e.args[1], e)
 
@@ -101,10 +110,26 @@ def _inactive(e: Expr) -> Local:
   raise AssertionError("a bool condition is never active")
 
 
+def _cast_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
+  assert tangents[0] is not None
+  return _masked(tangents[0], lambda t: cast(t, e.type.dtype))
+
+
 def _select_jvp(e: Expr, tangents: Sequence[Expr | None]) -> Expr:
   _, dx, dy = tangents
   zero = _const(0, e)
-  return where(_seed_axis(e.args[0], e), zero if dx is None else dx, zero if dy is None else dy)
+  condition = _seed_axis(e.args[0], e)
+  result = where(condition, zero if dx is None else dx, zero if dy is None else dy)
+  if any(t is not None and t.shape != result.shape for t in (dx, dy)):
+    ones = _full_like(1, result)
+    dx = None if dx is None else _masked(dx, lambda t: t * ones)
+    dy = None if dy is None else _masked(dy, lambda t: t * ones)
+    result = where(condition, zero if dx is None else dx, zero if dy is None else dy)
+  masks = [None if t is None else cotangent_mask(t) for t in (dx, dy)]
+  if any(mask is not None for mask in masks):
+    branch_masks = [Expr.const(t is not None, dtype=condition.type.dtype) if mask is None else mask for t, mask in zip((dx, dy), masks, strict=True)]
+    result = where(where(condition, *branch_masks), result, zeros_like(result))
+  return result
 
 
 def _extremum_partial(e: Expr, position: int) -> Mask:
@@ -209,7 +234,7 @@ ELEMENTWISE: dict[ExprOp, Elementwise] = {
     c_integer="(({type})({0} ? {1} : {2}))",
   ),
   # Constant folding converts to the node's dtype, so the fold itself is the identity.
-  ExprOp.CAST: Elementwise(ProgramOp.CAST, lambda x: x, "(({type})({0}))", (lambda e: 1,), lambda e, t: cast(t[0], e.type.dtype)),
+  ExprOp.CAST: Elementwise(ProgramOp.CAST, lambda x: x, "(({type})({0}))", (lambda e: 1,), _cast_jvp),
   # NumPy's floor semantics, which C's / and % do not have; codegen/c.py defines the helpers.
   ExprOp.FLOORDIV: Elementwise(ProgramOp.FLOORDIV, np.floor_divide, "(({type})scaly_floordiv({0}, {1}))"),
   ExprOp.MOD: Elementwise(ProgramOp.FLOORMOD, np.remainder, "(({type})scaly_floormod({0}, {1}))"),
@@ -230,18 +255,25 @@ def tangent(expr: Expr, tangents: Sequence[Expr | None], nseed: int) -> Expr:
     ]
     return pack(tangent(compact, seeds, nseed), expr.type.pattern, shape=seed_type.shape)
   row = ELEMENTWISE[ExprOp(expr.op)]
-  assert row.partials is not None
   aligned = [None if t is None else _broadcast_tangent(t, arg, expr, nseed) for arg, t in zip(expr.args, tangents, strict=True)]
-  if row.jvp is not None:
-    return row.jvp(expr, aligned)
+  return row.jvp(expr, aligned) if row.jvp is not None else _tangent_sum(expr, aligned)
+
+
+def _tangent_sum(expr: Expr, aligned: Sequence[Expr | None]) -> Expr:
+  partials = ELEMENTWISE[ExprOp(expr.op)].partials
+  assert partials is not None
   total: Expr | None = None
-  for partial, dx in zip(row.partials, aligned, strict=True):
+  for partial, dx in zip(partials, aligned, strict=True):
     if dx is None:
       continue
     local = partial(expr)
+    if _mask_of(dx) is not None:
+      term = _masked(dx, lambda inner: _times_partial(local, inner, lambda partial: _seed_axis(partial, expr)))
+      total = term if total is None else accumulate(total, term)
+      continue
     negate = isinstance(local, int) and local < 0
     term = dx if negate else _times_partial(local, dx, lambda partial: _seed_axis(partial, expr))
-    total = (-term if negate else term) if total is None else total - term if negate else total + term
+    total = (-term if negate else term) if total is None else total - term if negate else accumulate(total, term)
   assert total is not None
   return total
 
@@ -308,31 +340,85 @@ def accumulate(total: Expr, cot: Expr) -> Expr:
   if a is None or b is None:
     return total + cot
   if a[0] is b[0]:
-    return where(a[0], a[1] + b[1], _zero(total))
+    return where(a[0], accumulate(a[1], b[1]), _zero(total))
+  a_condition, b_condition = cotangent_mask(total), cotangent_mask(cot)
+  assert a_condition is not None and b_condition is not None
   if total.type.pattern is not None:
-    combined = pack(_sample_stored(a[0], total.type) | _sample_stored(b[0], total.type), total.type.pattern, shape=total.shape)
+    combined = pack(_sample_stored(a_condition, total.type) | _sample_stored(b_condition, total.type), total.type.pattern, shape=total.shape)
     return where(combined, total + cot, zeros_like(total))
-  return where(a[0] | b[0], total + cot, _const(0, total))
+  return where(a_condition | b_condition, total + cot, _const(0, total))
 
 
+# A flag is a top-level where(c, inner, 0), also recognised under PACK or with its branches reversed.
+# Activity comes from c, never from the numerical value of a tangent or cotangent.
+# Elementwise partials, movements, calls and maps carry it. Reverse dense matrix products drop it;
+# COND, LOOP, custom derivative rules, externs and solver calls have no flag protocol.
+# Sampled sparse-product adjoints reconstruct guards only from the producers they recognise.
+# A sum with an unflagged active term has no flag; _accumulate skips proven-zero terms instead.
 def _mask_of(cot: Expr) -> tuple[Expr, Expr] | None:
-  """``(condition, inner)`` when ``cot`` is ``where(condition, inner, 0)``."""
+  """The chosen condition and inner value of a select with a constant zero branch."""
+  if cot.op == ExprOp.PACK:
+    mask = _mask_of(cot.args[0])
+    if mask is None:
+      return None
+    assert cot.type.pattern is not None
+    condition = mask[0] | Expr.const(np.zeros(cot.type.storage_shape, dtype=bool), dtype=mask[0].type.dtype)
+    return pack(condition, cot.type.pattern, shape=cot.shape), pack(mask[1], cot.type.pattern, shape=cot.shape)
   if ExprOp(cot.op) != ExprOp.SELECT:
     return None
-  condition, inner, other = cot.args
-  zero = other.args[0] if other.op == ExprOp.PACK else other
-  if zero.op == ExprOp.CONST and zero.value is not None and not np.any(zero.value) and inner.shape == cot.shape:
-    return condition, inner
+  condition, x, y = cot.args
+  for inner, other in ((x, y), (y, x)):
+    zero = other.args[0] if other.op == ExprOp.PACK else other
+    if zero.op == ExprOp.CONST and zero.value is not None and not np.any(zero.value) and inner.shape == cot.shape:
+      if inner is y:
+        if condition.type.pattern is None:
+          condition = ~condition
+        else:
+          inverse = ~_sample_stored(condition, cot.type)
+          condition = inverse if cot.type.pattern is None else pack(inverse, cot.type.pattern, shape=cot.shape)
+      return condition, inner
   return None
 
 
 def cotangent_mask(cot: Expr) -> Expr | None:
   """The conjunction of the select conditions enclosing a cotangent, independent of its value."""
   condition: Expr | None = None
+  output = cot.type
   while (mask := _mask_of(cot)) is not None:
-    condition = mask[0] if condition is None else condition & mask[0]
+    if condition is None:
+      condition = mask[0]
+    elif output.pattern is None:
+      condition = condition & mask[0]
+    else:
+      condition = pack(_sample_stored(condition, output) & _sample_stored(mask[0], output), output.pattern, shape=output.shape)
     cot = mask[1]
   return condition
+
+
+def activity(tangent: Expr) -> Expr:
+  """Zero or one from select conditions and structural zeros, independent of tangent values."""
+  compact = values(tangent)
+  if compact.op == ExprOp.CONST and compact.value is not None and not np.any(compact.value):
+    return zeros_like(tangent)
+  return _masked(tangent, lambda inner: _full_like(1, tangent))
+
+
+def move_mask(tangent: Expr, transform: Callable[[Expr], Expr]) -> Expr:
+  """Apply a linear movement and keep the select conditions on its result."""
+  (result,) = carry_mask(tangent, lambda t: (transform(t),))
+  assert result is not None
+  return result
+
+
+def carry_masks(
+  tangents: Sequence[Expr], transform: Callable[[Sequence[Expr]], Expr], weights: Callable[[Sequence[Expr]], Expr] | None = None
+) -> Expr:
+  """Keep the union of selected activity through a linear combination of tangents."""
+  result = transform(tangents)
+  if not any(_mask_of(t) is not None for t in tangents):
+    return result
+  combined = (transform if weights is None else weights)([activity(t) for t in tangents])
+  return where(_nonzero_mask(combined), result, _zero(result))
 
 
 def _masked(cot: Expr, product: Callable[[Expr], Expr]) -> Expr:
@@ -353,9 +439,7 @@ def _compact_elementwise(expr: Expr) -> Expr:
 
 
 def _sample_stored(expr: Expr, output: TensorType) -> Expr:
-  (sampled,) = carry_mask(expr, lambda e: (_sample_stored_unmasked(e, output),))
-  assert sampled is not None
-  return sampled
+  return move_mask(expr, lambda e: _sample_stored_unmasked(e, output))
 
 
 def _sample_stored_unmasked(expr: Expr, output: TensorType) -> Expr:
@@ -395,13 +479,14 @@ def _seed_axis(expr: Expr, output: Expr | None = None) -> Expr:
 
 def _broadcast_tangent(tangent: Expr, operand: Expr, output: Expr, nseed: int) -> Expr:
   missing = len(output.shape) - len(operand.shape)
-  if missing and tangent.type.pattern is not None:
-    return pack(
-      values(tangent).reshape((nseed, *(1,) * missing, *operand.type.storage_shape)),
-      tangent.type.pattern,
-      shape=(nseed, *(1,) * missing, *operand.shape),
-    )
-  return tangent if missing == 0 else tangent.reshape((nseed, *(1,) * missing, *operand.shape))
+  if not missing:
+    return tangent
+
+  def reshape(t: Expr) -> Expr:
+    compact = values(t).reshape((nseed, *(1,) * missing, *operand.type.storage_shape))
+    return compact if t.type.pattern is None else pack(compact, t.type.pattern, shape=(nseed, *(1,) * missing, *operand.shape))
+
+  return move_mask(tangent, reshape)
 
 
 def _unbroadcast(cot: Expr, in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> Expr:

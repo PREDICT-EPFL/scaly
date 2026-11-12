@@ -20,8 +20,8 @@ class HelperKey:
   otherwise. ``constants`` holds, per active input, the dtype and bytes of a seed baked into the
   body, or ``None`` for a seed passed at run time. ``members`` are the helpers a pack concatenates.
   ``rules`` names the callee's custom rules, so its helpers and those of the function it was made
-  from are named apart. ``masked`` distinguishes an adjoint that accepts a select condition from
-  one that accepts only a cotangent.
+  from are named apart. ``masked`` lists the forward formals with select conditions, or is a
+  boolean for an adjoint helper's cotangent condition.
   """
 
   role: Role
@@ -32,7 +32,7 @@ class HelperKey:
   constants: tuple[tuple[str, bytes] | None, ...] = ()
   members: tuple[ConcreteFunction, ...] = ()
   rules: tuple[str, ...] = ()
-  masked: bool = False
+  masked: bool | tuple[int, ...] = False
   conditional: bool = False
 
   @classmethod

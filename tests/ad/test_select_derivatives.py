@@ -392,6 +392,207 @@ def test_a_broadcast_cotangent_keeps_the_output_shape() -> None:
   np.testing.assert_array_equal(derivatives(np.ones(3), np.array(-1.5)), np.zeros(3))
 
 
+@pytest.mark.parametrize("form", ["mapped", "called", "unrolled"])
+@pytest.mark.parametrize("squared", [False, True])
+def test_a_select_inside_a_map_guards_the_arguments_partial(form: str, squared: bool) -> None:
+  @sc.function(sc.arg("u", ()), outputs=sc.arg("y"), name="sd_inner_select")
+  def selected(u: sc.Expr) -> sc.Expr:
+    return sc.where(u > 0.0, u, 0.0)
+
+  @sc.function(sc.arg("x", 4), outputs=sc.group(*(sc.arg(k) for k in ("y", "g", "t", "h", "rr"))), name=f"sd_inner_{form}")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, ...]:
+    roots = x.sqrt()
+    y = (
+      sc.vmap(selected, 4)(roots)
+      if form == "mapped"
+      else sc.stack([selected(roots[i]) for i in range(4)])
+      if form == "called"
+      else sc.where(roots > 0.0, roots, 0.0)
+    )
+    cost = ((y - 2.0) ** 2).sum() if squared else y.sum()
+    grad = sc.gradient(cost, x)
+    return cost, grad, sc.jvp(cost, x, sc.const(np.ones(4))), sc.hessian(cost, x), sc.gradient(grad.sum(), x)
+
+  for point in (np.array([0.0, 4.0, -1.0, 9.0]), np.array([-2.0, 4.0, -1.0, 9.0])):
+    _, grad, tangent, hess, twice = (np.asarray(v) for v in derivatives(point))
+    expected = np.array([0.0, 0.0, 0.0, 1.0 / 3.0]) if squared else np.array([0.0, 0.25, 0.0, 1.0 / 6.0])
+    second = np.array([0.0, 1.0 / 8.0, 0.0, 1.0 / 27.0]) if squared else np.array([0.0, -1.0 / 32.0, 0.0, -1.0 / 108.0])
+    np.testing.assert_allclose(grad, expected, rtol=1e-14)
+    np.testing.assert_allclose(tangent, expected.sum(), rtol=1e-14)
+    np.testing.assert_allclose(hess, np.diag(second), rtol=1e-14)
+    np.testing.assert_allclose(twice, second, rtol=1e-14)
+    if np.all(point != 0):
+      np.testing.assert_allclose(grad, finite_difference(lambda v: np.asarray(derivatives(v)[0]), point).reshape(-1), rtol=1e-7, atol=1e-9)
+      np.testing.assert_allclose(hess, finite_difference(lambda v: np.asarray(derivatives(v)[1]), point), rtol=1e-7, atol=1e-9)
+
+
+@pytest.mark.parametrize(
+  ("runtime", "nested", "squared", "form"),
+  [(True, False, False, "inline"), (False, True, True, "called"), (True, True, False, "mapped")],
+)
+def test_selected_zero_tangents_guard_downstream_singular_partials(runtime: bool, nested: bool, squared: bool, form: str) -> None:
+  seed_values = np.array([[1.0, 1.0, 1.0, 1.0], [0.0, -2.0, 3.0, 0.0]])
+
+  def body(x: sc.Expr) -> sc.Expr:
+    chosen = sc.where(x > 0.0, x, 0.0)
+    if nested:
+      chosen = sc.where(x < 8.0, chosen, 0.0)
+    root = chosen.sqrt()
+    return (root - 2.0) ** 2 if squared else root
+
+  stage = sc.function(sc.arg("u", 4 if form == "called" else ()), outputs=sc.arg("y"), name="sd_selected_root")(body)
+
+  @sc.function(sc.arg("x", 4), sc.arg("seeds", (2, 4)), outputs=sc.group(*(sc.arg(k) for k in ("y", "t", "g", "h"))), name="sd_selected_tangent")
+  def derivatives(x: sc.Expr, seeds: sc.Expr) -> tuple[sc.Expr, ...]:
+    y = body(x) if form == "inline" else stage(x) if form == "called" else sc.vmap(stage, 4)(x)
+    return (
+      y,
+      sc.jvp_many(y, x, seeds if runtime else sc.const(seed_values)),
+      sc.gradient(y.sum(), x),
+      sc.hessian(y.sum(), x),
+    )
+
+  point = np.array([-1.0, 4.0, -2.0, 9.0])
+  y, tangents, grad, hess = (np.asarray(v) for v in derivatives(point, seed_values))
+  expected = np.array([0.0, 0.25, 0.0, 0.0 if nested else 1.0 / 6.0])
+  roots = np.array([0.0, 2.0, 0.0, 0.0 if nested else 3.0])
+  second = np.array([0.0, -1.0 / 32.0, 0.0, 0.0 if nested else -1.0 / 108.0])
+  if squared:
+    expected *= 2.0 * (roots - 2.0)
+    second = np.array([0.0, 1.0 / 8.0, 0.0, 0.0 if nested else 1.0 / 27.0])
+  np.testing.assert_array_equal(y, (roots - 2.0) ** 2 if squared else roots)
+  np.testing.assert_allclose(tangents, seed_values * expected, rtol=1e-14)
+  np.testing.assert_allclose(grad, expected, rtol=1e-14)
+  np.testing.assert_allclose(hess, np.diag(second), rtol=1e-14)
+  np.testing.assert_allclose(np.diag(grad), finite_difference(lambda v: np.asarray(derivatives(v, seed_values)[0]), point), rtol=1e-7, atol=1e-9)
+
+
+@pytest.mark.parametrize("stride", [0, 1, 2])
+def test_inner_mapped_masks_accumulate_shared_and_overlapping_inputs(stride: int) -> None:
+  @sc.function(sc.arg("u", 2), outputs=sc.arg("y"), name="sd_window_select")
+  def selected(u: sc.Expr) -> sc.Expr:
+    return sc.where(u > 0.0, u, 0.0)
+
+  size = 2 + 2 * stride
+  point = np.array([0.0, 4.0, -1.0, 9.0, 0.0, 16.0])[:size]
+  indices = np.array([it * stride + j for it in range(3) for j in range(2)])
+
+  @sc.function(sc.arg("x", size), outputs=sc.group(sc.arg("g"), sc.arg("t"), sc.arg("h")), name="sd_window_inner_masks")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    y = _mapped_call(selected, 3, [(x.sqrt(), 0, stride)]).sum()
+    return sc.gradient(y, x), sc.jvp(y, x, sc.const(np.ones(size))), sc.hessian(y, x)
+
+  counts = np.bincount(indices, minlength=size)
+  expected = np.zeros(size)
+  second = np.zeros(size)
+  active = point > 0.0
+  expected[active] = counts[active] * 0.5 / np.sqrt(point[active])
+  second[active] = -counts[active] * 0.25 / point[active] ** 1.5
+  grad, tangent, hess = (np.asarray(v) for v in derivatives(point))
+  np.testing.assert_allclose(grad, expected, rtol=1e-14)
+  np.testing.assert_allclose(tangent, expected.sum(), rtol=1e-14)
+  np.testing.assert_allclose(hess, np.diag(second), rtol=1e-14)
+
+
+@pytest.mark.parametrize(
+  "operation",
+  ["mul", "div", "neg", "cast", "reshape", "sum", "other_branch", "merged", "nested_active", "broadcast", "selected_broadcast", "stack", "concat"],
+)
+def test_forward_mask_survives_operations_before_a_singular_partial(operation: str) -> None:
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("t"), sc.arg("g")), name=f"sd_forward_mask_{operation}")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    selected = sc.where(x > 0.0, x, 0.0)
+    if operation == "mul":
+      y = (selected * 2.0).sqrt().sum()
+    elif operation == "div":
+      y = (selected / 2.0).sqrt().sum()
+    elif operation == "neg":
+      y = (-(-selected)).sqrt().sum()
+    elif operation == "cast":
+      narrow = sc.cast(selected, "float32")
+      assert sc.jvp(narrow, x, sc.const(np.ones(2))).type.dtype == sc.dtypes.float32
+      y = sc.cast(narrow, "float64").sqrt().sum()
+    elif operation == "reshape":
+      y = selected.reshape((2, 1)).sqrt().sum()
+    elif operation == "sum":
+      y = selected.reshape((2, 1)).sum(axis=1).sqrt().sum()
+    elif operation == "other_branch":
+      y = sc.where(x <= 0.0, 0.0, x).sqrt().sum()
+    elif operation == "nested_active":
+      y = sc.where(x > 0.0, sc.where(x > 1.0, x, 0.0), sc.where(x < -1.0, -x, 0.0)).sqrt().sum()
+    elif operation == "broadcast":
+      y = (selected + np.zeros((2, 2))).sqrt().sum() / 2.0
+    elif operation == "selected_broadcast":
+      y = sc.where(x > 0.0, x[1], 0.0).sqrt().sum()
+    elif operation == "stack":
+      y = sc.stack([selected, selected]).sqrt().sum() / 2.0
+    elif operation == "concat":
+      y = sc.concat([selected, selected]).sqrt().sum() / 2.0
+    else:
+      y = (selected + sc.where(x > 1.0, x, 0.0)).sqrt().sum()
+    return sc.jvp(y, x, sc.const(np.ones(2))), sc.gradient(y, x)
+
+  tangent, grad = (np.asarray(v) for v in derivatives(np.array([-1.0, 4.0])))
+  factor = np.sqrt(2.0) if operation in {"mul", "merged"} else 1.0 / np.sqrt(2.0) if operation == "div" else 1.0
+  np.testing.assert_allclose(grad, [0.0, 0.25 * factor], rtol=1e-7)
+  np.testing.assert_allclose(tangent, grad.sum(), rtol=1e-7)
+
+
+def test_inner_mapped_masks_keep_each_inputs_activity_separate() -> None:
+  @sc.function(sc.arg("u", 2), sc.arg("v", 2), outputs=sc.arg("y"), name="sd_two_input_select")
+  def selected(u: sc.Expr, v: sc.Expr) -> sc.Expr:
+    return sc.where(u > 0.0, u, 2.0 * v)
+
+  @sc.function(sc.arg("x", 8), outputs=sc.group(sc.arg("g"), sc.arg("t"), sc.arg("h")), name="sd_two_input_masks")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    roots = x.sqrt()
+    y = _mapped_call(selected, 2, [(roots[:4], 0, 2), (roots[4:], 0, 2)]).sum()
+    return sc.gradient(y, x), sc.jvp(y, x, sc.const(np.ones(8))), sc.hessian(y, x)
+
+  grad, tangent, hess = (np.asarray(v) for v in derivatives(np.array([0.0, 4.0, -1.0, 9.0, 4.0, 0.0, 9.0, -1.0])))
+  expected = [0.0, 0.25, 0.0, 1.0 / 6.0, 0.5, 0.0, 1.0 / 3.0, 0.0]
+  np.testing.assert_allclose(grad, expected, rtol=1e-14)
+  np.testing.assert_allclose(tangent, sum(expected), rtol=1e-14)
+  np.testing.assert_allclose(hess, np.diag([0.0, -1.0 / 32.0, 0.0, -1.0 / 108.0, -1.0 / 16.0, 0.0, -1.0 / 54.0, 0.0]), rtol=1e-14)
+
+
+def test_inner_mapped_masks_keep_mixed_formal_dtypes() -> None:
+  @sc.function(sc.arg("u", sc.TensorType((), dtype=sc.dtypes.float32)), sc.arg("v", ()), outputs=sc.arg("y"), name="sd_mixed_formal_select")
+  def stage(u: sc.Expr, v: sc.Expr) -> sc.Expr:
+    return sc.where(u > 1.0, sc.cast(u, "float64"), 2.0 * v)
+
+  @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("y"), sc.arg("g"), sc.arg("h")), name="sd_mixed_formal_masks")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    y = sc.vmap(stage, 2)(sc.cast(x[:2].sqrt(), "float32"), x[2:].sqrt()).sum()
+    return y, sc.gradient(y, x), sc.hessian(y, x)
+
+  point = np.array([0.0, 4.0, 4.0, 0.0])
+  value, grad, hess = (np.asarray(v) for v in derivatives(point))
+  np.testing.assert_array_equal(value, 6.0)
+  np.testing.assert_array_equal(grad, [0.0, 0.25, 0.5, 0.0])
+  np.testing.assert_array_equal(hess, np.diag([0.0, -1.0 / 32.0, -1.0 / 16.0, 0.0]))
+
+
+def test_inner_mapped_masks_use_stored_input_coordinates() -> None:
+  pattern = CanonicalPattern((2, 3), (0, 1), (0, 2))
+
+  @sc.function(sc.arg("u", sc.TensorType(pattern.shape, pattern=pattern)), outputs=sc.arg("y"), name="sd_stored_select")
+  def selected(u: sc.Expr) -> sc.Expr:
+    compact = sc.values(u)
+    return sc.pack(sc.where(compact > 0.0, compact, 0.0), pattern)
+
+  @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("g"), sc.arg("t"), sc.arg("h")), name="sd_inner_stored_mask")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    roots = sc.pack(x.sqrt().reshape((2, 2)), pattern)
+    y = sc.values(sc.vmap(selected, 2)(roots)).sum()
+    return sc.gradient(y, x), sc.jvp(y, x, sc.const(np.ones(4))), sc.hessian(y, x)
+
+  grad, tangent, hess = (np.asarray(v) for v in derivatives(np.array([0.0, 4.0, -1.0, 9.0])))
+  np.testing.assert_allclose(grad, [0.0, 0.25, 0.0, 1.0 / 6.0], rtol=1e-14)
+  np.testing.assert_allclose(tangent, grad.sum(), rtol=1e-14)
+  np.testing.assert_allclose(hess, np.diag([0.0, -1.0 / 32.0, 0.0, -1.0 / 108.0]), rtol=1e-14)
+
+
 def test_reverse_mode_refuses_an_integer_or_bool_output() -> None:
   x = sc.sym("x", 3)
   for value in (sc.cast(x, "int64")[0], (x > 0.0)[0]):
@@ -406,3 +607,429 @@ def test_reverse_mode_through_a_float32_sum_stays_float32() -> None:
 
   xv = np.array([0.3, -0.7, 1.1])
   np.testing.assert_allclose(np.asarray(grad(xv)), 2.0 * xv, rtol=1e-6)
+
+
+@pytest.mark.parametrize("runtime", [False, True])
+def test_masked_quotient_retains_stable_contraction(runtime: bool) -> None:
+  @sc.function(sc.arg("x", ()), sc.arg("seed", ()), outputs=sc.arg("t"), name=f"sd_div_{runtime}")
+  def f(x: sc.Expr, seed: sc.Expr) -> sc.Expr:
+    a = sc.where(x > 0, x, 0)
+    b = sc.where(x > 0, 2 * x, 0)
+    return sc.jvp(a / b, x, seed if runtime else sc.const(1.0))
+
+  np.testing.assert_array_equal(f(np.array(1e-310), np.array(1.0)), 0.0)
+
+
+@pytest.mark.parametrize("operation", ["sum", "transpose", "reshape", "stack", "concat"])
+def test_sparse_selected_tangent_survives_movement(operation: str) -> None:
+  p = CanonicalPattern((2, 2), (0, 1), (0, 1))
+
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("t"), sc.arg("g")), name=f"sd_sparse_{operation}")
+  def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    sp = sc.pack(x, p)
+    sel = sc.where(sc.pack(x > 0, p), sp, sc.pack(sc.const(np.zeros(2)), p))
+    moved = (
+      sel.sum()
+      if operation == "sum"
+      else sel.T
+      if operation == "transpose"
+      else sel.reshape((4,))
+      if operation == "reshape"
+      else sc.stack([sel, sel])
+      if operation == "stack"
+      else sc.concat([sel, sel])
+    )
+    y = moved.sqrt().sum()
+    return sc.jvp(y, x, sc.const(np.ones(2))), sc.gradient(y, x)
+
+  for point in (np.array([-1.0, -2.0]), np.array([-1.0, 4.0])):
+    t, g = (np.asarray(v) for v in f(point))
+    factor = 2.0 if operation in {"stack", "concat"} else 1.0
+    expected = [0.0, factor * 0.25 if point[1] > 0 else 0.0]
+    np.testing.assert_allclose(g, expected, rtol=1e-14)
+    np.testing.assert_allclose(t, sum(expected), rtol=1e-14)
+
+
+def test_nested_mapped_adjoint_preserves_full_branch_activity() -> None:
+  @sc.function(sc.arg("u", ()), outputs=sc.arg("y"), name="sd_nested_stage")
+  def stage(u: sc.Expr) -> sc.Expr:
+    return sc.where(u > 0, u, sc.where(u < -2, 2 * u, 0))
+
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("value"), sc.arg("t"), sc.arg("g")), name="sd_nested_map")
+  def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    y = sc.vmap(stage, 2)(x.sqrt()).sum()
+    return y, sc.jvp(y, x, sc.const(np.ones(2))), sc.gradient(y, x)
+
+  point = np.array([-1.0, 4.0])
+  value, t, g = (np.asarray(v) for v in f(point))
+  assert value == 2.0
+  assert t == 0.25
+  step = 1e-5
+  finite = np.array([(f(point + np.eye(2)[i] * step)[0] - f(point - np.eye(2)[i] * step)[0]) / (2 * step) for i in range(2)])
+  np.testing.assert_allclose(finite, [0.0, 0.25], rtol=1e-7)
+  np.testing.assert_allclose(g, [0.0, 0.25])
+
+
+def test_zero_adjoint_term_does_not_erase_map_condition() -> None:
+  @sc.function(sc.arg("u", ()), outputs=sc.arg("y"), name="sd_zero_stage")
+  def stage(u: sc.Expr) -> sc.Expr:
+    return sc.where(u > 0, u, 0) + 0 * u
+
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("t"), sc.arg("g")), name="sd_zero_map")
+  def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    y = sc.vmap(stage, 2)(x.sqrt()).sum()
+    return sc.jvp(y, x, sc.const(np.ones(2))), sc.gradient(y, x)
+
+  t, g = (np.asarray(v) for v in f(np.array([0.0, 4.0])))
+  assert t == 0.25
+  np.testing.assert_allclose(g, [0.0, 0.25])
+
+
+@pytest.mark.parametrize("form", ["call", "map", "two_maps"])
+def test_zero_adjoints_of_other_results_keep_the_shared_arguments_mask(form: str) -> None:
+  @sc.function(
+    sc.arg("u", (2,) if form == "call" else ()),
+    sc.arg("w", (2,) if form == "call" else ()),
+    outputs=sc.group(sc.arg("a"), sc.arg("b")),
+    name="sd_independent_results",
+  )
+  def two(u: sc.Expr, w: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    return sc.where(u > 0.0, u, 0.0), w * w
+
+  @sc.function(sc.arg("x", 2), outputs=sc.group(*(sc.arg(k) for k in ("y", "g", "j", "h", "inline"))), name=f"sd_zero_adjoint_{form}")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, ...]:
+    roots = x.sqrt()
+    if form == "call":
+      a, b = two(roots, x + 1.0)
+    else:
+      a, b = sc.vmap(two, 2)(roots, x + 1.0)
+      if form == "two_maps":
+        a, _ = sc.vmap(two, 2)(roots, x + 2.0)
+    y = a.sum() + b.sum()
+    inline = sc.where(roots > 0.0, roots, 0.0).sum() + sc.sumsqr(x + 1.0)
+    return y, sc.gradient(y, x), sc.jacobian(y, x), sc.hessian(y, x), sc.gradient(inline, x)
+
+  for point in (np.array([0.0, 4.0]), np.array([-1.0, 4.0])):
+    _, grad, jac, hess, inline = (np.asarray(v) for v in derivatives(point))
+    expected = 2.0 * (point + 1.0) + [0.0, 0.25]
+    np.testing.assert_array_equal(grad, expected)
+    np.testing.assert_array_equal(grad, jac.reshape(-1))
+    np.testing.assert_array_equal(grad, inline)
+    np.testing.assert_array_equal(hess, np.diag([2.0, 2.0 - 1.0 / 32.0]))
+  numerical = finite_difference(lambda v: np.asarray(derivatives(v)[0]), point).reshape(-1)
+  np.testing.assert_allclose(grad, numerical, rtol=1e-7, atol=1e-9)
+
+
+def test_selected_tangent_survives_constant_matmul() -> None:
+  matrix = np.array([[1.0, 2.0], [3.0, 4.0]])
+
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("t"), sc.arg("g")), name="sd_masked_matmul")
+  def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    sel = sc.where(x > 0, x, 0)
+    y = (sel @ sc.const(matrix)).sqrt().sum()
+    return sc.jvp(y, x, sc.const(np.ones(2))), sc.gradient(y, x)
+
+  for point in (np.array([-1.0, -2.0]), np.array([-1.0, 4.0])):
+    t, g = (np.asarray(v) for v in f(point))
+    value = np.where(point > 0, point, 0.0) @ matrix
+    slope = np.zeros(2)
+    slope[value > 0] = 0.5 / np.sqrt(value[value > 0])
+    expected = (matrix @ slope) * (point > 0)
+    np.testing.assert_allclose(g, expected, rtol=1e-14)
+    np.testing.assert_allclose(t, expected.sum(), rtol=1e-14)
+
+
+@pytest.mark.parametrize("matrix", [np.eye(2), np.array([[0.0, 1.0], [0.0, 0.0]])])
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_forward_selected_activity_uses_constant_matrix_support(matrix: np.ndarray, wrapped: bool) -> None:
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("y"), sc.arg("t")), name="sd_matrix_support")
+  def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    coefficient = sc.const(matrix) * 2.0 / 2.0 if wrapped else sc.const(matrix)
+    y = (sc.where(x > 0, x, 0) @ coefficient).sqrt().sum()
+    return y, sc.jvp(y, x, sc.const(np.ones(2)))
+
+  for point in (np.array([-1.0, -2.0]), np.array([-1.0, 4.0])):
+    value, tangent = (np.asarray(v) for v in f(point))
+    expected = np.sqrt(np.where(point > 0, point, 0.0) @ matrix).sum()
+    np.testing.assert_array_equal(value, expected)
+    difference = finite_difference(lambda v: np.asarray(f(v)[0]), point).sum()
+    np.testing.assert_allclose(tangent, difference, rtol=1e-7, atol=1e-9)
+
+
+@pytest.mark.parametrize("runtime", [False, True])
+def test_selected_zero_from_maximum_guards_the_square_root_partial(runtime: bool) -> None:
+  seeds = np.array([[1.0, 1.0], [0.0, -2.0]])
+
+  @sc.function(sc.arg("x", 2), sc.arg("seeds", (2, 2)), outputs=sc.group(sc.arg("y"), sc.arg("t"), sc.arg("g"), sc.arg("h")), name="sd_maximum_root")
+  def f(x: sc.Expr, seed: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
+    y = sc.maximum(x, 0.0).sqrt()
+    return y, sc.jvp_many(y, x, seed if runtime else sc.const(seeds)), sc.gradient(y.sum(), x), sc.hessian(y.sum(), x)
+
+  point = np.array([-1.0, 4.0])
+  value, tangent, grad, hess = (np.asarray(v) for v in f(point, seeds))
+  expected = np.array([0.0, 0.25])
+  np.testing.assert_array_equal(value, [0.0, 2.0])
+  np.testing.assert_array_equal(tangent, seeds * expected)
+  np.testing.assert_array_equal(grad, expected)
+  np.testing.assert_array_equal(hess, np.diag([0.0, -1.0 / 32.0]))
+  np.testing.assert_allclose(np.diag(grad), finite_difference(lambda v: np.asarray(f(v, seeds)[0]), point), rtol=1e-7, atol=1e-9)
+
+
+def test_second_forward_derivative_uses_the_select_condition_at_a_zero_tangent() -> None:
+  @sc.function(sc.arg("x", ()), outputs=sc.group(sc.arg("t"), sc.arg("second")), name="sd_second_forward")
+  def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    y = (sc.where(x > 0, x, 0).sqrt() - 2.0) ** 2
+    first = sc.jvp(y, x, sc.const(1.0))
+    return first, sc.jvp(first, x, sc.const(1.0))
+
+  np.testing.assert_array_equal(np.asarray(f(np.array(-1.0))), [0.0, 0.0])
+  np.testing.assert_array_equal(np.asarray(f(np.array(4.0))), [0.0, 1.0 / 8.0])
+
+
+@pytest.mark.parametrize("dense", [False, True])
+def test_sparse_false_branch_mask_covers_entries_absent_from_the_condition(dense: bool) -> None:
+  full = CanonicalPattern((2, 2), (0, 1), (0, 1))
+  small = CanonicalPattern((2, 2), (0,), (0,))
+
+  @sc.function(sc.arg("x", 2), outputs=sc.arg("g"), name="sd_sparse_false_seed")
+  def f(x: sc.Expr) -> sc.Expr:
+    v = sc.pack(x, full)
+    condition = sc.pack(x[:1] > 0, small)
+    other = sc.pack(sc.const(np.ones(2)), full)
+    cot = sc.where(condition, sc.pack(sc.const(np.zeros(1)), small), sc.to_dense(other) if dense else other)
+    return sc.vjp((v.sin(),), (x,), (cot,))[0]
+
+  for point in (np.array([-1.0, 4.0]), np.array([1.0, 4.0])):
+    expected = np.cos(point)
+    expected[0] *= point[0] <= 0
+    np.testing.assert_allclose(np.asarray(f(point)), expected, rtol=1e-14)
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_selected_dot_product_keeps_activity_on_either_operand(side: str) -> None:
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("t"), sc.arg("g")), name="sd_selected_dot")
+  def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    selected = sc.where(x > 0, x, 0.0)
+    coefficient = sc.const(np.ones(2))
+    y = (selected @ coefficient if side == "left" else coefficient @ selected).sqrt()
+    return sc.jvp(y, x, sc.const(np.ones(2))), sc.gradient(y, x)
+
+  for point in (np.array([-1.0, -2.0]), np.array([-1.0, 4.0])):
+    tangent, grad = (np.asarray(v) for v in f(point))
+    expected = np.array([0.0, 0.25 if point[1] > 0 else 0.0])
+    np.testing.assert_array_equal(tangent, expected.sum())
+    np.testing.assert_array_equal(grad, expected)
+
+
+@pytest.mark.parametrize(("form", "extremum"), [("sparse_vector", False), ("matrix_sparse", True), ("sparse_sparse", False)])
+def test_nested_sparse_tangent_conditions_survive_products(form: str, extremum: bool) -> None:
+  pattern = CanonicalPattern((4, 4), (0, 1, 2, 3), (0, 1, 2, 3))
+  scale = 2 if form == "matrix_sparse" else 1
+
+  def body(x: sc.Expr) -> sc.Expr:
+    inner = sc.maximum(x, 0.0) if extremum else sc.where(x > 0, x, 0.0)
+    chosen = sc.pack(sc.where(x < 5, inner, 0.0), pattern)
+    if form == "sparse_vector":
+      result = chosen @ sc.const(np.ones(4))
+    elif form == "matrix_sparse":
+      result = sc.const(np.ones((2, 4))) @ chosen
+    else:
+      result = chosen @ sc.pack(sc.const(np.ones(4)), pattern)
+    return result.sqrt().sum()
+
+  primal = sc.function(sc.arg("x", 4), outputs=sc.arg("y"), name="sd_nested_sparse_product")(body)
+
+  @sc.function(
+    sc.arg("x", 4), sc.arg("seeds", (4, 4)), outputs=sc.group(sc.arg("t"), sc.arg("runtime"), sc.arg("baked")), name="sd_nested_sparse_products"
+  )
+  def products(x: sc.Expr, seeds: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    y = body(x)
+    return sc.jvp(y, x, sc.const(np.ones(4))), sc.jvp_many(y, x, seeds), sc.jvp_many(y, x, sc.const(np.eye(4)))
+
+  for point in (np.array([1.0, 2.0, 3.0, 4.0]), np.array([-1.0, 2.0, 6.0, 4.0])):
+    active = (point > 0) & (point < 5)
+    expected = np.zeros(4)
+    expected[active] = scale * 0.5 / np.sqrt(point[active])
+    tangent, runtime, baked = (np.asarray(v) for v in products(point, np.eye(4)))
+    np.testing.assert_allclose(tangent, expected.sum(), rtol=1e-14)
+    np.testing.assert_allclose(runtime, expected, rtol=1e-14)
+    np.testing.assert_allclose(baked, expected, rtol=1e-14)
+    np.testing.assert_allclose(finite_difference(primal, point).reshape(-1), expected, rtol=1e-7, atol=1e-9)
+  point = np.array([1.0, 2.0, 3.0, 4.0])
+  np.testing.assert_allclose(np.asarray(sc.hessian(primal)(point)), np.diag(-0.25 * scale / point**1.5), rtol=1e-14)
+
+
+def test_shared_outer_mask_keeps_the_union_of_inner_mapped_conditions() -> None:
+  @sc.function(sc.arg("u", ()), outputs=sc.arg("y"), name="sd_shared_outer")
+  def stage(u: sc.Expr) -> sc.Expr:
+    return sc.where(u > -2, sc.where(u > 1, u, 0.0), 0.0) + sc.where(u > -2, sc.where(u < -1, 2 * u, 0.0), 0.0)
+
+  @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("g"), sc.arg("h")), name="sd_shared_outer_map")
+  def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    y = sc.vmap(stage, 2)(x.sqrt()).sum()
+    return sc.gradient(y, x), sc.hessian(y, x)
+
+  grad, hess = (np.asarray(v) for v in f(np.array([0.0, 4.0])))
+  np.testing.assert_array_equal(grad, [0.0, 0.25])
+  np.testing.assert_array_equal(hess, np.diag([0.0, -1.0 / 32.0]))
+
+
+@pytest.mark.parametrize(("mapped", "nested"), [(False, False), (True, False), (True, True)])
+def test_forward_calls_carry_selected_activity_in_both_directions(mapped: bool, nested: bool) -> None:
+  shape = () if mapped else (2,)
+
+  @sc.function(sc.arg("u", shape), outputs=sc.arg("y"), name="sd_boundary_root")
+  def root(u: sc.Expr) -> sc.Expr:
+    return u.sqrt()
+
+  @sc.function(sc.arg("u", shape), outputs=sc.arg("y"), name="sd_boundary_selected")
+  def selected(u: sc.Expr) -> sc.Expr:
+    return sc.where(u > 0.0, u, 0.0)
+
+  @sc.function(sc.arg("u", shape), outputs=sc.arg("y"), name="sd_boundary_nested_root")
+  def nested_root(u: sc.Expr) -> sc.Expr:
+    return root(u)
+
+  @sc.function(sc.arg("u", shape), outputs=sc.arg("y"), name="sd_boundary_nested_selected")
+  def nested_selected(u: sc.Expr) -> sc.Expr:
+    return selected(u)
+
+  @sc.function(sc.arg("u", shape), outputs=sc.arg("y"), name="sd_boundary_stationary")
+  def stationary(u: sc.Expr) -> sc.Expr:
+    return (root(u) - 2.0) ** 2
+
+  seeds = np.array([[1.0, 1.0], [0.0, -2.0]])
+
+  @sc.function(
+    sc.arg("x", 2),
+    sc.arg("seeds", (2, 2)),
+    outputs=sc.group(*(sc.arg(k) for k in ("y", "baked", "runtime", "g", "h", "second", "plain", "stationary_second"))),
+    name="sd_boundaries",
+  )
+  def derivatives(x: sc.Expr, seed: sc.Expr) -> tuple[sc.Expr, ...]:
+    root_fn = nested_root if nested else root
+    selected_fn = nested_selected if nested else selected
+    chosen = sc.where(x > 0.0, x, 0.0)
+    into = sc.vmap(root_fn, 2)(chosen) if mapped else root_fn(chosen)
+    outof = (sc.vmap(selected_fn, 2)(x) if mapped else selected_fn(x)).sqrt()
+    before = sc.vmap(selected_fn, 2)(x.sqrt()) if mapped else selected_fn(x.sqrt())
+    plain = sc.vmap(root_fn, 2)(x * x + 1.0) if mapped else root_fn(x * x + 1.0)
+    ys = [into, outof, before]
+    losses = [((y - 2.0) ** 2).sum() for y in ys]
+    first = [sc.jvp(loss, x, sc.const(np.ones(2))) for loss in losses]
+    stationary_loss = (sc.vmap(stationary, 2)(chosen) if mapped else stationary(chosen)).sum()
+    stationary_first = sc.jvp(stationary_loss, x, sc.const(np.ones(2)))
+    return (
+      sc.stack(ys),
+      sc.stack([sc.jvp_many(y, x, sc.const(seeds)) for y in ys]),
+      sc.stack([sc.jvp_many(y, x, seed) for y in ys]),
+      sc.stack([sc.gradient(loss, x) for loss in losses]),
+      sc.stack([sc.hessian(loss, x) for loss in losses]),
+      sc.stack([sc.jvp(t, x, sc.const(np.ones(2))) for t in first]),
+      sc.jvp_many(plain, x, seed),
+      sc.jvp(stationary_first, x, sc.const(np.ones(2))),
+    )
+
+  derivatives.instantiate()
+  called_root = (nested_root if nested else root).instantiate()
+  assert any(
+    any(inp.type.dtype.is_bool for inp in helper[0].inputs) and any(out.type.dtype.is_bool for out in helper[0].outputs)
+    for key, helper in called_root._memo.helpers.items()
+    if key.role == "forward" and key.masked and isinstance(helper, tuple)
+  )
+  for point in (np.array([-1.0, 4.0]), np.array([-2.0, 9.0])):
+    value, baked, runtime, grad, hess, second, plain, stationary_second = (np.asarray(v) for v in derivatives(point, seeds))
+    slope = np.array([0.0, 0.5 / np.sqrt(point[1])])
+    expected_grad = np.array([0.0, 1.0 - 2.0 / np.sqrt(point[1])])
+    curvature = 1.0 / point[1] ** 1.5
+    np.testing.assert_allclose(value, np.tile([0.0, np.sqrt(point[1])], (3, 1)))
+    np.testing.assert_allclose(baked, np.broadcast_to(seeds * slope, (3, 2, 2)), rtol=1e-14)
+    np.testing.assert_allclose(runtime, baked, rtol=1e-14)
+    np.testing.assert_allclose(grad, np.tile(expected_grad, (3, 1)), rtol=1e-14)
+    np.testing.assert_allclose(hess, np.broadcast_to(np.diag([0.0, curvature]), (3, 2, 2)), rtol=1e-14)
+    np.testing.assert_allclose(second, curvature, rtol=1e-14)
+    np.testing.assert_allclose(stationary_second, curvature, rtol=1e-14)
+    np.testing.assert_allclose(plain, seeds * (point / np.sqrt(point * point + 1.0)), rtol=1e-14)
+    expected_jacobian = np.tile(np.diag(slope), (3, 1))
+    np.testing.assert_allclose(finite_difference(lambda v: np.asarray(derivatives(v, seeds)[0]), point), expected_jacobian, rtol=1e-7, atol=1e-9)
+
+
+def test_forward_helper_flags_only_masked_formals() -> None:
+  @sc.function(sc.arg("a", ()), sc.arg("b", ()), sc.arg("c", ()), outputs=sc.arg("y"), name="sd_masked_formals")
+  def mix(a: sc.Expr, b: sc.Expr, c: sc.Expr) -> sc.Expr:
+    return a.sqrt() * b
+
+  x = sc.sym("x", ())
+  sc.jvp(mix(sc.where(x > 0.0, x, 0.0), x * 3.0, x * 5.0), x, sc.const(1.0))
+  helpers = [helper[0] for key, helper in mix.instantiate()._memo.helpers.items() if key.role == "forward" and isinstance(helper, tuple)]
+  assert [helper.input_names for helper in helpers] == [("a", "b", "fwd:a", "mask:fwd:a")]
+
+
+@pytest.mark.parametrize("kind", ["jacobian", "hessian"])
+def test_selected_map_seeds_keep_local_coloring_code_size(kind: str) -> None:
+  from scaly.codegen import render_c_source
+
+  @sc.function(sc.arg("x", 4), sc.arg("u", 2), outputs=sc.arg("y"), name="sd_colored_stage")
+  def stage(x: sc.Expr, u: sc.Expr) -> sc.Expr:
+    velocity = x[2:]
+    return sc.concat([x[:2] + 0.05 * velocity, velocity + 0.05 * (u - 0.1 * sc.sumsqr(velocity) * velocity)])
+
+  length = 40
+  sources = []
+  for clipped in (False, True):
+
+    @sc.function(sc.arg("z", 6 * length), outputs=sc.arg("d"), name=f"sd_colored_{kind}_{clipped}")
+    def derivatives(z: sc.Expr) -> sc.Expr:
+      x, u = z[: 4 * length].reshape((length, 4)), z[4 * length :].reshape((length, 2))
+      u = sc.maximum(sc.minimum(u, 1.0), -1.0) if clipped else u
+      y = sc.vmap(stage, length)(x, u)
+      return sc.jacobian(y, z) if kind == "jacobian" else sc.hessian(sc.sumsqr(y), z)
+
+    sources.append(render_c_source(derivatives))
+  assert len(sources[1]) < 8 * len(sources[0]), (len(sources[0]), len(sources[1]))
+
+
+def test_forward_map_keeps_activity_when_another_formal_has_zero_partial() -> None:
+  @sc.function(sc.arg("a", ()), sc.arg("b", ()), outputs=sc.arg("y"), name="sd_forward_zero_formal")
+  def stage(a: sc.Expr, b: sc.Expr) -> sc.Expr:
+    return a + 0.0 * b
+
+  @sc.function(
+    sc.arg("x", 2), sc.arg("seed", 2), outputs=sc.group(sc.arg("baked"), sc.arg("runtime"), sc.arg("g")), name="sd_forward_zero_formal_map"
+  )
+  def f(x: sc.Expr, seed: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    y = sc.vmap(stage, 2)(sc.where(x > 0.0, x, 0.0), x).sqrt().sum()
+    return sc.jvp(y, x, sc.const(np.ones(2))), sc.jvp(y, x, seed), sc.gradient(y, x)
+
+  baked, runtime, grad = (np.asarray(v) for v in f(np.array([-1.0, 4.0]), np.ones(2)))
+  np.testing.assert_array_equal([baked, runtime], [0.25, 0.25])
+  np.testing.assert_array_equal(grad, [0.0, 0.25])
+
+
+def test_forward_call_conditions_use_sparse_stored_coordinates() -> None:
+  pattern = CanonicalPattern((2, 2), (0, 1), (0, 1))
+  type_ = sc.TensorType((2, 2), pattern=pattern)
+
+  @sc.function(sc.arg("u", type_), outputs=sc.arg("y"), name="sd_sparse_call_root")
+  def root(u: sc.Expr) -> sc.Expr:
+    return u.sqrt()
+
+  @sc.function(sc.arg("u", type_), outputs=sc.arg("y"), name="sd_sparse_call_selected")
+  def selected(u: sc.Expr) -> sc.Expr:
+    condition = sc.pack(sc.values(u) > 0.0, pattern)
+    return sc.where(condition, u, sc.pack(sc.const(np.zeros(2)), pattern))
+
+  seeds = np.array([[1.0, 1.0], [0.0, -2.0]])
+
+  @sc.function(
+    sc.arg("x", 2), sc.arg("seeds", (2, 2)), outputs=sc.group(sc.arg("y"), sc.arg("baked"), sc.arg("runtime")), name="sd_sparse_call_masks"
+  )
+  def f(x: sc.Expr, seed: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    ys = [sc.values(root(sc.pack(sc.where(x > 0.0, x, 0.0), pattern))), sc.values(selected(sc.pack(x, pattern)).sqrt())]
+    return sc.stack(ys), sc.stack([sc.jvp_many(y, x, sc.const(seeds)) for y in ys]), sc.stack([sc.jvp_many(y, x, seed) for y in ys])
+
+  value, baked, runtime = (np.asarray(v) for v in f(np.array([-1.0, 4.0]), seeds))
+  np.testing.assert_array_equal(value, [[0.0, 2.0], [0.0, 2.0]])
+  expected = np.broadcast_to(seeds * [0.0, 0.25], (2, 2, 2))
+  np.testing.assert_array_equal(baked, expected)
+  np.testing.assert_array_equal(runtime, expected)

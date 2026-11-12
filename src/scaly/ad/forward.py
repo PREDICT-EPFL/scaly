@@ -6,11 +6,36 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, _uniform, callees_of, concat, from_dense, gather, matmul, pack, scatter, stack, to_dense, values
+from ..ir.expr import (
+  Expr,
+  ExprOp,
+  _full_like,
+  _uniform,
+  callees_of,
+  concat,
+  from_dense,
+  gather,
+  matmul,
+  pack,
+  scatter,
+  stack,
+  to_dense,
+  values,
+)
 from ..ir.types import TensorType, stored_indices
 from ..passes.expr import simplify_cse_fixpoint
 from .calls import _call_jvp_many, _cond_jvp_many, _is_zero_const, _vmap_jvp_many, read_args
-from .rules import ELEMENTWISE, Mask, reduction_partial, times_partial, tangent as _elementwise_tangent
+from .rules import (
+  ELEMENTWISE,
+  Mask,
+  _mask_of,
+  _masked,
+  carry_masks,
+  move_mask,
+  reduction_partial,
+  times_partial,
+  tangent as _elementwise_tangent,
+)
 from .sparsity import _check_wrt, _prunable_support
 
 
@@ -26,12 +51,12 @@ def jvp(expr: Expr, wrt: Expr, seed: Expr) -> Expr:
       raise ValueError("JVP seeds must have the primal's stored pattern")
     seed = from_dense(seed, wrt.type.pattern)
   tangent = jvp_many(expr, wrt, _reshape_tangent(seed, wrt, 1))
-  if expr.type.pattern is not None:
-    return pack(values(tangent).reshape(expr.type.storage_shape), expr.type.pattern, shape=expr.shape)
+  if (pattern := expr.type.pattern) is not None:
+    return move_mask(tangent, lambda t: pack(values(t).reshape(expr.type.storage_shape), pattern, shape=expr.shape))
   if tangent.op == ExprOp.CONST:
     assert tangent.value is not None
     return Expr.const(tangent.value.reshape(expr.shape), dtype=tangent.type.dtype, lowering=tangent.lowering)
-  return tangent.reshape(expr.shape)
+  return move_mask(tangent, lambda t: t.reshape(expr.shape))
 
 
 def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
@@ -63,9 +88,9 @@ def _zero_tangent(expr: Expr, nseed: int) -> Expr:
 
 
 def _reshape_tangent(tangent: Expr, primal: Expr, nseed: int) -> Expr:
-  if primal.type.pattern is not None:
-    return pack(values(tangent).reshape((nseed, *primal.type.storage_shape)), primal.type.pattern, shape=(nseed, *primal.shape))
-  return tangent.reshape((nseed, *primal.shape))
+  if (pattern := primal.type.pattern) is not None:
+    return move_mask(tangent, lambda t: pack(values(t).reshape((nseed, *primal.type.storage_shape)), pattern, shape=(nseed, *primal.shape)))
+  return move_mask(tangent, lambda t: t.reshape((nseed, *primal.shape)))
 
 
 def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, callee: str = "<top-level>") -> tuple[Expr | None, ...]:
@@ -115,7 +140,17 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
       else:
         assert all(arg.type.dtype.is_floating for arg in args)
         d = [t if t is not None else _zero_tangent(arg, nseed) for arg, t in zip(args, d, strict=True)]
-        tangent = _pushforward_rule(expr, d, nseed, callee)
+        if len(d) == 1:
+          tangent = move_mask(d[0], lambda t: _pushforward_rule(expr, [t], nseed, callee))
+        elif expr.op == ExprOp.MATMUL and any(_mask_of(t) is not None for t in d):
+          weights = matmul(*(_coefficient_activity(arg) for arg in args), sampled=expr.attrs.get("sampled"))
+          tangent = carry_masks(
+            d,
+            lambda seeds: _pushforward_rule(expr, seeds, nseed, callee),
+            lambda seeds: _pushforward_rule(weights, seeds, nseed, callee),
+          )
+        else:
+          tangent = carry_masks(d, lambda seeds: _pushforward_rule(expr, seeds, nseed, callee))
         if expr.op in {
           ExprOp.REDUCE,
           ExprOp.RESHAPE,
@@ -128,15 +163,27 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
         } and all(t.op == ExprOp.CONST for t in d):
           tangent = simplify_cse_fixpoint(tangent)
       if tangent is not None and tangent.shape != (nseed, *expr.shape):
-        tangent = tangent * _uniform(1, (1, *expr.shape), dtype=expr.type.dtype)
+        tangent = _masked(tangent, lambda t: t * _uniform(1, (1, *expr.shape), dtype=expr.type.dtype))
       if tangent is not None and tangent.type.pattern is not expr.type.pattern:
         if expr.type.pattern is None:
-          tangent = to_dense(tangent)
+          tangent = move_mask(tangent, to_dense)
         else:
-          type_ = TensorType((nseed, *expr.shape), expr.type.dtype, pattern=expr.type.pattern)
-          tangent = pack(gather(tangent, stored_indices(type_)).reshape(type_.storage_shape), expr.type.pattern, shape=type_.shape)
+          pattern = expr.type.pattern
+          type_ = TensorType((nseed, *expr.shape), expr.type.dtype, pattern=pattern)
+          tangent = move_mask(
+            tangent, lambda t, pattern=pattern: pack(gather(t, stored_indices(type_)).reshape(type_.storage_shape), pattern, shape=type_.shape)
+          )
     tangents[expr.id] = None if tangent is not None and _prunable_support(tangent) == frozenset() else tangent
   return tuple(tangents[out.id] if tangents[out.id] is not None or not out.type.dtype.is_floating else _zero_tangent(out, nseed) for out in outputs)
+
+
+def _coefficient_activity(arg: Expr) -> Expr:
+  # A runtime coefficient that is zero can still change in a higher derivative.
+  compact = simplify_cse_fixpoint(values(arg))
+  if compact.op == ExprOp.CONST and compact.value is not None:
+    nonzero = Expr.const((compact.value != 0).astype(arg.type.dtype.numpy()), dtype=arg.type.dtype)
+    return nonzero if arg.type.pattern is None else pack(nonzero, arg.type.pattern, shape=arg.shape)
+  return _full_like(1, arg)
 
 
 def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) -> Expr:
@@ -208,7 +255,7 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
           else _jvp_many_matmul_right(args[0], args[1], d[1], nseed)
         )
       return terms[0] if len(terms) == 1 else terms[0] + terms[1]
-    if args[0] is args[1] and len(args[0].shape) == 1:
+    if args[0] is args[1] and d[0] is d[1] and len(args[0].shape) == 1:
       return 2 * (d[0] @ args[0])
     if _is_zero_const(d[0]):
       return _jvp_many_matmul_right(args[0], args[1], d[1], nseed)

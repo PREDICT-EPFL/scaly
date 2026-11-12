@@ -280,15 +280,24 @@ The condition has no derivative, and neither has any comparison.
 The same holds when a `Function` or `sc.vmap` computes the branch. With `root`
 a `Function` returning `sqrt`, `sc.where(x > 0, root(x), 0.0).sum()` has
 gradient `[0.0, 0.25]` at `x = [0.0, 4.0]`.
-Custom reverse rules receive zero cotangents for entries the select does not
-choose and must return finite results there.
+Custom derivative rules receive numerical seeds without the select's condition
+and must return finite results on inactive entries.
 
-!!! warning "A select inside a mapped function"
-    Reverse mode does not carry a condition from inside a mapped `Function`
-    back through operations on the map's arguments. Mapping a function that
-    returns `sc.where(u > 0.0, u, 0.0)` over `x.sqrt()` can therefore leave a
-    NaN gradient at `x = 0`. Apply `sc.where` outside the map to guard those
-    earlier operations.
+In reverse mode, a select inside a mapped `Function` also guards operations on
+the map's arguments. Mapping a function that returns `sc.where(u > 0.0, u, 0.0)` over
+`x.sqrt()` gives gradient `[0.0, 0.25]` at `x = [0.0, 4.0]` after summing the
+mapped values.
+
+In forward mode, a selected zero tangent stays zero through later partial
+derivatives, including across ordinary and mapped calls. For example,
+`sc.where(x > 0.0, x, 0.0).sqrt()` has derivative zero at `x = -1`, although the
+square root's partial derivative is infinite at zero.
+
+With `root` returning `sqrt` and `selected` returning `sc.where(u > 0, u, 0)`,
+both `root(sc.where(x > 0, x, 0))` and `selected(x).sqrt()` have forward
+derivative zero at `x = -1`. The condition also survives the seed assembly in
+a mapped call, so multiple forward seeds and Jacobians obey the same rule.
+Custom forward rules still receive numerical tangents only.
 
 ### Supported array operations
 

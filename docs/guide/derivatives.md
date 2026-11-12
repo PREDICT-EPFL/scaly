@@ -423,6 +423,9 @@ among tied extrema. `abs` has slope `sign(x)`, with slope zero at zero.
 in forward and reverse mode. A branch that is not chosen contributes zero
 even when its local derivative is NaN or infinite.
 
+A selected zero also guards later partial derivatives across ordinary and mapped
+calls. For example, `sqrt(maximum(x, 0))` has derivative zero at `x = -1` in both modes.
+
 `argmin` and `argmax` return integer indices and have no derivative.
 Quadratic-program backends refuse variable-dependent nonsmooth operations,
 even when the chosen derivative has a zero Hessian. Express control limits as
@@ -438,16 +441,20 @@ or mapped function. A solve independent of the differentiated input does not
 block its derivative. See [solver sensitivities](solvers.md#nesting-a-solver-in-a-graph)
 for the limits of dependency analysis.
 
-Forward and reverse mode can differ when a selected zero reaches a singular
-operation. For example, `sqrt(maximum(x, 0))` at `x = -1` gives a NaN tangent
-and a zero gradient. Placing the selection around `sqrt`, as in
-`sc.where(x > 0, x.sqrt(), 0)`, guards its singular derivative in both modes.
-
 Derivatives of `reduce_min` and `reduce_max` on sparse inputs currently
 materialize masks and tie counts over the full logical shape. Their temporary
 storage can therefore grow with the dense size, even for diagonal inputs.
 
 Comparisons, `sc.isfinite` and casts to integer or `bool` types have no
 derivative, and a gradient of an integer or `bool` value raises `TypeError`.
+
+Reverse matrix products can propagate a nonfinite partial through a zero
+coefficient. For example, `(x @ M).sqrt().sum()` with a zero column in `M` can
+give a NaN gradient even when the composed function has a finite derivative.
+
+Dense matrix products also drop a select's condition in reverse mode. For
+`sc.where(x > 0, x.sqrt() @ sc.const(np.ones((2, 2))), 0.0).sum()` at
+`x = [0.0, 0.0]`, a forward product with seed `[1.0, 1.0]` is zero, but
+the gradient is `[NaN, NaN]`.
 
 See [How differentiation works](../how_it_works/autodiff.md) for the algorithms.
