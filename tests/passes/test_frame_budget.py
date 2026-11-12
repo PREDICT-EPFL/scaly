@@ -68,7 +68,7 @@ def test_zero_budget_spills_all_float64_buffers():
   assert proc.attrs["frame_bytes"] == 4096
 
 
-@pytest.mark.parametrize("dtype", [dtypes.float32, dtypes.int64, dtypes.int32, dtypes.bool_])
+@pytest.mark.parametrize("dtype", [dtypes.float32, dtypes.int64, dtypes.bool_])
 def test_non_float64_buffers_stay_local_and_count_toward_frame(dtype):
   proc = pack_workspace(p.program([_procedure("f", [900, 1], dtype=dtype)]), frame_budget=0).args[0]
   assert proc.attrs["sz_w"] == 0

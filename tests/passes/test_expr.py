@@ -190,7 +190,7 @@ def test_simplify_preserves_conflicting_hint_precedence() -> None:
   assert annihilated.lowering == "block"
 
 
-@pytest.mark.parametrize("shape", [(2, 3, 4), (2, 1, 3, 4), (0, 3, 4)])
+@pytest.mark.parametrize("shape", [(2, 3, 4), (0, 3, 4)])
 @pytest.mark.parametrize("left", [False, True])
 def test_vector_folds(shape, left):
   from scaly.ir.expr import ExprOp

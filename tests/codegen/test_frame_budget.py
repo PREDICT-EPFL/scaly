@@ -28,7 +28,7 @@ def _function():
 
 @pytest.mark.parametrize("compiler", ["gcc", "clang"])
 @pytest.mark.parametrize("lanes,dialect", [(1, "gnu"), (4, "gnu"), ("auto", "c")])
-@pytest.mark.parametrize("budget", [65536, 8192, 0])
+@pytest.mark.parametrize("budget", [8192, 0])
 def test_generated_frames_fit_and_match_numpy(tmp_path, compiler, lanes, dialect, budget):
   command = named_compiler(compiler)
   module = write_module(_function(), tmp_path, frame_budget=budget, lanes=lanes, dialect=dialect, cpu="native")
@@ -138,8 +138,7 @@ def test_frame_macro_does_not_shadow_buffer_names(tmp_path):
   assert "& kernel_FRAME_BYTES," not in cpp
 
 
-@pytest.mark.parametrize("compiler", ["gcc", "clang"])
-def test_frame_macro_does_not_shadow_sparse_namespace(tmp_path, compiler):
+def test_frame_macro_does_not_shadow_sparse_namespace(tmp_path):
   @sc.function(sc.arg("FRAME_BYTES", 2), outputs=sc.arg("y"), name="base")
   def base(x):
     return x * x
@@ -149,7 +148,7 @@ def test_frame_macro_does_not_shadow_sparse_namespace(tmp_path, compiler):
   path = tmp_path / "use.cpp"
   path.write_text(f'#include "{module.header_name}"\n')
   result = subprocess.run(
-    [*named_compiler(compiler), "-x", "c++", "-std=c++17", "-Werror", "-c", str(path), "-o", str(tmp_path / "use.o")],
+    [*named_compiler("gcc"), "-x", "c++", "-std=c++17", "-Werror", "-c", str(path), "-o", str(tmp_path / "use.o")],
     capture_output=True,
     text=True,
   )

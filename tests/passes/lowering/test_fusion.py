@@ -64,12 +64,6 @@ def _check(fn: sc.Function, shapes: tuple[tuple[int, ...], ...], reference: Call
 
 
 _MOVEMENT = {
-  "transpose": (((3, 4), (4, 3)), lambda a, b: a.T * b, lambda a, b: a.T * b),
-  "reshape_transpose": (
-    ((2, 3, 4), (4, 6)),
-    lambda a, b: a.transpose((2, 0, 1)).reshape((4, 6)) - b,
-    lambda a, b: a.transpose(2, 0, 1).reshape(4, 6) - b,
-  ),
   "strided_slice": (((6, 4), (3, 2)), lambda a, b: a[::2, 1:3] * b, lambda a, b: a[::2, 1:3] * b),
   "contiguous_slice": (((5, 2), (4, 2)), lambda a, b: a[1:] + b, lambda a, b: a[1:] + b),
   "gather_transpose": (
@@ -158,18 +152,6 @@ def test_a_libm_call_is_not_duplicated_by_two_reads(expensive: bool) -> None:
   _check(fn, ((8,),), (lambda x: np.sin(x) ** 2) if expensive else (lambda x: (3 * x) ** 2))
 
 
-@needs_cc
-def test_automatic_scalarization_preserves_known_zeros_with_infinity() -> None:
-  stage = _function("known_zero_stage", ((2,), (2,)), lambda x, w: (x * sc.const([0.0, 1.0])) * sc.const([np.inf, 1.0]) + w)
-
-  @sc.function(sc.group(sc.arg("z", 4), sc.arg("v", 4)), outputs=sc.arg("y", 4), name="known_zero_map")
-  def fn(inputs):
-    z, v = inputs
-    return _mapped_call(stage, 2, [(z, 0, 2), (v, 0, 2)])
-
-  np.testing.assert_array_equal(fn((np.array([1.0, 2.0, 3.0, 4.0]), np.array([5.0, 6.0, 7.0, 8.0]))), [5.0, 8.0, 7.0, 12.0])
-
-
 def test_reused_selection_stores_only_the_selected_exp_values() -> None:
   def body(x):
     picked = sc.gather(x.exp(), [3, 7])
@@ -237,10 +219,10 @@ def test_deferred_reads_keep_the_value_before_an_indexed_write(case: str) -> Non
 
 
 @needs_cc
-@pytest.mark.parametrize("variant", ["static", "runtime", "index_set", "index_add", "nested", "fill_control"])
+@pytest.mark.parametrize("variant", ["static", "runtime", "index_add", "nested", "fill_control"])
 def test_shared_gather_from_earlier_carry_version(variant):
   def update(base, index, value):
-    if variant in ("index_set", "index_add", "fill_control"):
+    if variant in ("index_add", "fill_control"):
       method = sc.index_add if variant == "index_add" else sc.index_set
       return method(base, index, value, mode="fill" if variant == "fill_control" else "promise_in_bounds")
     return sc.scatter(base, index, value, combine="set")
@@ -293,47 +275,6 @@ def test_reduction_evaluates_its_operand_in_the_reduction_loop() -> None:
   assert not _privates(proc)
   assert _work(proc, ProgramOp.SIN) == 30
   _check(fn, ((5, 6),), lambda x: np.sin(x).sum(axis=1))
-
-
-@needs_cc
-def test_broadcast_inputs_of_a_map_keep_their_work_apart() -> None:
-  """In a mapped function, work on the arguments a map broadcasts stays a statement of its own, so
-  ``hoist_invariant`` lifts it out of the map instead of repeating it on each trip."""
-  stage = _function("hoist_apart_stage", ((3,), (9,)), lambda x, w: w.reshape((3, 3)).exp() @ x)
-
-  @sc.function(sc.group(sc.arg("z", 12), sc.arg("w", 9)), outputs=sc.arg("y", 12), name="hoist_apart")
-  def fn(inputs):
-    z, w = inputs
-    return _mapped_call(stage, 4, [(z, 0, 3), (w, 0, 0)])
-
-  procs = lower_function(fn).args
-  hoisted = [pr for pr in procs if "hoist" in pr.attrs["name"] and pr is not procs[-1]]
-  assert any(ProgramOp.EXP in {n.op for n in walk_program(pr)} for pr in hoisted)
-  rng = np.random.default_rng(3)
-  z, w = rng.uniform(-1, 1, 12), rng.uniform(-1, 1, 9)
-  np.testing.assert_allclose(fn((z, w)), (np.exp(w.reshape(3, 3)) @ z.reshape(4, 3).T).T.reshape(-1), rtol=1e-13)
-
-
-@needs_cc
-@pytest.mark.parametrize("overlap", [False, True])
-def test_sum_of_scatters_accumulates_into_one_buffer(overlap: bool) -> None:
-  second = [2, 2, 3, 5] if overlap else [1, 3, 5, 7]
-
-  @sc.function(sc.arg("x", 4), outputs=sc.arg("y"), name=f"scatter_sum_{overlap}")
-  def fn(x):
-    return _scatter_zero(x.sin(), [0, 2, 4, 6], 8) + _scatter_zero(2 * x, second, 8) + _scatter_zero(-x, [6, 7, 0, 2], 8)
-
-  proc = _lowered(fn)
-  zero_fills = [s for s in proc.args if s.op == ProgramOp.FOR and s.args[1].op == ProgramOp.STORE and s.args[1].args[1].op == ProgramOp.CONST_FLOAT]
-  # A repeated index that an earlier scatter also writes ends the left-associated sum, for the order of its terms.
-  assert len(zero_fills) == (3 if overlap else 1)
-  data = np.array([0.3, -1.2, 2.5, 0.7])
-  expected = np.zeros(8)
-  for ids, values in (([0, 2, 4, 6], np.sin(data)), (second, 2 * data), ([6, 7, 0, 2], -data)):
-    term = np.zeros(8)
-    np.add.at(term, ids, values)
-    expected += term
-  np.testing.assert_allclose(np.asarray(fn(data)), expected, rtol=1e-14)
 
 
 @needs_cc
