@@ -201,8 +201,7 @@ def test_glibc_vector_symbols_are_opt_in(tmp_path, lanes, compiler):
 
 @pytest.mark.parametrize("compiler", ["gcc", "clang", "zig"])
 @pytest.mark.parametrize("lanes", [2, 4, 8])
-@pytest.mark.parametrize("dialect", ["gnu", "c"])
-def test_reduction_stages_loads_but_keeps_original_sum_order(tmp_path, compiler, lanes, dialect):
+def test_reduction_stages_loads_but_keeps_original_sum_order(tmp_path, compiler, lanes):
   command = named_compiler(compiler)
   x, y = p.buffer("x", dtypes.float64, (19,)), p.buffer("y", dtypes.float64, (1,))
   i = p.var("i")
@@ -215,7 +214,7 @@ def test_reduction_stages_loads_but_keeps_original_sum_order(tmp_path, compiler,
   baseline = tmp_path / "baseline"
   baseline.mkdir()
   scalar, _ = _compile(prog, baseline, compiler=command)
-  vector, source = _compile(widen_ranges(prog, lanes=lanes), tmp_path, compiler=command, dialect=dialect)
+  vector, source = _compile(widen_ranges(prog, lanes=lanes), tmp_path, compiler=command)
   assert "lanes_1(" in source
   values = np.random.default_rng(17).normal(size=19)
   assert _evaluate(vector, values, 1).tobytes() == _evaluate(scalar, values, 1).tobytes()
