@@ -64,10 +64,10 @@ jobs:
         with:
           enable-cache: false
 
-      - name: uv sync (Python/core only)
+      - name: uv sync (Python/core and toolchain)
         env:
           SCALY_BUILD_SOLVERS: skip
-        run: uv sync --frozen
+        run: uv sync --frozen --extra toolchain
 
       - name: Ruff lint
         if: ${{ !cancelled() }}
@@ -92,6 +92,17 @@ jobs:
       - name: Pytest node-ID baseline
         if: ${{ !cancelled() }}
         run: uv run pytest --collect-only -q
+
+      - name: Cortex-M build tools
+        run: |
+          uv run --frozen --extra toolchain zig version
+          nm --version
+          size --version
+          readelf --version
+      - name: Build float32 oracles for Cortex-M4F and M7
+        run: uv run --frozen --extra toolchain pytest -q -s tests/codegen/test_embedded.py --basetemp=embedded-build
+      - name: Record flash and RAM
+        run: find embedded-build -name report.txt -exec cat {} + >> "$GITHUB_STEP_SUMMARY"
 
   docs:
     needs: queue
