@@ -325,7 +325,8 @@ def _local_seed_colors(
   return (mask.tocsr(), colors) if colors and max(colors) + 1 < nseed else None
 
 
-def _add_tangents(total: Expr, tangent: Expr) -> Expr:
+def _accumulate(total: Expr, tangent: Expr) -> Expr:
+  """Add derivatives without letting a proven-zero term erase an existing condition."""
   if _mask_of(total) is not None and _prunable_support(tangent) == frozenset():
     return total
   if _mask_of(tangent) is not None and _prunable_support(total) == frozenset():
@@ -403,7 +404,7 @@ def _vmap_jvp_many(
       if all(_is_zero_const(part) for part in parts):
         continue
       term = carry_masks(parts, lambda pieces: (pieces[0] if period == 1 else stack(pieces, axis=2)).reshape((nseed, length * slice_size)))
-      ret = term if ret is None else _add_tangents(ret, term)
+      ret = term if ret is None else _accumulate(ret, term)
       continue
 
     # Local coloring of the callee's Jacobian tile w.r.t. this formal. When this gives c_f < nseed
@@ -411,7 +412,7 @@ def _vmap_jvp_many(
     # size O(c_f) instead of O(nseed). The global compressed JVP is then assembled back by, for
     # each local color `c_local`, gathering the unique nonzero column of `actual_tan` for each
     # output row and multiplying with the per-iter compressed-JVP slice.
-    local = _local_seed_colors(callee, output_idx, formal_idx, nseed) if _mask_of(actual_tan) is None else None
+    local = _local_seed_colors(callee, output_idx, formal_idx, nseed)
     if local is not None:
       local_mask, local_colors = local
       c_f = max(local_colors) + 1
@@ -454,17 +455,20 @@ def _vmap_jvp_many(
           sources = np.broadcast_to(np.arange(length * active_count * slice_size).reshape(1, length, active_count, slice_size), chosen.shape)
           targets = np.broadcast_to(np.arange(nseed * length * slice_size).reshape(nseed, length, 1, slice_size), chosen.shape)
           term = move_mask(mapped_flat, lambda t: scatter(gather(t, sources[chosen]), targets[chosen], (nseed, length * slice_size)))
-          ret = term if ret is None else _add_tangents(ret, term)
+          ret = term if ret is None else _accumulate(ret, term)
           continue
       for pos, c_local in enumerate(active):
         uj_arr = unique_j[c_local].reshape(1, 1, slice_size)
         flat_idx = (c_arr * outer_size + start + it_arr * stride + uj_arr).reshape(-1)
-        gathered = gather(actual_tan, flat_idx).reshape((nseed, length, slice_size))
+        gathered = move_mask(actual_tan, lambda t: gather(t, flat_idx).reshape((nseed, length, slice_size)))
         if _prunable_support(gathered) == frozenset():
           continue
         mapped_slice = move_mask(mapped_3d, lambda t: t[:, pos, :].reshape((1, length, slice_size)))
-        contribution = move_mask(_masked(mapped_slice, lambda inner: gathered * inner), lambda t: t.reshape((nseed, length * slice_size)))
-        ret = contribution if ret is None else _add_tangents(ret, contribution)
+        contribution = move_mask(
+          _masked(gathered, lambda coefficient: _masked(mapped_slice, lambda inner: coefficient * inner)),
+          lambda t: t.reshape((nseed, length * slice_size)),
+        )
+        ret = contribution if ret is None else _accumulate(ret, contribution)
       continue
 
     it_arr = np.arange(length, dtype=np.int64)[:, None, None]
@@ -486,7 +490,7 @@ def _vmap_jvp_many(
     )
     mapped_flat = mapped_call(inner_fn, length, [*primal_specs, *seed_specs])
     term = move_mask(mapped_flat, lambda t: t.reshape((length, nseed, slice_size)).transpose((1, 0, 2)).reshape((nseed, length * slice_size)))
-    ret = term if ret is None else _add_tangents(ret, term)
+    ret = term if ret is None else _accumulate(ret, term)
   ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype) if ret is None else ret
   ret = _pack_jvp_maps(callee, ret, maps)
   return ret

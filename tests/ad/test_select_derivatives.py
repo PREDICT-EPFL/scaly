@@ -685,6 +685,41 @@ def test_zero_adjoint_term_does_not_erase_map_condition() -> None:
   np.testing.assert_allclose(g, [0.0, 0.25])
 
 
+@pytest.mark.parametrize("form", ["call", "map", "two_maps"])
+def test_zero_adjoints_of_other_results_keep_the_shared_arguments_mask(form: str) -> None:
+  @sc.function(
+    sc.arg("u", (2,) if form == "call" else ()),
+    sc.arg("w", (2,) if form == "call" else ()),
+    outputs=sc.group(sc.arg("a"), sc.arg("b")),
+    name="sd_independent_results",
+  )
+  def two(u: sc.Expr, w: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    return sc.where(u > 0.0, u, 0.0), w * w
+
+  @sc.function(sc.arg("x", 2), outputs=sc.group(*(sc.arg(k) for k in ("y", "g", "j", "h", "inline"))), name=f"sd_zero_adjoint_{form}")
+  def derivatives(x: sc.Expr) -> tuple[sc.Expr, ...]:
+    roots = x.sqrt()
+    if form == "call":
+      a, b = two(roots, x + 1.0)
+    else:
+      a, b = sc.vmap(two, 2)(roots, x + 1.0)
+      if form == "two_maps":
+        a, _ = sc.vmap(two, 2)(roots, x + 2.0)
+    y = a.sum() + b.sum()
+    inline = sc.where(roots > 0.0, roots, 0.0).sum() + sc.sumsqr(x + 1.0)
+    return y, sc.gradient(y, x), sc.jacobian(y, x), sc.hessian(y, x), sc.gradient(inline, x)
+
+  for point in (np.array([0.0, 4.0]), np.array([-1.0, 4.0])):
+    _, grad, jac, hess, inline = (np.asarray(v) for v in derivatives(point))
+    expected = 2.0 * (point + 1.0) + [0.0, 0.25]
+    np.testing.assert_array_equal(grad, expected)
+    np.testing.assert_array_equal(grad, jac.reshape(-1))
+    np.testing.assert_array_equal(grad, inline)
+    np.testing.assert_array_equal(hess, np.diag([2.0, 2.0 - 1.0 / 32.0]))
+  numerical = finite_difference(lambda v: np.asarray(derivatives(v)[0]), point).reshape(-1)
+  np.testing.assert_allclose(grad, numerical, rtol=1e-7, atol=1e-9)
+
+
 def test_selected_tangent_survives_constant_matmul() -> None:
   matrix = np.array([[1.0, 2.0], [3.0, 4.0]])
 
@@ -928,6 +963,30 @@ def test_forward_helper_flags_only_masked_formals() -> None:
   sc.jvp(mix(sc.where(x > 0.0, x, 0.0), x * 3.0, x * 5.0), x, sc.const(1.0))
   helpers = [helper[0] for key, helper in mix.instantiate()._memo.helpers.items() if key.role == "forward" and isinstance(helper, tuple)]
   assert [helper.input_names for helper in helpers] == [("a", "b", "fwd:a", "mask:fwd:a")]
+
+
+@pytest.mark.parametrize("kind", ["jacobian", "hessian"])
+def test_selected_map_seeds_keep_local_coloring_code_size(kind: str) -> None:
+  from scaly.codegen import render_c_source
+
+  @sc.function(sc.arg("x", 4), sc.arg("u", 2), outputs=sc.arg("y"), name="sd_colored_stage")
+  def stage(x: sc.Expr, u: sc.Expr) -> sc.Expr:
+    velocity = x[2:]
+    return sc.concat([x[:2] + 0.05 * velocity, velocity + 0.05 * (u - 0.1 * sc.sumsqr(velocity) * velocity)])
+
+  length = 40
+  sources = []
+  for clipped in (False, True):
+
+    @sc.function(sc.arg("z", 6 * length), outputs=sc.arg("d"), name=f"sd_colored_{kind}_{clipped}")
+    def derivatives(z: sc.Expr) -> sc.Expr:
+      x, u = z[: 4 * length].reshape((length, 4)), z[4 * length :].reshape((length, 2))
+      u = sc.maximum(sc.minimum(u, 1.0), -1.0) if clipped else u
+      y = sc.vmap(stage, length)(x, u)
+      return sc.jacobian(y, z) if kind == "jacobian" else sc.hessian(sc.sumsqr(y), z)
+
+    sources.append(render_c_source(derivatives))
+  assert len(sources[1]) < 8 * len(sources[0]), (len(sources[0]), len(sources[1]))
 
 
 def test_forward_map_keeps_activity_when_another_formal_has_zero_partial() -> None:

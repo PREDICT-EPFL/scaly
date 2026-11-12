@@ -9,13 +9,12 @@ import numpy as np
 from ..ir.expr import Expr, ExprOp, _uniform, gather, matmul, pack, scatter, topo, to_dense, values, where, zeros_like
 from ..ir.support import slice_indices, support_indices
 from ..ir.types import CanonicalPattern, stored_indices
-from .calls import _call_vjp, _cond_vjp, _vmap_vjp
+from .calls import _accumulate, _call_vjp, _cond_vjp, _vmap_vjp
 from .rules import (
   ELEMENTWISE,
   _mask_of,
   _masked,
   _nonzero_mask,
-  accumulate,
   carry_mask,
   cotangent,
   _unbroadcast,
@@ -53,7 +52,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
       raise ValueError(f"cotangent for output shape {out.shape} has shape {cot.shape}")
     if out.type.pattern is not None and cot.type.pattern is not out.type.pattern:
       cot = _on_pattern(cot, out)
-    adjoints[out.id] = cot if out.id not in adjoints else adjoints[out.id] + cot
+    adjoints[out.id] = cot if out.id not in adjoints else _accumulate(adjoints[out.id], cot)
 
   for expr in reversed(nodes):
     cot = adjoints.get(expr.id)
@@ -68,7 +67,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
     if expr.op == ExprOp.VMAP:
       for arg, arg_cot in _vmap_vjp(expr, cot, wrts, dep_memo, pullback=vjp):
         if arg.id in expr_ids:
-          adjoints[arg.id] = arg_cot if arg.id not in adjoints else accumulate(adjoints[arg.id], arg_cot)
+          adjoints[arg.id] = arg_cot if arg.id not in adjoints else _accumulate(adjoints[arg.id], arg_cot)
       continue
     active = (
       tuple(i for i, arg in enumerate(expr.args) if arg.type.dtype.is_floating and needed(arg))
@@ -84,7 +83,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
         elif arg.type.pattern is None and arg_cot.type.pattern is not None:
           (arg_cot,) = carry_mask(arg_cot, lambda c: (to_dense(c),))
           assert arg_cot is not None
-        adjoints[arg.id] = arg_cot if arg.id not in adjoints else accumulate(adjoints[arg.id], arg_cot)
+        adjoints[arg.id] = arg_cot if arg.id not in adjoints else _accumulate(adjoints[arg.id], arg_cot)
 
   return tuple(adjoints.get(wrt.id, zeros_like(wrt)) for wrt in wrts)
 

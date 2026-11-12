@@ -452,4 +452,9 @@ Reverse matrix products can propagate a nonfinite partial through a zero
 coefficient. For example, `(x @ M).sqrt().sum()` with a zero column in `M` can
 give a NaN gradient even when the composed function has a finite derivative.
 
+Dense matrix products also drop a select's condition in reverse mode. For
+`sc.where(x > 0, x.sqrt() @ sc.const(np.ones((2, 2))), 0.0).sum()` at
+`x = [0.0, 0.0]`, a forward product with seed `[1.0, 1.0]` is zero, but
+the gradient is `[NaN, NaN]`.
+
 See [How differentiation works](../how_it_works/autodiff.md) for the algorithms.

@@ -1219,6 +1219,9 @@ def where(condition: Any, x: Any, y: Any) -> Expr:
   derivatives of the map's arguments. A selected zero tangent guards later partials, including across
   ordinary and mapped calls:
   ``sqrt(where(x > 0, x, 0))`` has derivative zero at ``x = -1`` in both modes.
+  Dense matrix products drop the condition in reverse mode: for a 2-by-2 matrix of ones ``M``,
+  ``where(x > 0, sqrt(x) @ M, 0).sum()`` at ``x = [0, 0]`` gives a zero forward product
+  with seed ``[1, 1]``, but gradient ``[NaN, NaN]``.
   """
   condition = _condition(condition)
   x, y = _operands(x, y)
