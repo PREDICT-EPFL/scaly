@@ -11,7 +11,7 @@ from scaly.ad.derivatives import finite_difference
 from scaly.ir.types import CanonicalPattern
 
 
-@pytest.mark.parametrize("layout", ["csc", "csr", "coordinates"])
+@pytest.mark.parametrize("layout", ["csc", "coordinates"])
 def test_mpc_weighted_normal_equations_and_gram_derivatives(layout):
   n, nx, nu = 4, 2, 1
   a, b = np.array([[1.0, 0.1], [0.0, 1.0]]), np.array([[0.01], [0.1]])

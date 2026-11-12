@@ -15,6 +15,8 @@ from scaly.passes.lowering import lower_function
 DATA = Path(__file__).with_name("data") / "maros_meszaros"
 PROBLEMS = sorted(p.stem for p in DATA.glob("*.npz") if not p.stem.endswith("_patterns"))
 assert len(PROBLEMS) == 48
+# Each of these repeats the KKT structure of a kept problem in its family; S268 is HS268 byte for byte.
+PROBLEMS = [name for name in PROBLEMS if name not in {"CVXQP1_S", "DUAL2", "DUALC2", "DUALC5", "HS52", "HS53", "PRIMALC1", "S268"}]
 
 
 def _problem(name):

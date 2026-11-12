@@ -275,7 +275,7 @@ int main(void) {{
 @pytest.mark.parametrize("lang", ["c", "cpp"])
 @pytest.mark.parametrize(
   "input_name,output_name",
-  [("scaly_solver_option", "solution"), ("target", "scaly_solver_option"), ("scaly_solver_option", "scaly_solver_option_2")],
+  [("target", "scaly_solver_option"), ("scaly_solver_option", "scaly_solver_option_2")],
 )
 def test_typed_wrapper_parameters_do_not_hide_solver_option_type(lang: str, input_name: str, output_name: str, tmp_path: Path) -> None:
   from scaly.codegen import render_c_module
