@@ -8,9 +8,9 @@ import subprocess
 import sys
 
 import numpy as np
+from scipy import sparse
 import pytest
 
-from scaly.function.model import as_concrete
 from scaly.function.concrete import ConcreteFunction
 import scaly as sc
 from scaly.codegen.solver import SolverWrapperCtx
@@ -309,11 +309,7 @@ def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pyte
       return ((x - target) ** 2).sum(), h_eq
 
     shf = sc.sparse_lagrangian_hessian(base, "x")
-    sp = as_concrete(shf).output_sparsities[0]
-    assert sp is not None
-    dense = np.zeros(sp.shape)
-    dense[np.asarray(sp.rows), np.asarray(sp.cols)] = np.asarray(shf(*(xv, (np.array(1.0), lam))))
-    return dense
+    return sparse.coo_array(shf(*(xv, (np.array(1.0), lam)))).toarray()
 
   lam = np.array([0.8, -1.7])
   np.testing.assert_allclose(hess_dense(True, mapped_out["x"], lam), hess_dense(False, mapped_out["x"], lam), rtol=1e-10, atol=1e-12)

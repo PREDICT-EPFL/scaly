@@ -10,6 +10,7 @@ import scaly as sc
 from scaly.function import Tree
 from scaly.function.concrete import ConcreteFunction
 from scaly.function.tree import NumericalArray
+from scaly.ir.types import CanonicalPattern
 from scaly.solvers.stats import SolverStats
 
 
@@ -101,8 +102,8 @@ if TYPE_CHECKING:
   assert_type(sc.vmap(dense_grad, 2)(np.ones((2, 3))), np.ndarray)
   assert_type(sc.jacobian(dense_none_hole)(np.ones(3)), np.ndarray)
   assert_type(sc.hessian(dense_hole)(np.ones(3)), np.ndarray)
-  assert_type(sc.sparse_jacobian(dense_hole)(np.ones(3)), np.ndarray)
-  assert_type(sc.sparse_hessian(dense_none_hole)(np.ones(3)), np.ndarray)
+  assert_type(sc.sparse_jacobian(dense_hole)(np.ones(3)), NumericalArray)
+  assert_type(sc.sparse_hessian(dense_none_hole)(np.ones(3)), NumericalArray)
   assert_type(sc.forward(dense_hole)(np.ones(3), np.ones(3)), NumericalArray)
   assert_type(sc.adjoint(dense_none_hole)(np.ones(3), np.ones(())), np.ndarray)
   assert_type(sc.lagrangian_hessian(dense_hole)(np.ones(3), np.ones(())), np.ndarray)
@@ -336,8 +337,8 @@ if TYPE_CHECKING:
   assert_type(
     sc.forward(template), sc.Function[tuple[sc.Expr, sc.Expr, sc.Expr], tuple[NumericalArray, np.ndarray, NumericalArray], sc.Expr, np.ndarray]
   )
-  assert_type(template.sparsity(np.zeros(3), np.array(2.0)), sc.SparsityPattern | None)
-  assert_type(template.sparsity(sc.sym("x", 3), sc.sym("p", ())), sc.SparsityPattern | None)
+  assert_type(template.sparsity(np.zeros(3), np.array(2.0)), CanonicalPattern | None)
+  assert_type(template.sparsity(sc.sym("x", 3), sc.sym("p", ())), CanonicalPattern | None)
   template.sparsity(np.zeros(3))  # ty: ignore[no-matching-overload]
   template.sparsity(sc.sym("x", 3), np.array(2.0))  # ty: ignore[no-matching-overload]
 

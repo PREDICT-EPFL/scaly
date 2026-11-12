@@ -76,7 +76,7 @@ def test_sparse_hessian_triangle_c_source_has_no_full_nnz_buffer() -> None:
     [sc.factory.SpHess("gamma", "z", triangle="lower")],
     aux={"gamma": ["f", "g"]},
   )
-  full_sp, lower_sp = as_concrete(full).output_sparsities[0], as_concrete(lower).output_sparsities[0]
+  full_sp, lower_sp = as_concrete(full).outputs[0].type.pattern, as_concrete(lower).outputs[0].type.pattern
   assert full_sp is not None and lower_sp is not None
   assert lower_sp.nnz < full_sp.nnz
   shared_index = 2 * length
@@ -172,24 +172,20 @@ def _rk4_bicycle_eq_vmap(horizon: int) -> sc.Function:
   return eq
 
 
-def test_csr_csc_header_tables_carry_value_perm_for_non_row_major_coo() -> None:
-  """The rendered header's CSR/CSC index tables are sorted, but the compact value buffer stays in
-  COO order — piece-ordered on the merged vmap path, i.e. NOT row-major — so the header must also
-  emit ``*_csr_val_perm`` / ``*_csc_val_perm`` tables (``values_csr[k] = values[csr_val_perm[k]]``).
-  Reconstructing the dense Jacobian through both compressed formats must match the COO scatter."""
+def test_mapped_spjac_values_follow_the_header_tables_of_their_layout() -> None:
+  """On the merged map path the values come straight out in the declared layout, so walking the
+  header's compressed tables over the value buffer rebuilds the dense Jacobian with no permutation."""
 
   import re
 
   from scaly.codegen.aot import render_c_module
+  from scaly.ir.expr import topo
 
   N = 3
   fn = _rk4_bicycle_eq_vmap(N)
-  spjf = fn.factory(f"trk_vmap_valperm_N{N}", ["z", "p"], [sc.factory.SpJac("eq", "z")])
-  sp = as_concrete(spjf).output_sparsities[0]
-  assert sp is not None
-  coo = list(zip(sp.rows, sp.cols))
-  assert coo != sorted(coo), "test needs a non-row-major COO ordering to be meaningful"
-
+  spjf = fn.factory(f"trk_vmap_csc_N{N}", ["z", "p"], [sc.factory.SpJac("eq", "z")])
+  dense_fn = fn.factory(f"trk_vmap_dense_N{N}", ["z", "p"], [sc.factory.Jac("eq", "z")])
+  assert any(node.op == sc.ExprOp.VMAP for node in topo(as_concrete(spjf).outputs))
   module = render_c_module(spjf, header_name="t.h", source_name="t.c")
 
   def table(name: str) -> np.ndarray:
@@ -199,23 +195,15 @@ def test_csr_csc_header_tables_carry_value_perm_for_non_row_major_coo() -> None:
 
   rng = np.random.default_rng(3)
   zv, pv = rng.normal(size=RK4_NZ * (N + 1)), rng.normal(size=RK4_NX * (N + 1) + RK4_N_PARAMS)
-  values = np.asarray(spjf(*(zv, pv)), dtype=np.float64).reshape(-1)
-  dense_ref = np.zeros(sp.shape)
-  dense_ref[np.asarray(sp.rows), np.asarray(sp.cols)] = values
-
-  row_ptr, col_ind, csr_perm = table("csr_row_ptr"), table("csr_col_ind"), table("csr_val_perm")
-  dense_csr = np.zeros(sp.shape)
-  for r in range(sp.shape[0]):
-    for k in range(row_ptr[r], row_ptr[r + 1]):
-      dense_csr[r, col_ind[k]] = values[csr_perm[k]]
-  np.testing.assert_allclose(dense_csr, dense_ref, rtol=0, atol=0)
-
-  col_ptr, row_ind, csc_perm = table("csc_col_ptr"), table("csc_row_ind"), table("csc_val_perm")
-  dense_csc = np.zeros(sp.shape)
-  for c in range(sp.shape[1]):
-    for k in range(col_ptr[c], col_ptr[c + 1]):
-      dense_csc[row_ind[k], c] = values[csc_perm[k]]
-  np.testing.assert_allclose(dense_csc, dense_ref, rtol=0, atol=0)
+  result = spjf(*(zv, pv))
+  dense_ref = np.asarray(dense_fn(*(zv, pv)))
+  ptr, ind = table("csc_col_ptr"), table("csc_row_ind")
+  rebuilt = np.zeros(dense_ref.shape)
+  for outer in range(len(ptr) - 1):
+    for k in range(ptr[outer], ptr[outer + 1]):
+      rebuilt[ind[k], outer] = result.data[k]
+  np.testing.assert_allclose(rebuilt, dense_ref, rtol=1e-12, atol=1e-12)
+  np.testing.assert_allclose(result.toarray(), dense_ref, rtol=1e-12, atol=1e-12)
 
 
 def test_spjac_keeps_constant_loc_on_rk4_race_car_vmap() -> None:

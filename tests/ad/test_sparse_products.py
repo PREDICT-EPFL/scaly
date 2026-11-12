@@ -353,7 +353,7 @@ def test_sampled_product_both_operand_derivatives_and_hessian_match_differences(
   hess = sc.sparse_hessian(loss)
   pattern = hess.sparsity()
   assert pattern is not None
-  actual = sparse.coo_array((hess(v), (pattern.rows, pattern.cols)), shape=pattern.shape).toarray()
+  actual = sparse.coo_array(hess(v)).toarray()
   np.testing.assert_allclose(actual, expected, atol=1e-8)
 
 
@@ -380,4 +380,4 @@ def test_sampled_product_derivative_sparsity_does_not_join_unsampled_rows(monkey
   assert hp is not None and hp.nnz == n
   w = np.linspace(0.2, 0.8, n)
   expected = -(np.sin(w[:, None] * b.toarray()) * b.toarray() ** 2).sum(axis=1)
-  np.testing.assert_allclose(hess(w), expected[np.asarray(hp.rows)], atol=1e-12)
+  np.testing.assert_allclose(sparse.coo_array(hess(w)).toarray(), np.diag(expected), atol=1e-12)

@@ -8,13 +8,13 @@ from collections.abc import Callable, Iterable, Sequence
 import numpy as np
 
 from ...ir import program as p
-from ...ir.expr import Expr, ExprOp, OP_INFO, callees_of, invocation_key
+from ...ir.expr import Expr, ExprOp, OP_INFO, callees_of, gather, invocation_key, topo
 from ...ir.match import Pattern, rewrite
 from ...function.concrete import ConcreteFunction
 from ...function.extern import _Extern
 from ...function.model import Function, as_concrete
 from ...function.tree import flat_tree
-from ...ir.layout import sparse_layout
+from ...ir.layout import SparseLayout, sparse_layout
 from ..program import ProgramObserver, optimize_program
 from ..program._common import rebuild_program, substitute_var, trip_count
 from ...ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
@@ -116,6 +116,18 @@ def _size_of(shape: tuple[int, ...]) -> int:
   return n
 
 
+def _declared_values(stored: Expr, layout: SparseLayout) -> Expr | None:
+  """Dense values already in ``layout``'s order: the stored values when the layout is canonical, or,
+  when they are gathered, their source gathered straight into the declared order."""
+  order, identity = np.asarray(layout.order, dtype=np.int64), np.arange(len(layout.order))
+  if np.array_equal(order, identity):
+    return stored
+  if stored.op != ExprOp.GATHER or stored.size != len(order) or stored.args[0].type.pattern is not None:
+    return None
+  source, indices = stored.args[0], stored.attrs["indices"].reshape(-1)[order]
+  return source if source.size == len(order) and np.array_equal(indices, identity) else gather(source, indices)
+
+
 def _normalize_function(fun: ConcreteFunction, *, residuals: bool = False) -> ConcreteFunction:
   """Simplify the body and drop its derivative rules; a called procedure also writes its residuals."""
   results = fun.results if residuals else fun.outputs
@@ -135,7 +147,6 @@ def _normalize_function(fun: ConcreteFunction, *, residuals: bool = False) -> Co
   return fun._replace(
     outputs=outputs,
     output_tree=flat_tree(fun.result_names, tuple(out.type for out in outputs), layouts=layouts),
-    output_sparsities=(*fun.output_sparsities, *(None,) * extra),
     output_coloring_widths=(*fun.output_coloring_widths, *(None,) * extra),
     rules=None,
   )
@@ -232,6 +243,9 @@ class LowerCtx:
     self._orders: dict[int, np.ndarray] = {}
     self._canonical: dict[int, ProgramNode] = {}
     self._output_orders: dict[int, np.ndarray] = {}
+    # What each output computes: its expression, or the values its declared layout stores as they are.
+    self._computed: list[Expr] = []
+    self._declared: dict[str, Expr] = {}
     self._shared_indices: dict[tuple[int, ...], ProgramNode] = {}
 
   # --- declarations ---------------------------------------------------------
@@ -259,6 +273,11 @@ class LowerCtx:
       )
       self.params.append(buf)
       self.buffers[name] = buf
+      if expr.op == ExprOp.PACK and isinstance(layout, SparseLayout) and (declared := _declared_values(expr.args[0], layout)) is not None:
+        # These dense values, as they are, are the packed value in the declared order.
+        self._declared[name] = declared
+        expr, layout = declared, None
+      self._computed.append(expr)
       if (
         expr.op in (ExprOp.INPUT, ExprOp.CONST)
         or expr.id in seen
@@ -272,6 +291,8 @@ class LowerCtx:
 
   def emit_outputs(self) -> None:
     for name, expr, layout in zip(self.output_names, self.fun.outputs, self.fun.output_tree.layouts, strict=True):
+      if name in self._declared:
+        expr, layout = self._declared[name], None
       src = self.value_buffers.get(expr.id)
       if src is None:
         raise LoweringError(f"output {name!r} expression was not lowered")
@@ -290,7 +311,8 @@ class LowerCtx:
   # --- body -----------------------------------------------------------------
 
   def emit_body(self) -> None:
-    for node in self.fun.nodes:
+    # What the outputs compute, which leaves out the canonical order an output's declared layout replaces.
+    for node in topo(self._computed):
       if node.id in self.value_buffers:
         continue  # input (or already lowered)
       rule = _RULES.get(ExprOp(node.op))

@@ -30,13 +30,11 @@ from scaly.codegen.c import (
   _includes,
   _render_entry,
   _render_raw_callee,
-  entry_workspace,
   render_program_c,
 )
 from scaly.codegen.casadi import (
   casadi_declarations,
   casadi_defines,
-  casadi_output_sparsities,
   casadi_layout,
   render_casadi_queries,
 )
@@ -57,13 +55,11 @@ from scaly.passes.program import ProgramObserver
 from scaly.solvers.graph import solver_backends_used
 from scaly.solvers.solver import Solver
 from scaly.solvers.stats import stats_c_defs
-from scaly.utils.names import NameScope
 
 if TYPE_CHECKING:
   from collections.abc import Callable
 
   from scaly.ir.program import ProgramNode
-  from scaly.ir.types import SparsityPattern
 
 
 @dataclass(frozen=True)
@@ -240,38 +236,9 @@ def _typed_buffers(fun: ConcreteFunction, symbol: str) -> list[str]:
   return lines
 
 
-def _sparse_tables(fun: ConcreteFunction, symbol: str, sparsities: tuple[SparsityPattern | None, ...]) -> list[str]:
-  lines: list[str] = []
-  for name, sp in zip(fun.output_names, sparsities, strict=True):
-    if sp is None:
-      continue
-    prefix = f"{symbol}_{c_ident(name)}"
-    row_ptr, col_ind, csr_perm = sp.to_csr()
-    col_ptr, row_ind, csc_perm = sp.to_csc()
-    # values_csr[k] = values[csr_val_perm[k]], and likewise for CSC.
-    tables = (
-      ("rows", sp.rows),
-      ("cols", sp.cols),
-      ("csr_row_ptr", row_ptr),
-      ("csr_col_ind", col_ind),
-      ("csr_val_perm", csr_perm),
-      ("csc_col_ptr", col_ptr),
-      ("csc_row_ind", row_ind),
-      ("csc_val_perm", csc_perm),
-    )
-    lines += [
-      f"#define {prefix}_NNZ {sp.nnz}",
-      f"#define {prefix}_NROW {sp.shape[0]}",
-      f"#define {prefix}_NCOL {sp.shape[1]}",
-      *(f"static const int {prefix}_{table}[{len(values)}] = {_c_array(values)};" for table, values in tables if values),
-    ]
-  return ["", "// Sparse output metadata for compact derivative buffers.", *lines] if lines else []
-
-
 def _sparse_leaf_tables(fun: ConcreteFunction, symbol: str) -> list[str]:
   lines: list[str] = []
   inputs, outputs = buffer_idents(fun)
-  names = NameScope((c_ident(name) for name, sp in zip(fun.output_names, fun.output_sparsities, strict=True) if sp is not None), header=True)
   for ident, type_, layout in zip(
     (*inputs, *outputs), (*fun.input_tree.types, *fun.output_tree.types), (*fun.input_tree.layouts, *fun.output_tree.layouts), strict=True
   ):
@@ -280,7 +247,7 @@ def _sparse_leaf_tables(fun: ConcreteFunction, symbol: str) -> list[str]:
       continue
     if not isinstance(layout, SparseLayout):
       continue
-    prefix = f"{symbol}_{names.allocate(ident + '_' if names.contains(ident) else ident)}"
+    prefix = f"{symbol}_{ident}"
     lines += [
       f"#define {prefix}_NROW {layout.pattern.shape[0]}",
       f"#define {prefix}_NCOL {layout.pattern.shape[1]}",
@@ -298,19 +265,13 @@ def _sparse_leaf_tables(fun: ConcreteFunction, symbol: str) -> list[str]:
   return ["", comment, *lines] if lines else []
 
 
-def header_sparsities(fun: ConcreteFunction, *, casadi: bool) -> tuple[SparsityPattern | None, ...]:
-  """The patterns a header describes: the native order, or under ``casadi`` the compressed-column
-  order the entry gathers into."""
-  return casadi_output_sparsities(fun) if casadi else tuple(fun.output_sparsities)
-
-
 def _frame_bytes(prog: ProgramNode) -> int:
   return max((int(pr.attrs["frame_bytes"]) for pr in prog.args), default=0)
 
 
 def _render_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, frame_bytes: int, *, lang: str, casadi: bool) -> str:
   if lang == "cpp":
-    return render_cpp_header(fun, backends, sz_w, frame_bytes, casadi=casadi, sparsities=header_sparsities(fun, casadi=casadi))
+    return render_cpp_header(fun, backends, sz_w, frame_bytes, casadi=casadi)
   symbol = c_ident(fun.name)
   leaf_dtypes = {leaf.type.dtype for leaf in (*fun.inputs, *fun.outputs)}
   lines = [
@@ -345,7 +306,6 @@ def _render_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, 
     "#endif",
   ]
   lines += _typed_buffers(fun, symbol)
-  lines += _sparse_tables(fun, symbol, header_sparsities(fun, casadi=casadi))
   lines += _sparse_leaf_tables(fun, symbol)
   return "\n".join(lines) + "\n"
 
@@ -408,7 +368,7 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
     "}",
   ]
   if casadi:
-    lines.extend(["", *render_casadi_queries(fun, entry_workspace(fun, ctx.workspace_size, casadi=True))])
+    lines.extend(["", *render_casadi_queries(fun, ctx.workspace_size)])
   lines.extend(["", "#ifdef __cplusplus", "}", "#endif"])
   return "\n".join(lines).rstrip() + "\n"
 
@@ -492,7 +452,7 @@ def render_c_api_header(
     fun, recipe=BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal, frame_budget=frame_budget)
   )
   return ctx.recipe.comment(f"{c_ident(fun.name)}.c") + _render_header(
-    ctx.fun, ctx.backends, entry_workspace(fun, ctx.workspace_size, casadi=casadi), _frame_bytes(ctx.prog), lang=lang, casadi=casadi
+    ctx.fun, ctx.backends, ctx.workspace_size, _frame_bytes(ctx.prog), lang=lang, casadi=casadi
   )
 
 
@@ -528,7 +488,7 @@ def render_c_module(
     source_name=f"{symbol}.c" if source_name is None else source_name,
     body=body,
     program=ctx.prog,
-    workspace_size=entry_workspace(fun, ctx.workspace_size, casadi=casadi),
+    workspace_size=ctx.workspace_size,
     backends=ctx.backends,
     lang=lang,
     casadi=casadi,
@@ -555,13 +515,9 @@ def workspace_size(
   fun = as_concrete(fun)
   if casadi:
     fun = casadi_layout(fun)
-  return entry_workspace(
-    fun,
-    _lower(
-      fun, recipe=BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal, frame_budget=frame_budget)
-    ).workspace_size,
-    casadi=casadi,
-  )
+  return _lower(
+    fun, recipe=BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal, frame_budget=frame_budget)
+  ).workspace_size
 
 
 def write_module(

@@ -3,11 +3,10 @@
 from .derivatives import finite_difference, gradient, hessian, jacobian
 from .forward import jvp, jvp_many
 from .reverse import vjp
-from .sparse import SparseJacobian, sparse_hessian, sparse_jacobian, sparse_jacobian_colored, sparse_jacobian_reference
+from .sparse import sparse_hessian, sparse_jacobian, sparse_jacobian_colored, sparse_jacobian_reference
 from .sparsity import color_groups, column_coloring, jacobian_sparsity, star_coloring
 
 __all__ = [
-  "SparseJacobian",
   "color_groups",
   "column_coloring",
   "star_coloring",

@@ -159,16 +159,11 @@ def test_descriptor_lagrangian_hessian_matches_dense_reference() -> None:
   solve = sc.solver(nonlinear_hessian, "sqp", name="descriptor_hessian_sqp")
   hess = as_concrete(solve.function).descriptor.hess
   assert isinstance(hess, ConcreteFunction)
-  sparsity = hess.output_sparsities[0]
-  assert sparsity is not None
-
   x = np.array([0.4, -0.7, 0.2])
   weight = np.array(1.3)
   lam_f = np.array(1.7)
   lam_g = np.array([-0.6, 0.8])
-  values = hess(x, weight, (lam_f, lam_g))
-  actual = np.zeros((3, 3))
-  actual[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = values
+  actual = hess(x, weight, (lam_f, lam_g)).toarray()
   actual += np.triu(actual, 1).T
 
   hess_f = np.array([[weight, x[2], x[1]], [x[2], 0.0, x[0]], [x[1], x[0], 0.0]])
@@ -190,12 +185,9 @@ def test_single_block_problem_preserves_vmap_decision_input() -> None:
 
   hess = as_concrete(solve.function).descriptor.hess
   assert hess is not None
-  sparsity = hess.output_sparsities[0]
-  assert sparsity is not None
   z, p = np.linspace(-0.7, 0.9, 6), np.array(0.3)
   lam_f, lam_g = np.array(1.7), np.linspace(-1.1, 0.8, 6)
-  actual = np.zeros(sparsity.shape)
-  actual[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = hess(z, p, (lam_f, lam_g))
+  actual = hess(z, p, (lam_f, lam_g)).toarray()
   np.testing.assert_allclose(actual, np.diag(2.0 * lam_f - lam_g * np.sin(z)), rtol=1e-13, atol=1e-13)
 
 

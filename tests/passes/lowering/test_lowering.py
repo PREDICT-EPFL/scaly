@@ -109,16 +109,7 @@ def test_lowering_normalizes_a_private_function_and_preserves_metadata() -> None
   matrix = sc.sym("matrix", (3, 2))
   vector = sc.sym("vector", 3)
   output = (matrix.T @ vector).block()
-  sparsity = sc.SparsityPattern((2, 1), (0, 1), (0, 0))
-  fn = ConcreteFunction._from_exprs(
-    "normalized_metadata",
-    [matrix, vector],
-    [output],
-    ["matrix", "vector"],
-    ["product"],
-    [sparsity],
-    output_coloring_widths=[2],
-  )
+  fn = ConcreteFunction._from_exprs("normalized_metadata", [matrix, vector], [output], ["matrix", "vector"], ["product"], output_coloring_widths=[2])
   observed: list[tuple[str, ConcreteFunction]] = []
 
   lower_function(fn, observe_expr=lambda name, normalized: observed.append((name, normalized)))
@@ -132,7 +123,6 @@ def test_lowering_normalizes_a_private_function_and_preserves_metadata() -> None
   assert normalized.inputs == fn.inputs
   assert normalized.input_tree is fn.input_tree
   assert normalized.output_tree is fn.output_tree
-  assert normalized.output_sparsities == (sparsity,)
   assert normalized.output_coloring_widths == (2,)
   assert normalized.outputs[0].op == sc.ExprOp.MATMUL
   assert normalized._effective_lowering == "block"

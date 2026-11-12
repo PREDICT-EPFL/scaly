@@ -88,12 +88,9 @@ def check_eq_jacobian_matches_casadi_and_dense_reference() -> None:
     np.testing.assert_allclose(actual, np.asarray(ca_dense(zv, pv)), rtol=1e-9, atol=1e-9)
     np.testing.assert_allclose(chain_eq_jac_dense_reference(n_masses, horizon, zv, pv), actual, rtol=1e-10, atol=1e-10)
 
-    sparsity = sparse.output_sparsities[0]
-    assert sparsity is not None
-    compact = np.asarray(sparse(zv, pv)).reshape(-1)
-    flat = np.asarray(sparsity.rows) * actual.shape[1] + np.asarray(sparsity.cols)
-    np.testing.assert_allclose(compact, actual.ravel()[flat], rtol=1e-10, atol=1e-10)
-    assert sparsity.nnz < actual.size, (sparsity.nnz, actual.size)
+    compact = sparse(zv, pv)
+    np.testing.assert_allclose(compact.toarray(), actual, rtol=1e-10, atol=1e-10)
+    assert compact.nnz < actual.size, (compact.nnz, actual.size)
 
 
 def check_nlp_objective_matches_casadi() -> None:
@@ -394,7 +391,7 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
   def hessian_values(z: sc.Expr, p: sc.Expr, lam: sc.Expr) -> sc.Expr:
     mapped = sc.vmap(hinted, HORIZON)(sc.window(z, 0, nz), sc.window(z, nz, nz), sc.window(p, nx, 0)).vec()
     eq = sc.concat([z[:nx] - p[:nx], mapped])
-    return sc.sparse_hessian(lam @ eq, z, triangle="lower").values
+    return sc.values(sc.sparse_hessian(lam @ eq, z, triangle="lower"))
 
   observed = {}
   lower_function(hessian_values, observe=lambda name, program: observed.__setitem__(name, program))

@@ -435,7 +435,7 @@ def test_declared_sparsity_replaces_the_body_pattern() -> None:
   @sc.function(sc.arg("qs", (4, 3)))
   def compact(qs):
     jac = sc.sparse_jacobian(sc.vmap(diagonal, 4)(qs.sin()), qs)
-    return jac.values, jac.to_dense()
+    return sc.values(jac), sc.to_dense(jac)
 
   values, dense = compact(np.arange(12.0).reshape(4, 3) / 10)
   assert values.shape == (12,)
@@ -483,7 +483,7 @@ def test_custom_derivative_rows_outside_primal_support_survive_composition(decla
   def derivatives(q):
     y = sc.vmap(callee, 2)(q) if mapped else callee(q)
     outputs = sc.concat([y.vec(), y.sin().vec(), (y * q).vec(), (y / (q + 2)).vec(), (y @ sc.const(np.diag(weights))).vec()])
-    dense, sparse = sc.jacobian(outputs, q), sc.sparse_jacobian(outputs, q).to_dense()
+    dense, sparse = sc.jacobian(outputs, q), sc.to_dense(sc.sparse_jacobian(outputs, q))
     return (dense.scalar(), sparse.scalar()) if scalar else (dense, sparse)
 
   q = np.arange(np.prod(shape)).reshape(shape) / 5 + 0.1

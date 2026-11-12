@@ -156,7 +156,7 @@ print(np.stack([fwd(x_value, s) for s in seeds], axis=1))
 #  [2. 6.]]
 
 sparse_jac = sc.sparse_jacobian(f, "y", "x")
-print(sparse_jac(x_value))  # [3. 1. 4. 2. 6.]
+print(sparse_jac(x_value).data)  # [3. 2. 4. 1. 6.]
 ```
 
 Entry \((i,j)\) of \(J\) is entry \((i,\,\text{color}(j))\) of \(JS\). The
@@ -167,6 +167,9 @@ the derivative is built:
 | -------------- | --------- | --------- | --------- | --------- | --------- |
 | Entry of \(JS\) | \((0,0)\) | \((0,1)\) | \((1,0)\) | \((2,0)\) | \((2,1)\) |
 | Value          | 3         | 1         | 4         | 2         | 6         |
+
+The table lists entries by row. The output uses compressed sparse column, or
+CSC, order by default, so its `.data` lists the five values column by column.
 
 The coloring is greedy: each column, in order, takes the smallest color not
 used by an earlier column that shares a row with it. Finding the fewest colors
@@ -260,25 +263,24 @@ stage_jac = sc.sparse_jacobian(stages, "residuals", "zs")
 print(sc.render_expr_assembly(stage_jac))
 ```
 
-The outer function of the printed module is one mapped call and one gather
-(the stage derivative function is omitted):
+The outer function of the printed module is one mapped call, one gather and a
+`pack` operation (the stage derivative function is omitted):
 
 ```
-  expr.func @stages_spjac_residuals_zs(%zs: tensor<8xfloat64 diff>) -> (%spjac_residuals_zs: tensor<16xfloat64 diff>) {
+  expr.func @stages_spjac_residuals_zs(%zs: tensor<8xfloat64 diff>) -> (%spjac_residuals_zs: tensor<8x8xfloat64 diff nnz=16 pattern=a3f5f14ab331>) {
     %0 = expr.input {lowering="auto", name="zs"} : tensor<8xfloat64 diff>
-    %1 = expr.vmap(%0) {callee="stage_fwd2c9dba5c50e0_residual_z", length=4, output=0, slice_size=4, starts=[0], strides=[2]} : tensor<16xfloat64 diff>
+    %1 = expr.vmap(%0) {callee="stage_fwd_d88f5d3f27", length=4, output=0, slice_size=4, starts=[0], strides=[2]} : tensor<16xfloat64 diff>
     %2 = expr.gather(%1) {indices=[ 0,  2,  1, ..., 14, 13, 15]} : tensor<16xfloat64 diff>
-    expr.return %2
+    %3 = expr.pack(%2) {pattern=pattern<8x8 nnz=16 digest=a3f5f14ab331>} : tensor<8x8xfloat64 diff nnz=16 pattern=a3f5f14ab331>
+    expr.return %3
   }
 ```
 
 Scaly colors the stage's own 2 by 2 pattern rather than the 8 by 8 global
-one. In the callee's name, `fwd2` counts the two seed directions and the
-hexadecimal part after `c` identifies them, so derivatives of the same stage
-with different seeds get different names. The
-stage derivative takes only `z`, and its two seed directions are constants
-inside its body, where the multiplications by zero and one fold away. The
-gather puts the four values each stage returns into pattern order.
+one. The stage derivative takes only `z`, and its two seed directions are
+constants inside its body, where the multiplications by zero and one fold away. The
+gather puts the four values each stage returns into row-major pattern order.
+The `pack` gives the resulting 8 by 8 sparse matrix its stored pattern.
 
 This path applies when each mapped input either is the differentiation
 variable itself or does not depend on it. When the mapped inputs are slices of

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 import numpy as np
+from scipy import sparse
 import pytest
 
 from scaly.function.model import as_concrete
@@ -191,13 +192,13 @@ def test_lagrangian_hessians_accept_constant_output_leaves() -> None:
     return (x * x).sum(), sc.const(1.0)
 
   dense = sc.lagrangian_hessian(objective, "x")
-  sparse = sc.sparse_lagrangian_hessian(objective, "x")
+  compact = sc.sparse_lagrangian_hessian(objective, "x")
   inputs = (np.array([2.0, 3.0]), (np.array(1.5), np.array(7.0)))
 
   assert not as_concrete(dense).input_tree.types[-1].diff
-  assert not as_concrete(sparse).input_tree.types[-1].diff
+  assert not as_concrete(compact).input_tree.types[-1].diff
   np.testing.assert_array_equal(dense(*inputs), 3.0 * np.eye(2))
-  np.testing.assert_array_equal(sparse(*inputs), np.array([3.0, 3.0]))
+  np.testing.assert_array_equal(sparse.coo_array(compact(*inputs)).toarray(), 3.0 * np.eye(2))
 
 
 def test_call_dispatches_on_leaf_kind() -> None:

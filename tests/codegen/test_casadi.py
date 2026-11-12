@@ -12,7 +12,6 @@ import casadi
 import numpy as np
 import pytest
 
-from scaly.function.model import as_concrete
 import scaly as sc
 from scaly.codegen import render_c_api_header, render_c_module, workspace_size
 from scaly.codegen.casadi import CASADI_QUERIES
@@ -66,16 +65,15 @@ def test_casadi_header_declares_the_query_set() -> None:
   for suffix in CASADI_QUERIES:
     assert f" f_spjac_{suffix}(" in header, suffix
   assert "int f_spjac_work(casadi_int* sz_arg, casadi_int* sz_res, casadi_int* sz_iw, casadi_int* sz_w);" in header
-  # The header's tables describe the compressed-column order the entry gathers into.
-  sp = as_concrete(fun).output_sparsities[0]
-  assert sp is not None and sp.to_csc()[2] != tuple(range(sp.nnz)), "the fixture must need a gather to be meaningful"
-  assert f"static const int f_spjac_spjac_y_x_csc_val_perm[{sp.nnz}] = {{{', '.join(str(k) for k in range(sp.nnz))}}};" in header
-  assert workspace_size(fun, casadi=True) == workspace_size(fun) + sp.nnz
+  # The output is a sparse leaf in compressed-column order, so the entry writes CasADi's order directly.
+  assert "static const int f_spjac_spjac_y_x_csc_col_ptr[5] = {0, 1, 2, 3, 5};" in header
+  assert "static const int f_spjac_spjac_y_x_csc_row_ind[5] = {0, 2, 1, 1, 2};" in header
+  assert workspace_size(fun, casadi=True) == workspace_size(fun)
   assert "casadi_int" not in render_c_api_header(fun)
 
   cpp = render_c_api_header(fun, lang="cpp", casadi=True)
   assert 'extern "C" casadi_int f_spjac_n_in(void);' in cpp
-  assert "constexpr std::array<int, nnz> csc_val_perm = {0, 1, 2, 3, 4};" in cpp
+  assert "constexpr std::array<int, 5> csc_row_ind = {0, 2, 1, 1, 2};" in cpp
 
 
 def test_casadi_external_loads_and_matches_the_jit(tmp_path) -> None:
@@ -86,17 +84,15 @@ def test_casadi_external_loads_and_matches_the_jit(tmp_path) -> None:
   assert ext.name_in() == ["x", "p"] and ext.name_out() == ["spjac_y_x"]
   assert ext.size_in(0) == (4, 1) and ext.size_out(0) == (3, 4)
 
-  sp = as_concrete(fun).output_sparsities[0]
+  sp = fun.sparsity()
   assert sp is not None
   rows, cols = ext.sparsity_out(0).get_triplet()
   assert set(zip(rows, cols)) == set(zip(sp.rows, sp.cols))
 
   xv = np.array([2.0, 3.0, 5.0, 7.0])
   pv = np.array([1.5, -0.5])
-  native = np.asarray(fun((xv, pv)))
-  dense = np.zeros(sp.shape)
-  dense[list(sp.rows), list(sp.cols)] = native
-  np.testing.assert_allclose(np.array(ext(xv, pv).full()), dense)
+  native = fun((xv, pv))
+  np.testing.assert_allclose(np.array(ext(xv, pv).full()), native.toarray())
 
   # Through ctypes, the way acados reaches it: the six symbols resolve and the buffer is CSC-ordered.
   lib = ctypes.CDLL(str(lib_path))
@@ -109,8 +105,7 @@ def test_casadi_external_loads_and_matches_the_jit(tmp_path) -> None:
   col_ptr = [encoded[2 + k] for k in range(ncol + 1)]
   row_ind = [encoded[3 + ncol + k] for k in range(col_ptr[-1])]
   assert (nrow, ncol) == sp.shape
-  csc_col_ptr, csc_row_ind, perm = sp.to_csc()
-  assert (tuple(col_ptr), tuple(row_ind)) == (csc_col_ptr, csc_row_ind)
+  assert (col_ptr, row_ind) == (native.indptr.tolist(), native.indices.tolist())
   assert not lib.f_spjac_sparsity_out(1)
 
   sizes = [ctypes.c_longlong() for _ in range(4)]
@@ -127,7 +122,7 @@ def test_casadi_external_loads_and_matches_the_jit(tmp_path) -> None:
   res = (c_double_p * 1)(ctypes.cast(out, c_double_p))
   assert lib.f_spjac(args, res, None, w, lib.f_spjac_checkout()) == 0
   lib.f_spjac_release(0)
-  np.testing.assert_allclose(np.array(out), native[list(perm)])
+  np.testing.assert_allclose(np.array(out), native.data)
 
 
 def test_casadi_external_dense_vector_function_without_gather(tmp_path) -> None:

@@ -66,7 +66,7 @@ def test_embedded_values_and_jacobian_match_numpy() -> None:
   assert pattern is not None
   assert values.dtype == jac.dtype == np.float32
   np.testing.assert_allclose(values, expected, rtol=2e-6, atol=1e-7)
-  np.testing.assert_allclose(jac, dense[pattern.rows, pattern.cols], rtol=2e-6, atol=1e-7)
+  np.testing.assert_allclose(jac.toarray(), dense, rtol=2e-6, atol=1e-7)
 
 
 @pytest.mark.parametrize("cpu", ["cortex_m4", "cortex_m7"])

@@ -391,7 +391,7 @@ def _descriptor_kernel(solver: sc.Solver, kind: str):
   sparsity = getattr(descriptor, f"{kind}_sparsity")
   if not isinstance(function, ConcreteFunction) or sparsity is None:
     raise TypeError(f"{descriptor.name} has no Scaly {kind} kernel")
-  assert function.output_sparsities[0] == sparsity
+  assert function.outputs[0].type.pattern is sparsity.canonicalize()[0]
   return function, sparsity, function.output_coloring_widths[0]
 
 

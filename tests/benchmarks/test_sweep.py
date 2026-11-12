@@ -9,6 +9,7 @@ from typing import cast
 
 from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
+from scaly.solvers.problem import _value_order
 import scaly as sc
 import numpy as np
 import pytest
@@ -439,12 +440,13 @@ def test_descriptor_kernel_exposes_carried_hessian_coloring_width() -> None:
     return x[0] * x[0] + x[1] * x[2]
 
   hessian = sc.sparse_hessian(primal, "y", "x").instantiate()
-  descriptor = SimpleNamespace(name="sweep_width_fixture", hess=hessian, hess_sparsity=hessian.output_sparsities[0])
+  hess_sparsity = _value_order(hessian)
+  descriptor = SimpleNamespace(name="sweep_width_fixture", hess=hessian, hess_sparsity=hess_sparsity)
   solver = cast(sc.Solver, SimpleNamespace(function=SimpleNamespace(instantiate=lambda: SimpleNamespace(descriptor=descriptor))))
 
   _, sparsity, coloring_width = _descriptor_kernel(solver, "hess")
 
-  assert sparsity == hessian.output_sparsities[0]
+  assert sparsity == hess_sparsity
   assert coloring_width == hessian.output_coloring_widths[0]
   assert coloring_width == 2
 
@@ -460,7 +462,7 @@ def test_module_info_records_constructed_local_coloring_width() -> None:
     return _mapped_call(piece, 4, [(z, 0, 1), (z, 1, 1)])
 
   built = mapped.factory("module_info_spjac", ["z"], [sc.factory.SpJac("y", "z")])
-  sparsity = as_concrete(built).output_sparsities[0]
+  sparsity = _value_order(as_concrete(built))
   coloring_width = as_concrete(built).output_coloring_widths[0]
   assert sparsity is not None
   assert coloring_width == 2

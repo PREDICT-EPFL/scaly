@@ -45,7 +45,7 @@ class DerivSpec:
   def output_name(self) -> str:
     return f"{self.kind}_{self.of}_{self.wrt}"
 
-  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityPattern | None, int | None]:
+  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, int | None]:
     raise NotImplementedError
 
   def _in(self, inputs: Mapping[str, Expr], name: str) -> Expr:
@@ -128,7 +128,6 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
   inputs: tuple[Expr, ...]
   output_tree: Tree[SymbolicOutputs, NumericalOutputs]
   outputs: tuple[Expr, ...]
-  output_sparsities: tuple[SparsityPattern | None, ...]
   output_coloring_widths: tuple[int | None, ...]
   device: DeviceSpec
   descriptor: Any = None
@@ -145,7 +144,6 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     output_tree: Tree[Any, Any],
     outputs: Sequence[Expr],
     *,
-    output_sparsities: Sequence[SparsityPattern | None] | None = None,
     output_coloring_widths: Sequence[int | None] | None = None,
     device: DeviceSpec | str | None = None,
     descriptor: Any = None,
@@ -155,7 +153,7 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
 
     ``inputs`` are the ``INPUT`` expressions of ``input_tree``'s leaves and ``outputs`` the
     expressions of ``output_tree``'s leaves, both in flat leaf order. Every input the outputs
-    depend on must be among ``inputs``. Sparse outputs carry the pattern of their compact values.
+    depend on must be among ``inputs``.
     """
     return cls(
       name,
@@ -163,7 +161,6 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
       tuple(inputs),
       output_tree,
       tuple(outputs),
-      tuple(output_sparsities) if output_sparsities is not None else (None,) * len(outputs),
       tuple(output_coloring_widths) if output_coloring_widths is not None else (None,) * len(outputs),
       DeviceSpec.parse(device),
       descriptor,
@@ -201,7 +198,6 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     outputs: Sequence[Expr],
     input_names: Sequence[str],
     output_names: Sequence[str],
-    output_sparsities: Sequence[SparsityPattern | None] | None = None,
     output_coloring_widths: Sequence[int | None] | None = None,
     role: Role | None = None,
     *,
@@ -215,13 +211,11 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
         output_layouts = tuple(sparse_layout(expr.type.pattern, "csr") if expr.type.pattern is not None else None for expr in outputs)
     input_tree = flat_parameters(tuple(input_names), tuple(expr.type for expr in inputs), layouts=input_layouts)
     output_tree = flat_tree(tuple(output_names), tuple(expr.type for expr in outputs), layouts=output_layouts)
-    return cls.build(
-      name, input_tree, inputs, output_tree, outputs, output_sparsities=output_sparsities, output_coloring_widths=output_coloring_widths, role=role
-    )
+    return cls.build(name, input_tree, inputs, output_tree, outputs, output_coloring_widths=output_coloring_widths, role=role)
 
   def __post_init__(self) -> None:
     name = self.name
-    if not all(isinstance(part, tuple) for part in (self.inputs, self.outputs, self.output_sparsities, self.output_coloring_widths)):
+    if not all(isinstance(part, tuple) for part in (self.inputs, self.outputs, self.output_coloring_widths)):
       raise TypeError(f"function {name!r}: construct ConcreteFunction through ConcreteFunction.build")
     non_inputs = [expr.name or f"%{expr.id}" for expr in self.inputs if expr.op != ExprOp.INPUT]
     if non_inputs:
@@ -238,15 +232,8 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
       raise ValueError(f"function {name!r}: input tree {self.input_tree.names} does not match the input expressions")
     if layout(self.output_tree.types) != layout([expr.type for expr in self.outputs]):
       raise ValueError(f"function {name!r}: output tree {self.output_tree.names} does not match the output expressions")
-    if len(self.output_sparsities) != len(self.outputs):
-      raise ValueError(f"expected {len(self.outputs)} output sparsities, got {len(self.output_sparsities)}")
     if len(self.output_coloring_widths) != len(self.outputs):
       raise ValueError(f"expected {len(self.outputs)} output coloring widths, got {len(self.output_coloring_widths)}")
-    for output_name, out, sparsity in zip(self.output_names, self.outputs, self.output_sparsities, strict=True):
-      if sparsity is not None and out.size != sparsity.nnz:
-        raise ValueError(
-          f"sparse output metadata for {output_name!r} has {sparsity.nnz} nonzeros, but output shape {out.shape} has {out.size} entries"
-        )
     if len(set(self.input_names)) != len(self.input_names):
       raise ValueError(f"duplicate input names in {self.input_names}")
     if len(set(self.output_names)) != len(self.output_names):
@@ -287,9 +274,6 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
   def output_map(self) -> dict[str, Expr]:
     """The output expressions keyed by their declared names, in declaration order."""
     return dict(zip(self.output_names, self.outputs, strict=True))
-
-  def output_sparsity_map(self) -> dict[str, SparsityPattern | None]:
-    return dict(zip(self.output_names, self.output_sparsities, strict=True))
 
   @property
   def results(self) -> tuple[Expr, ...]:
@@ -457,21 +441,18 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     ret_inputs = [all_inputs[s] for s in inputs]
     ret_outputs: list[Expr] = []
     ret_output_names: list[str] = []
-    ret_sparsities: list[SparsityPattern | None] = []
     ret_coloring_widths: list[int | None] = []
     ret_layouts: list[LeafLayout] = []
     for spec in outputs:
       if isinstance(spec, str):
         if spec not in all_outputs:
           raise ValueError(f"unknown factory output {spec!r}")
-        output, sparsity, output_name = all_outputs[spec], None, spec
-        coloring_width = None
+        output, output_name, coloring_width = all_outputs[spec], spec, None
       else:
-        output, sparsity, coloring_width = spec.build(all_inputs, all_outputs)
+        output, coloring_width = spec.build(all_inputs, all_outputs)
         output_name = spec.output_name
       ret_outputs.append(output)
       ret_output_names.append(output_name)
-      ret_sparsities.append(sparsity)
       ret_coloring_widths.append(coloring_width)
       layout = output_layouts.get(spec) if isinstance(spec, str) else None
       if not isinstance(spec, str):
@@ -479,6 +460,8 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
           layout = output_layouts.get(spec.of)
         elif spec.kind in {"adj", "grad"}:
           layout = input_layouts.get(spec.wrt)
+        elif output.type.pattern is not None:
+          layout = sparse_layout(output.type.pattern, cast(Any, spec).layout)
       ret_layouts.append(layout)
     return ConcreteFunction._from_exprs(
       name,
@@ -486,7 +469,6 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
       ret_outputs,
       inputs,
       ret_output_names,
-      ret_sparsities,
       output_coloring_widths=ret_coloring_widths,
       input_layouts=tuple(layouts[key] for key in inputs),
       output_layouts=tuple(ret_layouts),

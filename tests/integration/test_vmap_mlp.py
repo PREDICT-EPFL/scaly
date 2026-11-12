@@ -153,11 +153,7 @@ def dense_jac_reference(stages: int, z: np.ndarray, pw: np.ndarray) -> np.ndarra
 
 
 def _scatter(sparse: sc.Function, z: np.ndarray, pw: np.ndarray, *extra: np.ndarray) -> np.ndarray:
-  sparsity = as_concrete(sparse).output_sparsities[0]
-  assert sparsity is not None
-  dense = np.zeros(sparsity.shape)
-  dense[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = np.asarray(sparse(z, *extra, pw)).reshape(-1)
-  return dense
+  return sparse(z, *extra, pw).toarray()
 
 
 def test_vmapped_stage_matches_the_numpy_model() -> None:
@@ -190,7 +186,7 @@ def test_vmapped_and_unrolled_agree_in_value_jacobian_and_hessian() -> None:
     dense = [_scatter(fn, z, pw) for fn in jacobians]
     np.testing.assert_allclose(dense[0], dense[1], rtol=0.0, atol=1e-13)
     np.testing.assert_allclose(dense[0], dense_jac_reference(stages, z, pw), rtol=0.0, atol=1e-13)
-    pattern = as_concrete(jacobians[0]).output_sparsities[0]
+    pattern = as_concrete(jacobians[0]).outputs[0].type.pattern
     assert pattern is not None and pattern.nnz < dense[0].size
 
     hessians = [
@@ -238,8 +234,9 @@ def test_vmapped_source_is_constant_in_the_horizon_where_the_unrolled_twin_grows
   from scaly.ir.program import ProgramOp
   from scaly.passes.lowering import lower_function, main_proc
 
-  # Auto widening starts once the horizon supplies a full vector chunk.
-  sizes = (2, 8, 32) if lanes == 1 else (8, 16, 32)
+  # Auto widening starts once the horizon supplies a full vector chunk, and the compressed-column
+  # Jacobian hoists its invariant callee work out of the map from three stages on.
+  sizes = (3, 8, 32) if lanes == 1 else (8, 16, 32)
   for kernel, request in (("spjac", sc.factory.SpJac("eq", "z")), ("sphess", sc.factory.SpHess("gamma", "z"))):
     lines = []
     for stages in sizes:

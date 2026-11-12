@@ -418,7 +418,7 @@ content-derived.
   so folding and generated C both follow `np.minimum`/`np.maximum`.
 
 **[#16]. An immutable Function.** One private constructor with one `_validate`, and a public
-`Function.build(name, input_tree, inputs, output_tree, outputs, *, output_sparsities=None,
+`Function.build(name, input_tree, inputs, output_tree, outputs, *,
 descriptor=None, role=None, ...)` used by the decorator, `factory`, the AD callees and `solvers/`.
 `_replace` is the only copy path: `with_device`, `_with_outputs` and `_with_trees` become one-liners,
 and `_with_trees` stops mutating `self`. The solver descriptor becomes a constructor field instead
@@ -1116,11 +1116,15 @@ shared by all seeds does not cover this case: its union over the seeds is nearly
 **[#48]. Sparse derivative outputs become sparse leaves.** `sparse_jacobian` and `sparse_hessian`
 return sparse-typed outputs with a declared layout and triangle
 (`sc.sparse_hessian(f, of, wrt, layout="csr", triangle="upper")`), and `Function.output_sparsities`
-goes away, so a sparse output has one spelling. The header tables, the CasADi gather and
-`casadi_output_sparsities` read the type. Values switch from arbitrary order to the declared layout,
+goes away, so a sparse output has one spelling. The header tables and CasADi queries read the
+type, and the CasADi gather and `casadi_output_sparsities` go away. Values switch from arbitrary order to the declared layout,
 which removes the two value-permutation tables: an interface change under `docs/dev/versioning.md`.
-The mapped path (`ad/sparse.py::_sparse_jacobian_vmap`) keeps its local coloring and returns a
-batched pattern for a map of independent stages.
+The mapped path (`ad/sparse.py::_sparse_jacobian_vmap`) keeps its local coloring and returns the
+two-dimensional pattern of the whole map; `sc.vmap` of a stage's sparse derivative gives the batched
+pattern of a map of independent stages. *Replaced in the compiler run, 2026-11-11: "returns a
+batched pattern for a map of independent stages", because a result whose shape depended on the
+structure the analysis finds would break consumers that expect the Jacobian's matrix shape, such
+as the solver oracles and CasADi.*
 
 Deferred, beside this track: different patterns per batch entry, dense-block and supernode
 detection inside a pattern ([#91]), automatic compaction of dense-typed values. [#96] (row coloring)

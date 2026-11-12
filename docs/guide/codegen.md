@@ -379,9 +379,10 @@ To use arrays already owned by another library without copying them into a
 
 ## Sparse output patterns
 
-Sparse derivative functions write compact value arrays. The generated header
-also contains fixed coordinate tables so the caller can identify the matrix
-entry corresponding to each value. For example:
+Sparse derivative functions write only the stored values of the matrix, in the
+output's declared [layout](sparse_matrices.md#layouts). The generated header
+contains the fixed index tables of that layout, so the caller can identify the
+matrix entry of each value. For example:
 
 ```python
 @sc.function(sc.arg("x", 3), outputs=sc.arg("y"))
@@ -398,36 +399,31 @@ The Jacobian is
 J(x)=\begin{bmatrix}x_2 & 0 & x_0 \\ 0 & 1 & 0 \\ 1 & 0 & 1\end{bmatrix}.
 \]
 
-Its output has five values instead of nine. The following declarations are
-emitted in `measurements_jac.h`:
+Its output has five values instead of nine. The default layout is compressed
+sparse column, or CSC, and `measurements_jac.h` declares:
 
 ```c
-#define measurements_jac_spjac_y_x_NNZ 5
 #define measurements_jac_spjac_y_x_NROW 3
 #define measurements_jac_spjac_y_x_NCOL 3
-static const int measurements_jac_spjac_y_x_rows[5] = {0, 0, 1, 2, 2};
-static const int measurements_jac_spjac_y_x_cols[5] = {0, 2, 1, 0, 2};
-static const int measurements_jac_spjac_y_x_csr_row_ptr[4] = {0, 2, 3, 5};
-static const int measurements_jac_spjac_y_x_csr_col_ind[5] = {0, 2, 1, 0, 2};
-static const int measurements_jac_spjac_y_x_csr_val_perm[5] = {0, 1, 2, 3, 4};
+#define measurements_jac_spjac_y_x_NNZ 5
+#define measurements_jac_spjac_y_x_NDIM 2
+#define measurements_jac_spjac_y_x_STORAGE_SIZE 5
+static const int measurements_jac_spjac_y_x_shape[2] = {3, 3};
 static const int measurements_jac_spjac_y_x_csc_col_ptr[4] = {0, 2, 3, 5};
 static const int measurements_jac_spjac_y_x_csc_row_ind[5] = {0, 2, 1, 0, 2};
-static const int measurements_jac_spjac_y_x_csc_val_perm[5] = {0, 3, 2, 1, 4};
 ```
 
 The prefix combines the function name and derivative output name. For input
-`[2, 3, 4]`, the value array is `[4, 2, 1, 1, 1]`. Entry `k` belongs at
-`(rows[k], cols[k])`. Coordinates are not guaranteed to be sorted, even though
-the row order happens to be sorted in this example.
+`[2, 3, 4]`, the value array is `[4, 1, 1, 2, 1]`: column 0 holds
+\(J_{00}=4\) and \(J_{20}=1\), column 1 holds \(J_{11}=1\), and column 2 holds
+\(J_{02}=2\) and \(J_{22}=1\). With `layout="csr"` the header publishes
+`csr_row_ptr` and `csr_col_ind` and the values come row by row, and with a
+coordinate layout it publishes `rows` and `cols` in the declared order. These
+are the tables of any [sparse output](sparse_matrices.md#generated-c).
 
-Compressed sparse row and compressed sparse column formats, or CSR and CSC,
-need their own value orders. Their `_val_perm` arrays give the conversion:
-`values_csc[k] = values[csc_val_perm[k]]`. Here the CSC values become
-`[4, 1, 1, 2, 1]`. The CSR values already have the required order.
-
-C++ headers expose the same metadata as `constexpr` arrays inside a namespace
-named after the derivative output. The [sparsity guide](sparsity.md) explains
-the corresponding Python patterns and triangle choices for Hessians.
+C++ headers expose the same tables as `constexpr` arrays inside a namespace
+named after the derivative output. The [sparse derivatives guide](sparsity.md)
+explains the layouts and the triangle choices for Hessians.
 
 ## CasADi-compatible exports
 
@@ -487,10 +483,9 @@ An acados build must pass `-Dcasadi_int=int` through
 [acados race-car example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/acados_race_car.py)
 does. The option works with either `lang="c"` or `lang="cpp"`.
 
-For sparse outputs, this mode writes values in CSC order. If native scaly
-ordering differs, the generated entry point permutes the values using extra
-workspace. The module's workspace size includes that storage, and its header
-tables describe the converted output order.
+CasADi reads sparse values in CSC order, so this mode accepts sparse outputs,
+sparse derivatives included, only in the default CSC layout and refuses a CSR
+or coordinate layout.
 
 With `casadi=True`, dense matrix buffers use column-major order. The original
 Function declaration and Python calls keep their behavior. Both header languages
@@ -503,9 +498,9 @@ entries by column must reorder the corresponding Jacobian rows and columns.
 
 !!! warning "Buffer compatibility"
     Dense arrays of rank greater than two are rejected by `casadi=True`.
-    Scalars, vectors, dense matrices, compact sparse derivative outputs and
-    [sparse matrices](sparse_matrices.md#generated-c) in CSC order without
-    batch axes are supported, all in `float64`.
+    Scalars, vectors, dense matrices and
+    [sparse matrices](sparse_matrices.md#generated-c), sparse derivatives
+    included, in CSC order without batch axes are supported, all in `float64`.
     Solvers require row-major declarations for dense variables and parameters.
     To export `solver.function` with matrix arguments or results for CasADi,
     call it inside an ordinary `Function` and export that wrapper. Direct
@@ -789,8 +784,8 @@ outputs are all `float64`, floats when they are all `float32`, and bytes
 otherwise. It is not
 the total temporary memory.
 For an export with non-default options, use that module's `workspace_size` or
-its header's `<name>_SZ_W` constant. In particular, CasADi sparse-output
-conversion can require additional workspace.
+its header's `<name>_SZ_W` constant. CasADi exports can require additional
+workspace to change dense matrix buffer order.
 
 `frame_budget` limits the stack each generated C function is estimated to need,
 in bytes, and defaults to 65,536. Scaly adds up its temporary arrays, counting

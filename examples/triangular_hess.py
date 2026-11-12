@@ -1,4 +1,5 @@
 import numpy as np
+from scipy import sparse
 
 import scaly as sc
 
@@ -9,11 +10,7 @@ def cost(x: sc.Expr) -> sc.Expr:
 
 
 sparse_hess = sc.sparse_hessian(cost, "cost", "x", triangle="lower")
-hess_values = sparse_hess(np.ones(4))
-hess_pattern = sparse_hess.sparsity()
-assert hess_pattern is not None
-lower = np.zeros(hess_pattern.shape)
-lower[np.asarray(hess_pattern.rows), np.asarray(hess_pattern.cols)] = hess_values
+lower = sparse.coo_array(sparse_hess(np.ones(4))).toarray()
 print(lower)
 # H = lower + lower.T - np.diag(np.diag(lower))
 # print(H)
@@ -23,9 +20,4 @@ print(lower)
 #  [0. 0. 0. 2.]]
 
 sparse_hess_full = sc.sparse_hessian(cost, "cost", "x", triangle="full")
-hess_values_full = sparse_hess_full(np.ones(4))
-hess_pattern_full = sparse_hess_full.sparsity()
-assert hess_pattern_full is not None
-full = np.zeros(hess_pattern_full.shape)
-full[np.asarray(hess_pattern_full.rows), np.asarray(hess_pattern_full.cols)] = hess_values_full
-print(full)
+print(sparse.coo_array(sparse_hess_full(np.ones(4))).toarray())

@@ -5,10 +5,9 @@ other entry is identically zero, so generated code stores, passes and computes
 only the stored entries. This page covers sparse inputs, outputs and constants,
 the operations that keep a pattern, and what reaches derivatives and generated C.
 
-This is a different use of sparsity from [sparse derivatives](sparsity.md). There,
-Scaly finds which entries of a Jacobian or Hessian may be nonzero and returns
-them as a compact vector. Here, you choose the pattern and it is part of the
-matrix's type.
+For [sparse derivatives](sparsity.md), Scaly finds which entries of a Jacobian or
+Hessian may be nonzero and uses them as the matrix's stored pattern. You can
+also declare a pattern for your own matrices, as this page describes.
 
 ## Stored patterns
 
@@ -337,15 +336,9 @@ Derivatives are computed on the stored entries, without a dense copy of `A`.
 
 `sc.jacobian` with respect to a sparse input has one column per logical entry,
 nine here, and the columns of entries outside the pattern are zero.
-`sc.sparse_jacobian` and `sc.sparse_hessian` index the same logical entries.
-
-!!! note "Sparse derivative outputs keep their own value order"
-
-    `sc.sparse_jacobian` and `sc.sparse_hessian` return compact values with a
-    separate pattern, as described in [the ordering rule](sparsity.md#the-ordering-rule),
-    even when an input or output is a sparse matrix. They do not return a sparse
-    output with a declared layout, and `Function.sparsity` returns `None` for a
-    sparse matrix output, whose pattern is in its type.
+`sc.sparse_jacobian` and `sc.sparse_hessian` index the same logical entries and
+return a [sparse derivative](sparsity.md), itself a sparse matrix with a
+declared layout.
 
 ## Generated C
 
@@ -382,6 +375,6 @@ header publishes the same tables as `constexpr std::array` constants in a
 namespace per function and per input or output.
 
 CasADi reads sparse values in CSC order only, so `casadi=True` accepts CSC
-sparse inputs and outputs without batch axes and refuses any other layout. The
-tables of sparse derivative outputs are described in
-[sparse output patterns](codegen.md#sparse-output-patterns).
+sparse inputs and outputs without batch axes and refuses any other layout.
+Sparse derivative outputs publish the same tables, as
+[sparse output patterns](codegen.md#sparse-output-patterns) shows.

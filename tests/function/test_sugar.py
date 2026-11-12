@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy import sparse
 import pytest
 
 import scaly as sc
@@ -98,8 +99,8 @@ def test_overlapping_windows_broadcast_and_sparse_derivatives_match_unrolled() -
 
   z, p = np.arange(5.0), np.array([2.0, 3.0])
   np.testing.assert_array_equal(mapped(z, p), unrolled(z, p))
-  for operation in (sc.jacobian, sc.sparse_jacobian):
-    np.testing.assert_array_equal(operation(mapped, "y", "z")(z, p), operation(unrolled, "y", "z")(z, p))
+  np.testing.assert_array_equal(sc.jacobian(mapped, "y", "z")(z, p), sc.jacobian(unrolled, "y", "z")(z, p))
+  np.testing.assert_array_equal(sparse.coo_array(sc.sparse_jacobian(mapped, "y", "z")(z, p)).toarray(), sc.jacobian(unrolled, "y", "z")(z, p))
 
 
 def test_zero_length_and_zero_parameter_maps() -> None:
@@ -185,6 +186,6 @@ def test_sparse_map_coloring_survives_output_shape_wrappers() -> None:
     widths.append(derivative.instantiate().output_coloring_widths[0])
     direct = sc.sparse_jacobian(sc.vmap(square, n))
     assert direct.instantiate().output_coloring_widths[0] == 1
-    np.testing.assert_array_equal(direct(np.arange(2.0 * n).reshape(n, 2)), 2.0 * np.arange(2.0 * n))
-    np.testing.assert_array_equal(derivative(np.arange(2.0 * n)), 2.0 * np.arange(2.0 * n))
+    np.testing.assert_array_equal(sparse.coo_array(direct(np.arange(2.0 * n).reshape(n, 2))).toarray(), np.diag(2.0 * np.arange(2.0 * n)))
+    np.testing.assert_array_equal(sparse.coo_array(derivative(np.arange(2.0 * n))).toarray(), np.diag(2.0 * np.arange(2.0 * n)))
   assert widths == [1, 1, 1]

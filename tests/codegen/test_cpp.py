@@ -48,8 +48,7 @@ def test_cpp_header_declares_namespace_buffers_and_constexpr_tables() -> None:
   spjac = render_c_module(_spjac(), lang="cpp").header
   assert "namespace spjac_y_x {" in spjac
   assert "constexpr int nnz = 5;" in spjac
-  assert "constexpr std::array<int, nnz> csc_val_perm = {0, 3, 1, 2, 4};" in spjac
-  assert "constexpr std::array<int, ncol + 1> csc_col_ptr = {0, 1, 2, 3, 5};" in spjac
+  assert "constexpr std::array<int, 5> csc_col_ptr = {0, 1, 2, 3, 5};" in spjac
   assert "static const int" not in spjac
 
 
@@ -97,7 +96,7 @@ int main() {
   namespace sp = f_spjac::spjac_y_x;
   for (int k = 0; k < sp::nnz; ++k) {
     if (sp::csc_row_ind[k] != expected_rows[k]) return 20;
-    if (std::fabs(values(sp::csc_val_perm[k]) - expected_csc[k]) > 1e-12) return 21;
+    if (std::fabs(values(k) - expected_csc[k]) > 1e-12) return 21;
   }
   return 0;
 }

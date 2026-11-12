@@ -3,6 +3,7 @@
 import numpy as np
 
 import scaly as sc
+from scaly.ad.sparse import _sparse_hessian
 from scaly.ad.sparsity import star_coloring
 from scaly.ir.expr import Expr, ExprOp, OP_INFO, substitute, topo
 from scaly.ir.support import specialize_support
@@ -80,7 +81,7 @@ def _seed_image(expr: Expr, wrt: Expr, seeds: np.ndarray) -> np.ndarray:
 def test_chain_M9_hessian_seed_axis_support_matches_independent_jacobian_images() -> None:
   z, p, lam = sc.sym("chain_z", 141), sc.sym("chain_p", 50, diff=False), sc.sym("chain_lam", 135, diff=False)
   mapped = sc.vmap(_chain_stage(), 2)(sc.window(z, 0, 48), sc.window(z, 48, 48), sc.window(p, 45, 0)).vec()
-  hessian = sc.sparse_hessian(lam @ sc.concat([z[:45] - p[:45], mapped]), z)
+  hessian = _sparse_hessian(lam @ sc.concat([z[:45] - p[:45], mapped]), z)
   colors = star_coloring(hessian.sparsity)
   assert hessian.coloring_width == 42
   seeds = np.eye(hessian.coloring_width, dtype=bool)[:, colors]

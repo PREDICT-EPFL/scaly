@@ -6,7 +6,6 @@ import importlib
 import numpy as np
 import pytest
 
-from scaly.function.model import as_concrete
 from scaly.function.concrete import ConcreteFunction
 from scaly.function.sugar import _mapped_call
 import scaly as sc
@@ -181,9 +180,7 @@ def test_sparse_hessian_lower_triangle_has_only_surviving_stage_stores(objective
   expected[np.arange(objective_size), np.arange(objective_size)] = 2 * objective_weight
   for k, weight in enumerate(multipliers):
     expected[2 * k : 2 * k + 2, 2 * k : 2 * k + 2] += weight * np.array([[-np.sin(data[2 * k]), 1], [1, 6 * data[2 * k + 1]]])
-  sparsity = as_concrete(hess).output_sparsities[0]
-  assert sparsity is not None
-  np.testing.assert_allclose(hess(*(data, objective_weight, multipliers)), expected[sparsity.rows, sparsity.cols], rtol=1e-13, atol=1e-14)
+  np.testing.assert_allclose(hess(*(data, objective_weight, multipliers)).toarray(), np.tril(expected), rtol=1e-13, atol=1e-14)
 
 
 def test_cross_store_loop_carried_dependency_keeps_original_schedule():

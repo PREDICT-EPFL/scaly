@@ -9,13 +9,14 @@ from typing import TYPE_CHECKING, Any, cast, overload
 
 import numpy as np
 
-from ..ad.sparse import SparseJacobian, Triangle, sparse_hessian
-from ..function.api import gradient, sparse_jacobian
+from ..ad.sparse import Triangle, _Compact, _sparse_hessian, _sparse_jacobian, sparse_hessian
+from ..function.api import gradient
 from ..function.concrete import ConcreteFunction
 from ..function.model import as_concrete
 from ..function.tree import Tree, append_parameter, arg, flat_tree, parameter_list
 from ..function.tree import group as tree_group
 from ..ir.expr import Expr, ExprOp, as_expr, check_prints_reach, concat, promote_dtype, recording_prints, substitute
+from ..ir.layout import SparseLayout
 from ..ir.types import SparsityPattern, TensorType
 from ..passes.expr import simplify_cse_fixpoint
 from ._oracle import collect_free_inputs
@@ -125,6 +126,20 @@ def _concat_vec(exprs: tuple[Expr, ...]) -> Expr | None:
   return vectors[0] if len(vectors) == 1 else concat(vectors)
 
 
+def _oracle(name: str, input_tree: Tree[Any, Any], inputs: tuple[Expr, ...], output: str, derivative: _Compact) -> ConcreteFunction:
+  """A sparse derivative oracle storing its values in the order they are computed, which plugins read as a coordinate list."""
+  leaf = derivative.leaf()
+  output_tree = arg(output, leaf.type, layout=derivative.sparsity)
+  return ConcreteFunction.build(name, input_tree, inputs, output_tree, (leaf,), output_coloring_widths=(derivative.coloring_width,))
+
+
+def _value_order(fn: ConcreteFunction) -> SparsityPattern:
+  """The coordinates of ``fn``'s sparse output in the order its values are stored."""
+  layout = fn.output_tree.layouts[0]
+  assert isinstance(layout, SparseLayout)
+  return SparsityPattern(layout.pattern.shape, tuple(map(int, layout.rows)), tuple(map(int, layout.cols)))
+
+
 def _bound(expr: Expr | None, shape: tuple[int, ...], fill: float) -> Expr:
   if expr is None:
     return Expr.const(np.full(shape, fill))
@@ -211,15 +226,14 @@ class _NlpForm:
 
   @cached_property
   def jac(self) -> ConcreteFunction | None:
-    return None if self.g is None else sparse_jacobian(self.base, "g", self.x_name, name=f"{self.problem.name}_jac").instantiate()
+    if self.g is None:
+      return None
+    jac = _sparse_jacobian(self.g, self.x)
+    return _oracle(f"{self.problem.name}_jac", self.base.input_tree, (self.x, *self.problem._param_symbols), f"spjac_g_{self.x_name}", jac)
 
   @cached_property
   def jac_sparsity(self) -> SparsityPattern:
-    if self.jac is None:
-      return SparsityPattern.empty((0, self.x.size))
-    sparsity = self.jac.output_sparsities[0]
-    assert sparsity is not None
-    return sparsity
+    return SparsityPattern.empty((0, self.x.size)) if self.jac is None else _value_order(self.jac)
 
   @cached_property
   def _multipliers(self) -> tuple[Tree[Any, Any], tuple[Expr, ...]]:
@@ -227,32 +241,29 @@ class _NlpForm:
     return tree, tuple(tree.flatten_symbolic(tree.symbols(), f"{self.problem.name} multipliers"))
 
   @cached_property
-  def hess_full(self) -> SparseJacobian:
+  def hess_full(self) -> _Compact:
     """The full sparse Hessian of the Lagrangian ``lam:f * f + lam:g . g``."""
     multipliers = self._multipliers[1]
     lagrangian = multipliers[0] * self.f
     if self.g is not None:
       lagrangian = lagrangian + (multipliers[1] * self.g).sum()
-    return sparse_hessian(lagrangian, self.x)
+    return _sparse_hessian(lagrangian, self.x)
 
   def hess(self, triangle: Triangle) -> ConcreteFunction:
     """The Lagrangian Hessian oracle that stores ``triangle`` of the matrix."""
     if triangle not in self._hessians:
       tree, multipliers = self._multipliers
-      hess = self.hess_full.triangle(triangle)
-      self._hessians[triangle] = ConcreteFunction.build(
+      self._hessians[triangle] = _oracle(
         f"{self.problem.name}_hess_{triangle}",
         append_parameter(self.base.input_tree, tree),
         (self.x, *self.problem._param_symbols, *multipliers),
-        arg(f"sphess_gamma_{self.x_name}_{self.x_name}", hess.values.type),
-        (hess.values,),
-        output_sparsities=(hess.sparsity,),
-        output_coloring_widths=(hess.coloring_width,),
+        f"sphess_gamma_{self.x_name}_{self.x_name}",
+        self.hess_full.triangle(triangle),
       )
     return self._hessians[triangle]
 
   @cached_property
-  def cost_hessian(self) -> SparseJacobian:
+  def cost_hessian(self) -> Expr:
     return sparse_hessian(simplify_cse_fixpoint(self.f), self.x)
 
   @cached_property

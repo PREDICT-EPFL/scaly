@@ -13,7 +13,7 @@ from ..ad.sparsity import _depends_on, _jac_mask
 from ..function.concrete import ConcreteFunction
 from ..function.model import Function
 from ..function.tree import group, arg, Tree
-from ..ir.expr import Expr, ExprOp, callees_of, concat, substitute, topo
+from ..ir.expr import Expr, ExprOp, callees_of, concat, substitute, to_dense, topo, values as stored_values
 from ..ir.types import SparsityPattern, TensorType
 from ..passes.expr import simplify_cse_fixpoint
 from .model import SolverDescriptor, descriptor_function, solver_options
@@ -129,7 +129,7 @@ def _prove_variable_independent_bounds(problem: Problem[Any, Any, Any, Any]) -> 
 def _prove_quadratic(problem: Problem[Any, Any, Any, Any]) -> None:
   """Prove that the cost is quadratic and every constraint is affine in the variables."""
   x = problem._nlp.x
-  if _jac_mask(problem._nlp.cost_hessian.values, x, {}).nnz:
+  if _jac_mask(stored_values(problem._nlp.cost_hessian), x, {}).nnz:
     raise NotQuadratic(f"{problem.name}: cost is not quadratic in the variables")
 
   def prove_affine(expr: Expr, label: str) -> None:
@@ -167,7 +167,7 @@ def _qp_data(problem: Problem[Any, Any, Any, Any]) -> tuple[Expr, Expr, Expr, Ex
   zero = Expr.const(np.zeros(x.shape))
   replacements = {x: zero}
 
-  P = simplify_cse_fixpoint(substitute(nlp.cost_hessian.to_dense(), replacements))
+  P = simplify_cse_fixpoint(substitute(to_dense(nlp.cost_hessian), replacements))
   c = simplify_cse_fixpoint(substitute(nlp.grad.outputs[0], replacements))
 
   h = nlp.h
@@ -175,7 +175,7 @@ def _qp_data(problem: Problem[Any, Any, Any, Any]) -> tuple[Expr, Expr, Expr, Ex
     A = Expr.const(np.zeros((0, n)))
     b = Expr.const(np.zeros(0))
   else:
-    A = simplify_cse_fixpoint(substitute(sparse_jacobian(h, x).to_dense(), replacements))
+    A = simplify_cse_fixpoint(substitute(to_dense(sparse_jacobian(h, x)), replacements))
     b = simplify_cse_fixpoint(-substitute(h, replacements))
 
   g = nlp.g_ineq
@@ -184,7 +184,7 @@ def _qp_data(problem: Problem[Any, Any, Any, Any]) -> tuple[Expr, Expr, Expr, Ex
     g_lb = Expr.const(np.zeros(0))
     g_ub = Expr.const(np.zeros(0))
   else:
-    G_mat = simplify_cse_fixpoint(substitute(sparse_jacobian(g, x).to_dense(), replacements))
+    G_mat = simplify_cse_fixpoint(substitute(to_dense(sparse_jacobian(g, x)), replacements))
     g_lb = Expr.const(np.zeros(g.shape))
     g_ub = Expr.const(np.zeros(g.shape))
 

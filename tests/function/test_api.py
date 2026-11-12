@@ -11,7 +11,6 @@ import pytest
 
 from scaly.function.model import as_concrete
 import scaly as sc
-from scaly.ad.sparse import SparseJacobian
 
 
 def test_scoped_function_decorator_builds_fresh_named_function() -> None:
@@ -47,12 +46,9 @@ def test_derivative_names_dispatch_for_expression_and_function_inputs() -> None:
     assert tuple(signature.parameters)[1] != "of"
     expr_result = build(y, x)
     keyword_expr_result = build(y, wrt=x)
-    if build in (sc.sparse_jacobian, sc.sparse_hessian):
-      assert isinstance(expr_result, SparseJacobian)
-      assert isinstance(keyword_expr_result, SparseJacobian)
-    else:
-      assert isinstance(expr_result, sc.Expr)
-      assert isinstance(keyword_expr_result, sc.Expr)
+    assert isinstance(expr_result, sc.Expr)
+    assert isinstance(keyword_expr_result, sc.Expr)
+    assert (expr_result.type.pattern is not None) == (build in (sc.sparse_jacobian, sc.sparse_hessian))
     dynamic_build = cast(Any, build)
     with pytest.raises(TypeError):
       dynamic_build(y, wrt=x, name="expr")
@@ -62,12 +58,22 @@ def test_derivative_names_dispatch_for_expression_and_function_inputs() -> None:
     assert isinstance(build(fn, of="y", wrt="x"), sc.Function)
 
 
+def test_expression_sparse_derivatives_reject_non_default_layouts() -> None:
+  x = sc.sym("x", 2)
+  y = (x * x).sum()
+  for build, layout in ((sc.sparse_jacobian, "csr"), (sc.sparse_hessian, "bogus")):
+    with pytest.raises(TypeError, match=f"{build.__name__} Expr form does not accept layout"):
+      cast(Any, build)(y, x, layout=layout)
+
+
 def test_factory_specs_are_frozen_and_hessian_names_are_doubled() -> None:
   specs = (sc.factory.Jac, sc.factory.Grad, sc.factory.Hess, sc.factory.SpJac, sc.factory.SpHess, sc.factory.Fwd, sc.factory.Adj)
   for spec_type in specs:
     spec = spec_type("y", "x")
     assert is_dataclass(spec)
-    expected_fields = ("of", "wrt", "triangle") if spec_type is sc.factory.SpHess else ("of", "wrt")
+    expected_fields = {sc.factory.SpJac: ("of", "wrt", "layout"), sc.factory.SpHess: ("of", "wrt", "triangle", "layout")}.get(
+      spec_type, ("of", "wrt")
+    )
     assert tuple(field.name for field in fields(spec)) == expected_fields
     with pytest.raises(FrozenInstanceError):
       setattr(spec, "of", "other")

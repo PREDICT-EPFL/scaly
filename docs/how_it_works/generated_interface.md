@@ -202,42 +202,23 @@ cannot be included from C.
 
 ## Sparse outputs
 
-A sparse derivative output is written as compact values in the coordinate
-order that lowering produced. That order is not sorted and can change when
-coloring or `vmap` lowering changes, which is why the header carries
-`_csr_val_perm` and `_csc_val_perm` tables rather than promising an order. The
-[guide](../guide/codegen.md#sparse-output-patterns) shows the tables for a
+A sparse derivative output is a sparse matrix output like any other: its buffer
+holds the stored values in the output's declared layout, compressed-column by
+default, and the header publishes that layout's index tables. Inside the graph
+the values follow the row-major order of the pattern, and lowering writes them
+in the declared order at the boundary. When the computed order already matches
+the declared one, as for a solver oracle that declares the order its
+derivative is computed in, the values are written straight into the output.
+The [guide](../guide/codegen.md#sparse-output-patterns) shows the tables for a
 concrete Jacobian, and [versioning](../dev/versioning.md) says what a release
 promises about them.
 
 ## The CasADi layer
 
-CasADi expects sparse values in compressed-column order. With `casadi=True`,
-an output whose native order differs is written to extra workspace and then
-permuted into `res`. For the three-by-three Jacobian from the guide, the plain
-module needs no workspace and the CasADi module needs five doubles, one per
-nonzero. Its entry, with the body of the computation trimmed:
-
-```c
-int measurements_jac(const double** arg, double** res, int* iw, double* w, int mem) {
-  (void)iw;
-  (void)mem;
-  if (!arg || !res) return SCALY_ERR_NULL_ABI;
-  if (!w) return SCALY_ERR_NULL_WORK;
-  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
-  if (!res[0]) return SCALY_ERR_NULL_RESULT;
-  double* spjac_y_x_native = w + 0;
-  /* ... computation trimmed, writing into spjac_y_x_native ... */
-  static const int spjac_y_x_csc_val_perm[5] = {0, 3, 2, 1, 4};
-  for (int k = 0; k < 5; ++k) res[0][k] = spjac_y_x_native[spjac_y_x_csc_val_perm[k]];
-  return SCALY_SUCCESS;
-}
-```
-
-The scratch starts after the function's own packed workspace, and the header's
-`SZ_W` and the `_work` query both include it. Outputs already in column order,
-such as the matrices extracted for a quadratic program, need no copy. The
-header's sparsity tables describe the order actually written.
+CasADi expects sparse values in compressed-column order, the default layout, so
+`casadi=True` writes every sparse output directly into `res` and refuses a CSR,
+coordinate or batched sparse output. The header's sparsity tables and the
+`sparsity_out` query describe the same compressed-column order.
 
 `casadi.external` passes a null pointer for an input or output with no values.
 The sparsity queries keep its declared dimensions, with a shape `(0,)`

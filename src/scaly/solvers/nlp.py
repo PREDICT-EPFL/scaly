@@ -11,7 +11,7 @@ from ..function.tree import group, arg
 from ..ir.expr import Expr
 from ..ir.types import TensorType
 from .model import SolverDescriptor, descriptor_function, solver_options
-from .problem import Problem
+from .problem import Problem, _value_order
 from .registry import NlpSolverBackend
 from ._stage import stage_oracles
 
@@ -33,7 +33,7 @@ def build_nlp[SV, NV, SP, NP](
   nlp = problem._nlp
   staged = stage_oracles(problem) if getattr(backend, "stage_oracles", False) and problem.stage_functions is not None else None
   hess_fn = nlp.hess(backend.hess_triangle) if staged is None else None
-  hess_sparsity = hess_fn.output_sparsities[0] if hess_fn is not None else None
+  hess_sparsity = _value_order(hess_fn) if hess_fn is not None else None
 
   solver_vars = problem.vars
   input_tree = group(

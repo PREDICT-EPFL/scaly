@@ -11,10 +11,11 @@ import numpy as np
 from ..ad.derivatives import gradient as _gradient_expr
 from ..ad.derivatives import hessian as _hessian_expr
 from ..ad.derivatives import jacobian as _jacobian_expr
-from ..ad.sparse import SparseJacobian, Triangle
+from ..ad.sparse import Triangle
 from ..ad.sparse import sparse_hessian as _expr_sparse_hessian
 from ..ad.sparse import sparse_jacobian as _expr_sparse_jacobian
 from ..ir.expr import Expr, substitute
+from ..ir.layout import Layout
 from ..ir.types import SparsityPattern
 from .concrete import ConcreteFunction, CustomRules
 from .factory import Adj, Fwd, Grad, Hess, Jac, SpHess, SpJac
@@ -158,6 +159,7 @@ def _unseeded[SI, NI](
   kind: type[Jac] | type[Grad] | type[Hess] | type[SpJac] | type[SpHess],
   *,
   triangle: Triangle = "full",
+  layout: Layout = "csc",
 ) -> Function[SI, NI, Expr, NumericalArray]:
   source = Function._from_instance(source) if isinstance(source, ConcreteFunction) else source
   inputs, outputs = _declared(source, of, wrt)
@@ -169,7 +171,13 @@ def _unseeded[SI, NI](
   def transform(concrete: ConcreteFunction) -> ConcreteFunction:
     output = _unique_name(concrete.output_names, of, "of")
     variable = _unique_name(concrete.input_names, wrt, "wrt")
-    spec = kind(output, variable, triangle=triangle) if kind is SpHess else kind(output, variable)
+    spec = (
+      SpHess(output, variable, triangle=triangle, layout=layout)
+      if kind is SpHess
+      else SpJac(output, variable, layout=layout)
+      if kind is SpJac
+      else kind(output, variable)
+    )
     instance_name = derived_name(source, concrete, name, f"{concrete.name}_{spec.output_name}")
     key = (instance_name, spec)
     if key in concrete._memo.derivatives:
@@ -287,13 +295,18 @@ def hessian(
 
 
 @overload
-def sparse_jacobian(source: Expr, wrt: Expr) -> SparseJacobian: ...
+def sparse_jacobian(source: Expr, wrt: Expr) -> Expr: ...
 
 
 @overload
 def sparse_jacobian[SI, NI, SO, NO](
-  source: Function[SI, NI, SO, NO] | ConcreteFunction[SI, NI, SO, NO], of: str | None = None, wrt: str | None = None, *, name: str | None = None
-) -> Function[SI, NI, Expr, Array]: ...
+  source: Function[SI, NI, SO, NO] | ConcreteFunction[SI, NI, SO, NO],
+  of: str | None = None,
+  wrt: str | None = None,
+  *,
+  name: str | None = None,
+  layout: Layout = "csc",
+) -> Function[SI, NI, Expr, NumericalArray]: ...
 
 
 def sparse_jacobian(
@@ -302,21 +315,27 @@ def sparse_jacobian(
   wrt: Expr | str | None = None,
   of: str | None = None,
   name: str | None = None,
-) -> SparseJacobian | Function:
-  """Build compact nonzero Jacobian values for an Expr or a named Function output.
+  layout: Layout = "csc",
+) -> Expr | Function:
+  """Build a sparse Jacobian that stores only its structural nonzeros, for an Expr or a named Function output.
 
-  For an expression source, ``wrt`` must be an independent input.
+  For an expression source, ``wrt`` must be an independent input, and the result is a sparse
+  tensor of shape ``(source.size, wrt.size)``. For a Function, the output is a sparse leaf whose
+  values are stored in ``layout``: ``"csc"`` (the default), ``"csr"``, or a ``SparsityPattern``
+  listing the same coordinates in the order the caller wants.
   """
   if isinstance(source, Expr):
+    if layout != "csc":
+      raise TypeError("sparse_jacobian Expr form does not accept layout")
     return _expr_sparse_jacobian(source, _expr_wrt("sparse_jacobian", args, wrt, of, name))
   if not isinstance(source, Function | ConcreteFunction):
     raise TypeError("sparse_jacobian source must be an Expr or Function")
   function_of, function_wrt = _function_names("sparse_jacobian", args, wrt, of)
-  return _unseeded(source, name, function_of, function_wrt, SpJac)
+  return _unseeded(source, name, function_of, function_wrt, SpJac, layout=layout)
 
 
 @overload
-def sparse_hessian(source: Expr, wrt: Expr, *, triangle: Triangle = "full") -> SparseJacobian: ...
+def sparse_hessian(source: Expr, wrt: Expr, *, triangle: Triangle = "full") -> Expr: ...
 
 
 @overload
@@ -327,7 +346,8 @@ def sparse_hessian[SI, NI, SO, NO](
   *,
   name: str | None = None,
   triangle: Triangle = "full",
-) -> Function[SI, NI, Expr, Array]: ...
+  layout: Layout = "csc",
+) -> Function[SI, NI, Expr, NumericalArray]: ...
 
 
 def sparse_hessian(
@@ -337,19 +357,24 @@ def sparse_hessian(
   of: str | None = None,
   name: str | None = None,
   triangle: Triangle = "full",
-) -> SparseJacobian | Function:
-  """Build compact nonzero Hessian values for an Expr or a named Function output.
+  layout: Layout = "csc",
+) -> Expr | Function:
+  """Build a sparse Hessian that stores only its structural nonzeros, for an Expr or a named scalar Function output.
 
-  For an expression source, ``wrt`` must be an independent input.
-  ``triangle`` selects the symmetric pattern returned by the sparse Hessian: ``"full"`` keeps
-  every entry, while ``"lower"`` and ``"upper"`` keep one triangle in the full pattern's order.
+  For an expression source, ``wrt`` must be an independent input, and the result is a sparse
+  tensor of shape ``(wrt.size, wrt.size)``. ``triangle`` selects the stored entries: ``"full"``
+  keeps the whole symmetric pattern, while ``"lower"`` and ``"upper"`` keep one triangle with the
+  diagonal. For a Function, the output is a sparse leaf whose values are stored in ``layout``, as
+  for ``sparse_jacobian``.
   """
   if isinstance(source, Expr):
+    if layout != "csc":
+      raise TypeError("sparse_hessian Expr form does not accept layout")
     return _expr_sparse_hessian(source, _expr_wrt("sparse_hessian", args, wrt, of, name), triangle=triangle)
   if not isinstance(source, Function | ConcreteFunction):
     raise TypeError("sparse_hessian source must be an Expr or Function")
   function_of, function_wrt = _function_names("sparse_hessian", args, wrt, of)
-  return _unseeded(source, name, function_of, function_wrt, SpHess, triangle=triangle)
+  return _unseeded(source, name, function_of, function_wrt, SpHess, triangle=triangle, layout=layout)
 
 
 def _seeded(
@@ -360,6 +385,7 @@ def _seeded(
   kind: str,
   aux_name: str = "gamma",
   triangle: Triangle = "full",
+  layout: Layout = "csc",
 ) -> Function:
   source = Function._from_instance(source) if isinstance(source, ConcreteFunction) else source
   inputs, outputs = _declared(source, of, wrt)
@@ -409,7 +435,7 @@ def _seeded(
     else:
       output_names = list(concrete.output_names)
       seed_tree = concrete.output_tree.relabel("lam:")
-      spec = Hess(aux_name, variable) if kind == "hess" else SpHess(aux_name, variable, triangle=triangle)
+      spec = Hess(aux_name, variable) if kind == "hess" else SpHess(aux_name, variable, triangle=triangle, layout=layout)
       factory_inputs = [*concrete.input_names, *seed_tree.names]
       aux = {aux_name: output_names}
     instance_name = derived_name(source, concrete, name, f"{concrete.name}_{spec.output_name}")
@@ -542,9 +568,10 @@ def sparse_lagrangian_hessian[*Ss, *Ns, SO, NO](
   name: str | None = None,
   aux_name: str = "gamma",
   triangle: Triangle = "full",
-) -> Function[tuple[*Ss, SO], tuple[*Ns, NO], Expr, Array]:
-  """Create compact weighted Hessian values with multipliers matching the output tree."""
-  return _seeded(fn, None, wrt, name, "sphess", aux_name, triangle)
+  layout: Layout = "csc",
+) -> Function[tuple[*Ss, SO], tuple[*Ns, NO], Expr, NumericalArray]:
+  """Create the sparse weighted Hessian with multipliers matching the output tree, stored in ``layout``."""
+  return _seeded(fn, None, wrt, name, "sphess", aux_name, triangle, layout)
 
 
 type _Rule = Function[Any, Any, Any, Any] | ConcreteFunction[Any, Any, Any, Any]

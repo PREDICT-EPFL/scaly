@@ -243,10 +243,10 @@ if TYPE_CHECKING:
 
   assert_type(sc.jacobian(hole)(matrix), np.ndarray)
   assert_type(sc.hessian(sparse_cost)(matrix), np.ndarray)
-  assert_type(sc.sparse_jacobian(hole)(matrix), np.ndarray)
-  assert_type(sc.sparse_hessian(sparse_cost)(matrix), np.ndarray)
+  assert_type(sc.sparse_jacobian(hole)(matrix), NumericalArray)
+  assert_type(sc.sparse_hessian(sparse_cost)(matrix), NumericalArray)
   assert_type(sc.lagrangian_hessian(hole)(matrix, matrix), np.ndarray)
-  assert_type(sc.sparse_lagrangian_hessian(hole)(matrix, matrix), np.ndarray)
+  assert_type(sc.sparse_lagrangian_hessian(hole)(matrix, matrix), NumericalArray)
 
 
 if TYPE_CHECKING:

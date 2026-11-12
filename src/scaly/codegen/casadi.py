@@ -1,17 +1,16 @@
 """The CasADi 3.8 compatible layer (``casadi=True``): the ``casadi_int``/``casadi_real`` defines, the
 query functions CasADi's ``external`` and acados resolve, the compressed-column sparsity encoding,
-the render-time layout check, and the gather that hands a compact sparse output to the caller in
-compressed-column order (``docs/how_it_works/generated_interface.md``)."""
+and the render-time layout check (``docs/how_it_works/generated_interface.md``)."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 from .abi import c_ident
 from ..function.concrete import ConcreteFunction
 from ..function.tree import Tree, _G, _Leaf
 from ..ir.layout import DenseLayout, SparseLayout
-from ..ir.types import SparsityPattern, dtypes
+from ..ir.types import dtypes
 
 CASADI_QUERIES = (
   "n_in",
@@ -62,11 +61,11 @@ def casadi_declarations(symbol: str) -> list[str]:
 
 def check_casadi_layout(fun: ConcreteFunction) -> None:
   """Reject leaves CasADi cannot describe: other dtypes than float64, batch axes and non-CSC sparse orders."""
-  for kind, names, exprs, layouts, sparsities in (
-    ("input", fun.input_names, fun.inputs, fun.input_tree.layouts, (None,) * len(fun.inputs)),
-    ("output", fun.output_names, fun.outputs, fun.output_tree.layouts, fun.output_sparsities),
+  for kind, names, exprs, layouts in (
+    ("input", fun.input_names, fun.inputs, fun.input_tree.layouts),
+    ("output", fun.output_names, fun.outputs, fun.output_tree.layouts),
   ):
-    for name, expr, layout, sp in zip(names, exprs, layouts, sparsities, strict=True):
+    for name, expr, layout in zip(names, exprs, layouts, strict=True):
       if expr.type.dtype != dtypes.float64:
         raise ValueError(f"casadi=True: {kind} {name!r} of {fun.name!r} has dtype {expr.type.dtype}; CasADi passes only float64 values")
       if isinstance(layout, SparseLayout):
@@ -74,7 +73,7 @@ def check_casadi_layout(fun: ConcreteFunction) -> None:
           raise ValueError(f"casadi=True: {kind} {name!r} of {fun.name!r} has batch axes; CasADi only supports two-dimensional sparse leaves")
         if layout.format != "csc":
           raise ValueError(f"casadi=True: {kind} {name!r} of {fun.name!r} must declare CSC layout; got {layout.format!r}")
-      elif sp is None and len(expr.shape) > 2:
+      elif len(expr.shape) > 2:
         raise ValueError(f"casadi=True: {kind} {name!r} of {fun.name!r} has batch axes; CasADi only supports two-dimensional dense leaves")
 
 
@@ -105,68 +104,12 @@ def _dense_dims(shape: tuple[int, ...]) -> tuple[int, int]:
   return (shape[0], shape[1])
 
 
-def casadi_sparsity(shape: tuple[int, ...], sp: SparsityPattern | SparseLayout | DenseLayout | None) -> tuple[int, ...]:
+def casadi_sparsity(shape: tuple[int, ...], layout: SparseLayout | DenseLayout | None) -> tuple[int, ...]:
   """CasADi's compressed encoding: ``{nrow, ncol, 1}`` for dense, ``{nrow, ncol, colind..., row...}``
   for sparse."""
-  if sp is None or isinstance(sp, DenseLayout):
+  if not isinstance(layout, SparseLayout):
     return (*_dense_dims(shape), 1)
-  if isinstance(sp, SparseLayout):
-    return (*sp.pattern.shape, *map(int, sp.indptr), *map(int, sp.indices))
-  col_ptr, row_ind, _ = sp.to_csc()
-  return (*sp.shape, *col_ptr, *row_ind)
-
-
-def csc_ordered(sp: SparsityPattern) -> SparsityPattern:
-  """``sp`` with its nonzeros listed in compressed-column order, which is the order a CasADi caller
-  reads the value buffer in under ``casadi=True``. The header's tables are rendered from this
-  pattern so they describe the buffer actually written; its ``csc_val_perm`` is the identity."""
-  _, _, perm = sp.to_csc()
-  return SparsityPattern(sp.shape, tuple(sp.rows[i] for i in perm), tuple(sp.cols[i] for i in perm))
-
-
-def casadi_output_sparsities(fun: ConcreteFunction) -> tuple[SparsityPattern | None, ...]:
-  return tuple(None if sp is None else csc_ordered(sp) for sp in fun.output_sparsities)
-
-
-def _needs_gather(sp: SparsityPattern | None) -> bool:
-  return sp is not None and sp.to_csc()[2] != tuple(range(sp.nnz))
-
-
-def casadi_scratch(fun: ConcreteFunction) -> int:
-  """Doubles added to ``SZ_W`` for the compressed-column gather: ``nnz`` per compact sparse output
-  whose native order is not already compressed-column (the QP path's patterns are, so they add 0)."""
-  return sum(sp.nnz for sp in fun.output_sparsities if _needs_gather(sp) and sp is not None)
-
-
-@dataclass(frozen=True, slots=True)
-class CasadiGather:
-  """How an entry hands compact sparse outputs over in compressed-column order: ``ptr`` redirects
-  the body's writes for those outputs into ``w`` past the packed workspace, ``setup`` declares
-  the scratch pointers, and ``epilogue`` permutes each into ``res[i]`` through ``csc_val_perm``."""
-
-  ptr: dict[str, str]
-  setup: list[str]
-  epilogue: list[str]
-
-
-def casadi_gather(fun: ConcreteFunction, base_sz_w: int) -> CasadiGather:
-  ptr: dict[str, str] = {}
-  setup: list[str] = []
-  epilogue: list[str] = []
-  offset = base_sz_w
-  for i, (name, sp) in enumerate(zip(fun.output_names, fun.output_sparsities, strict=True)):
-    if sp is None or not _needs_gather(sp):
-      continue
-    ident = c_ident(name)
-    _, _, perm = sp.to_csc()
-    ptr[name] = f"{ident}_native"
-    setup.append(f"  double* {ident}_native = w + {offset};")
-    epilogue += [
-      f"  static const int {ident}_csc_val_perm[{sp.nnz}] = {{{', '.join(str(p) for p in perm)}}};",
-      f"  for (int k = 0; k < {sp.nnz}; ++k) res[{i}][k] = {ident}_native[{ident}_csc_val_perm[k]];",
-    ]
-    offset += sp.nnz
-  return CasadiGather(ptr, setup, epilogue)
+  return (*layout.pattern.shape, *map(int, layout.indptr), *map(int, layout.indices))
 
 
 def _switch(symbol: str, ret: str, name: str, cases: list[str], default: str) -> list[str]:
@@ -185,25 +128,18 @@ def _c_string(text: str) -> str:
 
 
 def render_casadi_queries(fun: ConcreteFunction, sz_w: int) -> list[str]:
-  """Definitions of the query functions for the translation unit. ``sz_w`` is the total ``SZ_W``
-  the header quotes, gather scratch included."""
+  """Definitions of the query functions for the translation unit. ``sz_w`` is the ``SZ_W`` the header quotes."""
   symbol = c_ident(fun.name)
   n_in, n_out = len(fun.inputs), len(fun.outputs)
   tables: list[str] = []
   names_in: list[str] = []
   names_out: list[str] = []
-  for kind, names, exprs, sparsities, into in (
-    ("in", fun.input_names, fun.inputs, fun.input_tree.layouts, names_in),
-    (
-      "out",
-      fun.output_names,
-      fun.outputs,
-      tuple(layout or sp for layout, sp in zip(fun.output_tree.layouts, fun.output_sparsities, strict=True)),
-      names_out,
-    ),
+  for kind, exprs, layouts, into in (
+    ("in", fun.inputs, fun.input_tree.layouts, names_in),
+    ("out", fun.outputs, fun.output_tree.layouts, names_out),
   ):
-    for k, (name, expr, sp) in enumerate(zip(names, exprs, sparsities, strict=True)):
-      values = casadi_sparsity(expr.shape, sp)
+    for k, (expr, layout) in enumerate(zip(exprs, layouts, strict=True)):
+      values = casadi_sparsity(expr.shape, layout)
       tables.append(f"static const casadi_int {symbol}_s{kind}{k}[{len(values)}] = {{{', '.join(str(v) for v in values)}}};")
       into.append(f"{symbol}_s{kind}{k}")
   return [

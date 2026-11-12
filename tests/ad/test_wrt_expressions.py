@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import scaly as sc
+from scaly.ad.sparse import _sparse_hessian
 
 
 POINT = np.array([0.3, 1.0, 2.0, -1.5, 0.7, 5.0])
@@ -81,10 +82,10 @@ def test_dense_and_sparse_forms(kind: str) -> None:
       return sc.jacobian(vector, p)
     if kind in {"sparse", "colored", "reference"}:
       builder = {"sparse": sc.sparse_jacobian, "colored": sc.sparse_jacobian_colored, "reference": sc.sparse_jacobian_reference}[kind]
-      return builder(vector, p).to_dense()
+      return sc.to_dense(builder(vector, p))
     if kind == "later-lower":
-      return sc.sparse_hessian(energy, p).triangle("lower").to_dense()
-    return sc.sparse_hessian(energy, p, triangle="lower" if kind == "hess-lower" else "upper" if kind == "hess-upper" else "full").to_dense()
+      return sc.to_dense(_sparse_hessian(energy, p).triangle("lower").leaf())
+    return sc.to_dense(sc.sparse_hessian(energy, p, triangle="lower" if kind == "hess-lower" else "upper" if kind == "hess-upper" else "full"))
 
   grad, hess, jac = _references(POINT)
   expected = grad if kind == "grad" else hess if "hess" in kind or kind == "later-lower" else jac
@@ -158,7 +159,7 @@ def test_call_and_map(mapped: bool, slice_output: bool) -> None:
     out = value[1:3] ** 3 + value[0] if slice_output else value
     pattern = sc.jacobian_sparsity(out, p)
     assert pattern.nnz == (5 if slice_output else 6)
-    return sc.jacobian(out, p), sc.sparse_jacobian(out, p).to_dense(), sc.vjp((out,), (p,), (sc.const(np.ones(out.shape)),))[0]
+    return sc.jacobian(out, p), sc.to_dense(sc.sparse_jacobian(out, p)), sc.vjp((out,), (p,), (sc.const(np.ones(out.shape)),))[0]
 
   a, b, d, e = POINT[1:5]
   values = np.array([a * b, np.sin(a) * b**2, d * e, np.sin(d) * e**2])
@@ -208,7 +209,7 @@ def test_structured_map_of_an_input_slice(window: bool) -> None:
   def fn(c: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     p = c[1:5]
     value = sc.vmap(_pair, 2)(sc.window(p, 0, 2) if window else p.reshape((2, 2))).vec()
-    return sc.jacobian(value, c), sc.sparse_jacobian(value, c).to_dense()
+    return sc.jacobian(value, c), sc.to_dense(sc.sparse_jacobian(value, c))
 
   expected = np.zeros((4, 6))
   for i, (a, b) in enumerate(POINT[1:5].reshape(2, 2)):

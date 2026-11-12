@@ -84,7 +84,7 @@ src/scaly/
     abi.py               the pointer ABI: signature, status codes, mangling
     c.py                 ProgramNode -> GNU vector C or C99 lane loops; no lowering policy of its own
     cpp.py               the C++ header: the Buffer template and a namespace per function
-    casadi.py            the CasADi 3.8 layer: query functions, CSC encoding, the gather
+    casadi.py            the CasADi 3.8 layer: query functions, CSC encoding, layout checks
     __main__.py          compatibility shim for `python -m scaly.codegen`
     solver.py            solver extern libraries and their options/statistics interface
     aot.py               one lowering -> CModule, the C header, the file-writing driver, the CLI

@@ -76,7 +76,7 @@ def test_where_with_broadcast_operands_differentiates_like_its_unrolled_form() -
     cond = (x[:2] > 0.5).reshape((2, 1))
     out = sc.where(cond, x.sin(), x[0] * 2.0).reshape((6,))  # (2, 1) condition, (3,) and () branches
     (rev,) = sc.vjp((out,), (x,), (sc.const(lam),))
-    return out, sc.jacobian(out, x), rev, sc.sparse_jacobian(out, x).to_dense(), sc.hessian((out * sc.const(lam)).sum(), x)
+    return out, sc.jacobian(out, x), rev, sc.to_dense(sc.sparse_jacobian(out, x)), sc.hessian((out * sc.const(lam)).sum(), x)
 
   xv = np.array([0.2, 0.9, -0.4])
   value, jac, rev, sparse_dense, hess = (np.asarray(v) for v in picked(xv))

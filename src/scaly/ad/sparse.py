@@ -7,7 +7,7 @@ the structured VMAP decomposition that keeps a multistage Jacobian from material
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 import numpy as np
@@ -45,11 +45,12 @@ def _validate_triangle(triangle: object) -> Triangle:
 
 
 @dataclass(frozen=True, slots=True)
-class SparseJacobian:
-  """A sparse derivative: the structural ``sparsity`` and the ``values`` of its entries, in the same order.
+class _Compact:
+  """Compact derivative values in the coordinate order of ``sparsity``, before they become a sparse leaf.
 
   ``coloring_width`` is the number of forward-mode directions the values were computed from, or
-  ``None`` when they did not come from a coloring.
+  ``None`` when they did not come from a coloring. A colored result also keeps the compressed
+  JVP batch and its recovery indices, so selecting a triangle or reordering gathers from it directly.
   """
 
   sparsity: SparsityPattern
@@ -58,16 +59,13 @@ class SparseJacobian:
   _compressed: Expr | None = field(default=None, compare=False, repr=False)
   _recovery: np.ndarray | None = field(default=None, compare=False, repr=False)
 
-  @property
-  def flat_indices(self) -> np.ndarray:
-    """Row-major positions of the entries in the dense matrix."""
-    return np.asarray(self.sparsity.rows, dtype=np.int64) * self.sparsity.shape[1] + np.asarray(self.sparsity.cols, dtype=np.int64)
+  def _select(self, keep: np.ndarray, sparsity: SparsityPattern) -> _Compact:
+    """The entries at ``keep``, in that order, gathered straight from the compressed batch when there is one."""
+    source = self._compressed if self._compressed is not None else self.values
+    recovery = self._recovery[keep] if self._recovery is not None else keep
+    return _Compact(sparsity, simplify_cse_fixpoint(gather(source, recovery)), self.coloring_width, source, recovery)
 
-  def to_dense(self) -> Expr:
-    """Scatter the values into a dense matrix expression."""
-    return scatter(self.values, self.flat_indices, self.sparsity.shape)
-
-  def triangle(self, triangle: Triangle) -> SparseJacobian:
+  def triangle(self, triangle: Triangle) -> _Compact:
     """Select one triangle from a symmetric sparse matrix without rebuilding its JVP batch."""
     triangle = _validate_triangle(triangle)
     if triangle == "full":
@@ -76,20 +74,26 @@ class SparseJacobian:
       raise ValueError(f"triangle selection requires a square sparsity pattern, got {self.sparsity.shape}")
     rows = np.asarray(self.sparsity.rows, dtype=np.int64)
     cols = np.asarray(self.sparsity.cols, dtype=np.int64)
-    keep = rows >= cols if triangle == "lower" else rows <= cols
-    sparsity = SparsityPattern(
-      self.sparsity.shape,
-      tuple(int(row) for row in rows[keep]),
-      tuple(int(col) for col in cols[keep]),
-    )
-    source = self._compressed if self._compressed is not None else self.values
-    recovery = self._recovery[keep] if self._recovery is not None else np.flatnonzero(keep)
-    values = simplify_cse_fixpoint(gather(source, recovery))
-    return SparseJacobian(sparsity, values, self.coloring_width, source, recovery)
+    keep = np.flatnonzero(rows >= cols if triangle == "lower" else rows <= cols)
+    return self._select(keep, SparsityPattern(self.sparsity.shape, tuple(map(int, rows[keep])), tuple(map(int, cols[keep]))))
+
+  def leaf(self) -> Expr:
+    """The values as a sparse tensor over the canonical pattern."""
+    logical_size = self.sparsity.shape[0] * self.sparsity.shape[1]
+    if logical_size > np.iinfo(np.int64).max:
+      raise ValueError(f"sparse derivative logical size {logical_size} exceeds int64; see #447")
+    pattern, order = self.sparsity.canonicalize()
+    values = self.values
+    if order != tuple(range(len(order))):
+      source = self._compressed if self._compressed is not None else self.values
+      indices = np.asarray(order, dtype=np.int64)
+      recovery = self._recovery[indices] if self._recovery is not None else indices
+      values = simplify_cse_fixpoint(gather(source, recovery))
+    return pack(values, pattern, shape=pattern.shape)
 
 
-def sparse_jacobian_reference(expr: Expr, wrt: Expr) -> SparseJacobian:
-  """Reference compact Jacobian path: build dense ``J`` and gather nonzeros.
+def sparse_jacobian_reference(expr: Expr, wrt: Expr) -> Expr:
+  """Reference sparse Jacobian path: build the dense Jacobian and keep its structural nonzeros.
 
   ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration.
   """
@@ -97,14 +101,18 @@ def sparse_jacobian_reference(expr: Expr, wrt: Expr) -> SparseJacobian:
   sparsity = jacobian_sparsity(expr, wrt)
   dense = jacobian(expr, wrt)
   flat = np.asarray(sparsity.rows, dtype=np.int64) * wrt.size + np.asarray(sparsity.cols, dtype=np.int64)
-  return SparseJacobian(sparsity, gather(dense, flat))
+  return _Compact(sparsity, gather(dense, flat)).leaf()
 
 
-def sparse_jacobian_colored(expr: Expr, wrt: Expr) -> SparseJacobian:
-  """Compact sparse Jacobian values from graph-colored compressed JVPs.
+def sparse_jacobian_colored(expr: Expr, wrt: Expr) -> Expr:
+  """Sparse Jacobian from graph-colored compressed JVPs over the whole pattern.
 
   ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration.
   """
+  return _colored(expr, wrt).leaf()
+
+
+def _colored(expr: Expr, wrt: Expr) -> _Compact:
   _check_wrt(wrt)
   expr = cse(expr)
   sparsity = jacobian_sparsity(expr, wrt)
@@ -123,10 +131,10 @@ def _sparse_jacobian_colored(
   sparsity: SparsityPattern,
   colors: tuple[int, ...],
   recovery_indices: np.ndarray | None = None,
-) -> SparseJacobian:
+) -> _Compact:
   """Build compact values from a coloring and an optional compressed-row recovery table."""
   if sparsity.nnz == 0:
-    return SparseJacobian(sparsity, Expr.const(np.zeros((0,), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype), 0)
+    return _Compact(sparsity, Expr.const(np.zeros((0,), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype), 0)
   ncolors = max(colors) + 1 if colors else 0
   seeds = np.zeros((ncolors, wrt.type.storage_size), dtype=wrt.type.dtype.numpy())
   for col, color in enumerate(colors):
@@ -143,10 +151,7 @@ def _sparse_jacobian_colored(
     flat = rows * ncolors + np.asarray([colors[int(col)] for col in cols], dtype=np.int64)
   else:
     flat = recovery_indices
-  values = simplify_cse_fixpoint(gather(compressed, flat))
-  return SparseJacobian(
-    sparsity, values, ncolors, compressed if recovery_indices is not None else None, flat if recovery_indices is not None else None
-  )
+  return _Compact(sparsity, simplify_cse_fixpoint(gather(compressed, flat)), ncolors, compressed, flat)
 
 
 def _star_recovery_indices(sparsity: SparsityPattern, colors: tuple[int, ...]) -> np.ndarray:
@@ -179,24 +184,27 @@ def _star_recovery_indices(sparsity: SparsityPattern, colors: tuple[int, ...]) -
   return np.asarray(flat, dtype=np.int64)
 
 
-def sparse_jacobian(expr: Expr, wrt: Expr) -> SparseJacobian:
-  """Compact sparse Jacobian: the structural pattern plus an expression for its nonzeros only.
+def sparse_jacobian(expr: Expr, wrt: Expr) -> Expr:
+  """Sparse Jacobian: a sparse tensor of shape ``(expr.size, wrt.size)`` storing only its structural nonzeros.
 
   ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration.
   Takes the structured path when ``expr`` is a ``VMAP`` (or a concatenation of them) over
   ``wrt`` or a constant gather of it. It colors the callee's small local pattern instead of the
   whole matrix, so the cost tracks the callee rather than the iteration count. Otherwise falls back
-  to coloring the global pattern. The value order is the pattern's ``(rows, cols)`` order, which
-  is not necessarily sorted.
+  to coloring the global pattern.
   """
+  return _sparse_jacobian(expr, wrt).leaf()
+
+
+def _sparse_jacobian(expr: Expr, wrt: Expr) -> _Compact:
   _check_wrt(wrt)
   structured = _sparse_jacobian_structured(expr, wrt)
   if structured is not None:
     return structured
-  return sparse_jacobian_colored(expr, wrt)
+  return _colored(expr, wrt)
 
 
-def _sparse_jacobian_structured(expr: Expr, wrt: Expr) -> SparseJacobian | None:
+def _sparse_jacobian_structured(expr: Expr, wrt: Expr) -> _Compact | None:
   """Try to compute the compact sparse Jacobian by splitting along axis 0 and routing every
   rank-1 ``ExprOp.VMAP`` piece through per-formal local coloring + const-seed JVPs.
 
@@ -217,7 +225,7 @@ def _sparse_jacobian_structured(expr: Expr, wrt: Expr) -> SparseJacobian | None:
     if piece.op == ExprOp.VMAP:
       sj = _sparse_jacobian_vmap(piece, wrt)
     else:
-      sj = sparse_jacobian_colored(piece, wrt)
+      sj = _colored(piece, wrt)
     if sj.coloring_width is not None:
       coloring_width += sj.coloring_width
     nnz_piece = sj.sparsity.nnz
@@ -228,12 +236,12 @@ def _sparse_jacobian_structured(expr: Expr, wrt: Expr) -> SparseJacobian | None:
     global_values.append(sj.values)
   sparsity = SparsityPattern((expr.size, wrt.size), tuple(global_rows), tuple(global_cols))
   if sparsity.nnz == 0:
-    return SparseJacobian(sparsity, Expr.const(np.zeros((0,), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype), coloring_width)
+    return _Compact(sparsity, Expr.const(np.zeros((0,), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype), coloring_width)
   # Flatten piece values that are themselves axis-0 CONCATs so their producers write straight
   # into the single output concat instead of materializing an intermediate nnz-sized buffer.
   flat = [a for v in global_values for a in (v.args if v.op == ExprOp.CONCAT and v.attrs.get("axis", 0) == 0 else (v,))]
   values = flat[0] if len(flat) == 1 else concat(flat, axis=0)
-  return SparseJacobian(sparsity, simplify_cse_fixpoint(values), coloring_width)
+  return _Compact(sparsity, simplify_cse_fixpoint(values), coloring_width)
 
 
 def _split_axis0_pieces(expr: Expr) -> list[tuple[Expr, int]] | None:
@@ -262,7 +270,7 @@ def _split_axis0_pieces(expr: Expr) -> list[tuple[Expr, int]] | None:
   return pieces
 
 
-def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
+def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> _Compact:
   """Compute compact sparse Jacobian of a rank-1 ``ExprOp.VMAP`` w.r.t. ``wrt`` using per-formal
   local coloring and const-seed JVPs wrapped in VMAPs.
 
@@ -279,9 +287,7 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
 
   global_sparsity = jacobian_sparsity(vmap_expr, wrt)
   if global_sparsity.nnz == 0 or length == 0:
-    return SparseJacobian(
-      global_sparsity, Expr.const(np.zeros((global_sparsity.nnz,), dtype=vmap_expr.type.dtype.numpy()), dtype=vmap_expr.type.dtype), 0
-    )
+    return _Compact(global_sparsity, Expr.const(np.zeros((global_sparsity.nnz,), dtype=vmap_expr.type.dtype.numpy()), dtype=vmap_expr.type.dtype), 0)
 
   dep_memo: dict[tuple[int, int], bool] = {}
   direct_formals: dict[int, np.ndarray] = {}
@@ -295,12 +301,10 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
       direct_formals[f_idx] = actual.attrs["indices"].reshape(-1) if actual.op == ExprOp.GATHER else np.arange(actual.size)
     elif _depends_on(actual, wrt, dep_memo):
       # Indirect dependency would require a chain-rule through actual_outer; fall back.
-      return sparse_jacobian_colored(vmap_expr, wrt)
+      return _colored(vmap_expr, wrt)
 
   if not direct_formals:
-    return SparseJacobian(
-      global_sparsity, Expr.const(np.zeros((global_sparsity.nnz,), dtype=vmap_expr.type.dtype.numpy()), dtype=vmap_expr.type.dtype), 0
-    )
+    return _Compact(global_sparsity, Expr.const(np.zeros((global_sparsity.nnz,), dtype=vmap_expr.type.dtype.numpy()), dtype=vmap_expr.type.dtype), 0)
 
   rows_arr = np.asarray(global_sparsity.rows, dtype=np.int64)
   cols_arr = np.asarray(global_sparsity.cols, dtype=np.int64)
@@ -358,9 +362,7 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
     pieces.append((gather(mapped_flat, flat_indices), contrib_idx))
 
   if not pieces:
-    return SparseJacobian(
-      global_sparsity, Expr.const(np.zeros((nnz,), dtype=vmap_expr.type.dtype.numpy()), dtype=vmap_expr.type.dtype), coloring_width
-    )
+    return _Compact(global_sparsity, Expr.const(np.zeros((nnz,), dtype=vmap_expr.type.dtype.numpy()), dtype=vmap_expr.type.dtype), coloring_width)
   perm = np.concatenate([idx for _, idx in pieces])
   if perm.size == nnz and np.bincount(perm, minlength=nnz).max() == 1:
     # Piece supports exactly partition the nnz (verified: every slot covered exactly once), so
@@ -368,20 +370,26 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
     # values back to back and permute the pattern to match — no full-nnz temporaries at all.
     values = pieces[0][0] if len(pieces) == 1 else concat([g for g, _ in pieces], axis=0)
     permuted = SparsityPattern(global_sparsity.shape, tuple(int(r) for r in rows_arr[perm]), tuple(int(c) for c in cols_arr[perm]))
-    return SparseJacobian(permuted, values, coloring_width)
+    return _Compact(permuted, values, coloring_width)
   values = None
   for gathered, contrib_idx in pieces:
     piece_values = gathered if np.array_equal(contrib_idx, np.arange(nnz)) else scatter(gathered, contrib_idx, (nnz,))
     values = piece_values if values is None else values + piece_values
   assert values is not None
-  return SparseJacobian(global_sparsity, values, coloring_width)
+  return _Compact(global_sparsity, values, coloring_width)
 
 
-def sparse_hessian(expr: Expr, wrt: Expr, *, triangle: Triangle = "full") -> SparseJacobian:
-  """Compact sparse Hessian of a scalar expression using one global star-colored JVP batch.
+def sparse_hessian(expr: Expr, wrt: Expr, *, triangle: Triangle = "full") -> Expr:
+  """Sparse Hessian of a scalar expression, a sparse tensor of shape ``(wrt.size, wrt.size)``.
 
-  ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration.
+  ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration. ``triangle``
+  selects the entries stored: ``"full"`` keeps the whole symmetric pattern, ``"lower"`` and
+  ``"upper"`` keep one triangle with the diagonal. All of them come from one star-colored JVP batch.
   """
+  return _sparse_hessian(expr, wrt, triangle=triangle).leaf()
+
+
+def _sparse_hessian(expr: Expr, wrt: Expr, *, triangle: Triangle = "full") -> _Compact:
   triangle = _validate_triangle(triangle)
   if expr.size != 1:
     raise ValueError("sparse_hessian expects a scalar expression")
@@ -398,7 +406,7 @@ def sparse_hessian(expr: Expr, wrt: Expr, *, triangle: Triangle = "full") -> Spa
     result = _sparse_jacobian_colored(grad, wrt, relation, column_coloring(compact))
     rows = entries[np.asarray(compact.rows, dtype=np.int64)]
     sparsity = SparsityPattern((wrt.size, wrt.size), tuple(map(int, rows)), cols)
-    return SparseJacobian(sparsity, result.values, result.coloring_width).triangle(triangle)
+    return replace(result, sparsity=sparsity).triangle(triangle)
   gradient_expr = cse(simplify(gradient(expr, wrt).reshape((wrt.size,))))
   sparsity = _symmetrize_sparsity(jacobian_sparsity(gradient_expr, wrt))
   colors = star_coloring(sparsity)

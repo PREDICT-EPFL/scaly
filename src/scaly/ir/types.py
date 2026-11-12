@@ -207,7 +207,8 @@ class SparsityPattern:
     cols = tuple(c for c in range(shape[1]) for _ in range(col_ptr[c + 1] - col_ptr[c]))
     return SparsityPattern(shape, row_ind, cols)
 
-  def to_mask(self) -> np.ndarray:
+  def to_mask(self: SparsityPattern | CanonicalPattern) -> np.ndarray:
+    """Return a dense Boolean mask of the stored coordinates."""
     mask = np.zeros(self.shape, dtype=bool)
     mask[list(self.rows), list(self.cols)] = True
     return mask
@@ -260,6 +261,8 @@ class CanonicalPattern:
   rows: tuple[int, ...]
   cols: tuple[int, ...]
   digest: str
+
+  to_mask = SparsityPattern.to_mask
 
   def __new__(cls, shape: tuple[int, int], rows: tuple[int, ...], cols: tuple[int, ...]) -> CanonicalPattern:
     pattern = SparsityPattern(shape, rows, cols)

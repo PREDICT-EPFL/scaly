@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import cast
 
 import numpy as np
+from scipy import sparse
 
 from scaly.function.model import as_concrete
 import scaly as sc
@@ -183,20 +184,15 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
   spj_vmap = sc.sparse_jacobian(fn_vmap, "eq", "z")
   spj_unroll = sc.sparse_jacobian(fn_unroll, "eq", "z")
 
-  # The nnz orderings differ (the VMAP path emits per-formal disjoint partitions), but the
-  # patterns must agree as coordinate sets and the densified values must match exactly.
-  sp_m, sp_u = as_concrete(spj_vmap).output_sparsities[0], as_concrete(spj_unroll).output_sparsities[0]
-  assert sp_m is not None and sp_u is not None
-  assert sp_m.shape == sp_u.shape and set(zip(sp_m.rows, sp_m.cols)) == set(zip(sp_u.rows, sp_u.cols))
+  # Both paths store the same canonical pattern, so their CSC value buffers line up entry by entry.
+  assert spj_vmap.sparsity() is spj_unroll.sparsity()
 
   rng = np.random.default_rng(2)
   zv = rng.normal(size=NZ * (N + 1))
   pv = rng.normal(size=NX * (N + 1))
-
-  dense_m, dense_u = np.zeros(sp_m.shape), np.zeros(sp_u.shape)
-  dense_m[np.asarray(sp_m.rows), np.asarray(sp_m.cols)] = np.asarray(spj_vmap((zv, pv)), dtype=np.float64).reshape(-1)
-  dense_u[np.asarray(sp_u.rows), np.asarray(sp_u.cols)] = np.asarray(spj_unroll((zv, pv)), dtype=np.float64).reshape(-1)
-  np.testing.assert_allclose(dense_m, dense_u, rtol=1e-10, atol=1e-10)
+  vmap_values, unroll_values = spj_vmap((zv, pv)), spj_unroll((zv, pv))
+  assert isinstance(vmap_values, sparse.csc_array) and isinstance(unroll_values, sparse.csc_array)
+  np.testing.assert_allclose(vmap_values.data, unroll_values.data, rtol=1e-10, atol=1e-10)
 
 
 # --- pairwise-barrier composition: gather-fed VMAP, VMAP -> gather -> VMAP, concat of two VMAPs ------
@@ -301,12 +297,8 @@ def test_gather_fed_chained_vmaps_spjac_and_sphess_match_dense() -> None:
   dense = fn.factory("pairs_vmap_jac2", ["u", "p"], [sc.factory.Jac("h", "u")])(*(uv, pv))
   assert isinstance(dense, np.ndarray)
   spjf = fn.factory("pairs_vmap_spjac", ["u", "p"], [sc.factory.SpJac("h", "u")])
-  sp = as_concrete(spjf).output_sparsities[0]
-  assert sp is not None
-  flat = np.asarray(sp.rows) * dense.shape[1] + np.asarray(sp.cols)
-  np.testing.assert_allclose(spjf(*(uv, pv)), np.ravel(dense)[flat], rtol=1e-10, atol=1e-10)
   # Coloring must not claim structural zeros that the dense Jacobian disagrees with.
-  assert not np.any(np.abs(dense[~sp.to_mask()]) > 1e-12)
+  np.testing.assert_allclose(spjf(*(uv, pv)).toarray(), dense, rtol=1e-10, atol=1e-10)
 
   # Second order through the same composition, against the unrolled reference.
   lam = np.arange(1.0, as_concrete(fn).outputs[0].shape[0] + 1.0)
@@ -316,10 +308,7 @@ def test_gather_fed_chained_vmaps_spjac_and_sphess_match_dense() -> None:
   }
   dense_hess = {}
   for name, hf in hess.items():
-    hsp = as_concrete(hf).output_sparsities[0]
-    assert hsp is not None
-    dense_hess[name] = np.zeros(hsp.shape)
-    dense_hess[name][np.asarray(hsp.rows), np.asarray(hsp.cols)] = np.asarray(hf(uv, pv, lam), dtype=np.float64).reshape(-1)
+    dense_hess[name] = hf(uv, pv, lam).toarray()
   np.testing.assert_allclose(dense_hess["vmap"], dense_hess["unroll"], rtol=1e-9, atol=1e-9)
 
   # The mapped Hessian must also be the derivative of the mapped Lagrangian gradient, so a wrong
@@ -380,4 +369,4 @@ def test_weighted_mapped_residual_cost_matches_unrolled_derivatives() -> None:
     derivatives = fn.factory(name + "_derivatives", ["x", "p"], ["f", sc.factory.Grad("f", "x"), sc.factory.SpHess("f", "x")])
     values.append(derivatives(*inputs))
   for actual, expected in zip(values[0], values[1], strict=True):
-    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(getattr(actual, "data", actual), getattr(expected, "data", expected), rtol=1e-12, atol=1e-12)
