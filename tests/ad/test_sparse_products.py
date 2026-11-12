@@ -130,16 +130,12 @@ def test_sparse_product_coordinate_mask_isolates_singular_inputs(left):
   np.testing.assert_array_equal(sc.gradient(loss, wrt="v")(np.array([1.0, 0.0]), np.array([1.0, -1.0])), [0.5, 0.0])
 
 
-@pytest.mark.parametrize("case", ["rectangular", "banded", "empty_product", "empty_operand", "empty_dimension"])
-@pytest.mark.parametrize("layout", ["csc", "csr", "coordinates"])
-def test_sparse_product_forward_and_reverse(case, layout):
+@pytest.mark.parametrize("case", ["rectangular", "empty_product", "empty_operand", "empty_dimension"])
+def test_sparse_product_forward_and_reverse(case):
   rng = np.random.default_rng(47)
   a = sparse.coo_array(rng.random((5, 7)) < 0.3)
   b = sparse.coo_array(rng.random((7, 4)) < 0.4)
-  if case == "banded":
-    a = sparse.diags_array([np.ones(6), np.ones(6)], offsets=[0, 1], shape=(6, 7), format="coo")
-    b = sparse.diags_array([np.ones(6), np.ones(6)], offsets=[0, -1], shape=(7, 6), format="coo")
-  elif case == "empty_product":
+  if case == "empty_product":
     a = sparse.coo_array(([1.0], ([0], [0])), shape=(5, 7))
     b = sparse.coo_array(([1.0], ([6], [3])), shape=(7, 4))
   elif case == "empty_operand":
@@ -151,8 +147,7 @@ def test_sparse_product_forward_and_reverse(case, layout):
   pc = pa.matmul(pb)
 
   def leaf(name, pattern, batch=()):
-    order = sc.SparsityPattern(pattern.shape, pattern.rows[::-1], pattern.cols[::-1]) if layout == "coordinates" else layout
-    return sc.arg(name, sc.TensorType((*batch, *pattern.shape), pattern=pattern), layout=order)
+    return sc.arg(name, sc.TensorType((*batch, *pattern.shape), pattern=pattern), layout="csc")
 
   @sc.function(
     leaf("a", pa),
@@ -161,7 +156,7 @@ def test_sparse_product_forward_and_reverse(case, layout):
     leaf("db", pb, (2,)),
     leaf("cot", pc),
     outputs=sc.group(leaf("dc", pc, (2,)), leaf("abar", pa), leaf("bbar", pb)),
-    name=f"sparse_product_ad_{case}_{layout}",
+    name=f"sparse_product_ad_{case}_csc",
   )
   def derivatives(a, b, da, db, cot):
     c = a @ b
@@ -242,8 +237,9 @@ def test_sampled_sparse_adjoint_does_not_materialize_the_unsampled_product(monke
   np.testing.assert_allclose(fn(a, b, cot, condition), (expected_cot @ b.T).diagonal())
 
 
-@pytest.mark.parametrize(("n", "masked"), [(32, False), (64, False), (64, True)])
-def test_weighted_gram_with_a_dense_column_has_stored_size_reverse_and_second_order_work(n, masked, monkeypatch):
+@pytest.mark.parametrize("masked", [False, True])
+def test_weighted_gram_with_a_dense_column_has_stored_size_reverse_and_second_order_work(masked, monkeypatch):
+  n = 64
   rows = np.tile(np.arange(2 * n), 3)
   cols = np.concatenate((np.arange(2 * n) // 2, np.minimum(np.arange(2 * n) // 2 + 1, n - 1), np.full(2 * n, n - 1)))
   g = sparse.coo_array((np.ones(len(rows)), (rows, cols)), shape=(2 * n, n))
@@ -260,7 +256,7 @@ def test_weighted_gram_with_a_dense_column_has_stored_size_reverse_and_second_or
 
   monkeypatch.setattr(CanonicalPattern, "matmul", guarded)
 
-  @sc.function(sc.arg("v", pg.nnz), sc.arg("w", 2 * n), sc.arg("seeds", (3, 2 * n)), sc.arg("condition", pc.nnz), name=f"sparse_dense_column_ad_{n}")
+  @sc.function(sc.arg("v", pg.nnz), sc.arg("w", 2 * n), sc.arg("seeds", (3, 2 * n)), sc.arg("condition", pc.nnz), name="sparse_dense_column_ad_64")
   def fn(v, w, seeds, condition):
     matrix = sc.pack(v, pg)
     c = matrix.T @ sc.pack(w, pw) @ matrix

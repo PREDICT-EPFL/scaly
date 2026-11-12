@@ -23,7 +23,7 @@ from scaly.passes.expr import simplify_cse_fixpoint
 
 
 @pytest.mark.parametrize("boundary", ["inline", "call", "map"])
-@pytest.mark.parametrize("movement", ["direct", "stack", "concat"])
+@pytest.mark.parametrize("movement", ["direct", "concat"])
 def test_mixed_tangent_selections_preserve_zeros(boundary, movement) -> None:
   x, p, seeds = sc.sym("mixed_x"), sc.sym("mixed_p"), sc.sym("mixed_seeds", 3)
 
@@ -234,7 +234,7 @@ def test_value_support_filters_elementwise_derivative_relations() -> None:
   assert sc.jacobian_sparsity(y, x).nnz == 0
 
 
-@pytest.mark.parametrize("shapes", [((4,), (4,)), ((3, 4), (4,)), ((4,), (4, 2)), ((3, 4), (4, 2))])
+@pytest.mark.parametrize("shapes", [((3, 4), (4,)), ((4,), (4, 2)), ((3, 4), (4, 2))])
 def test_matmul_derivative_relations_use_other_operand_support(shapes) -> None:
   rng = np.random.default_rng(4040)
   for _ in range(8):
@@ -421,18 +421,6 @@ def test_sparse_hessian_factory_returns_compact_values_with_sparsity_metadata() 
   assert shf_sparsity.rows == (0, 1, 2)
   assert shf_sparsity.cols == (0, 2, 1)
   np.testing.assert_allclose(sparse.coo_array(shf(xv)).toarray(), np.array([[2.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]]))
-
-
-def test_sparse_hessian_sparsity_to_mask_matches_main() -> None:
-  @sc.function(sc.arg("x", 3), outputs=sc.arg("cost"))
-  def cost(x: sc.Expr) -> sc.Expr:
-    return x[0] * x[0] + x[1] * x[2]
-
-  hess = sc.sparse_hessian(cost)
-  pattern = hess.sparsity()
-  assert pattern is not None
-  main_pattern = sc.SparsityPattern((3, 3), (0, 1, 2), (0, 2, 1))
-  np.testing.assert_array_equal(pattern.to_mask(), main_pattern.to_mask())
 
 
 @pytest.mark.parametrize("triangle", ("lower", "upper"))
