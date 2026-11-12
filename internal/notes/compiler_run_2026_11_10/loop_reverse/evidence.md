@@ -99,8 +99,9 @@ The final changes after the checked source are validation and review records onl
 The rebase retained the index-operand gather/scatter implementation, conditional
 rules and in-place proofs from the new base. Loop adjoints use `_scatter_zero` for
 parameter and sliced-input cotangents and `_accumulate` for sibling seeds and
-returned cotangents. Carried boundaries still drop select activity, consistently
-with forward mode. Independent maps keep their existing mask protocol.
+returned cotangents. At that rebase, carried boundaries dropped select activity
+in both modes. The forward activity-carry fix described below replaces that policy
+in forward mode. Independent maps keep their existing mask protocol.
 
 The loop builders retain strict `in_place` requests. Lowering excludes a carry
 whose trajectory is used from reuse, and a strict request on it remains refused.
@@ -133,3 +134,9 @@ The local select guards in these reverse bodies suppress the inactive partials,
 so the reverse rule itself is unchanged for this follow-up. The regressions pin
 the requested cases rather than introducing another cotangent-activity protocol.
 The forward rule's activity-carry fix is inherited from the new forward-loop base.
+
+After inheriting the fixed forward-loop base, 235 focused tests passed, including
+45 reverse-loop cases. Ruff, ty, the 6,677-test collection and the documentation
+build passed. Select-free RK4 C remained byte-identical at all three horizons,
+with 551 program nodes at each horizon. The reverse boundary table now explicitly
+states that local conditions guard steps without transporting activity between them.

@@ -432,7 +432,7 @@ combine by union.
 | Boundary | Forward select activity | Reverse select activity |
 | --- | --- | --- |
 | Ordinary calls and `vmap` | Preserved | Preserved |
-| Carried `scan` and `while_loop` | Preserved through iterations and on results | Not supported |
+| Carried `scan` and `while_loop` | Preserved through iterations and on results | Conditions guard each step. Activity is not passed between steps. |
 | Conditional branches | Dropped | Dropped |
 | Custom rules, external functions and solver calls | No activity protocol | No activity protocol |
 
