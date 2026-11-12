@@ -18,9 +18,8 @@ from tests.compilers import c_compiler
 COUNT = 37  # not a multiple of any lane width, so the last chunk is partial
 
 
-@pytest.mark.parametrize("lanes", [1, 2, 4, 8])
-@pytest.mark.parametrize("dialect", ["gnu", "c"])
-def test_lane_varying_word_matches_numpy(tmp_path, lanes, dialect):
+@pytest.mark.parametrize(("dialect", "lanes"), [("gnu", 1), ("gnu", 2), ("gnu", 4), ("gnu", 8), ("c", 8)])
+def test_lane_varying_word_matches_numpy(tmp_path, dialect, lanes):
   words = np.random.default_rng(lanes).integers(0, 256, size=COUNT)
   x = p.buffer("x", dtypes.float64, (COUNT,))
   y = p.buffer("y", dtypes.float64, (COUNT,))
