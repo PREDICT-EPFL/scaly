@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
+import numpy as np
+
 from ...ir import program as p
 from ...ir.expr import _index_values, Expr, ExprOp
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.types import dtypes
 from ..arith import constant
 from .ctx import LowerCtx, lowers, _size_of, _flat_coordinates
+from .fusion import scatter_targets
 from .plans import lower_movement
 from .in_place import fused_value, scatter_reuse
 
@@ -74,7 +79,7 @@ def _lower_gather(ctx: LowerCtx, node: Expr) -> None:
   idx = _index_values(node).reshape(-1)
   out = ctx.alloc_tmp(node)
   ranges, (k,) = ctx.nest((len(idx),), f"i_{out.attrs['name']}")
-  ctx.emit(ranges, [p.store(p.view(out, [k]), p.load(p.view(ctx.buf_of(src), [ctx.index_at(idx, k)])))])
+  ctx.emit(ranges, [p.store(p.view(out, [k]), ctx.read_flat(src, ctx.index_at(idx, k)))])
 
 
 @lowers(ExprOp.SCATTER)
@@ -127,17 +132,27 @@ def _lower_scatter(ctx: LowerCtx, node: Expr) -> None:
       ranges, (k,) = ctx.nest((node.size,), f"copy_{out.attrs['name']}")
       ctx.emit(ranges, [p.store(p.view(out, [k]), p.load(p.view(work, [k])))])
     return
-  idx = _index_values(node).reshape(-1)
+  lower_scatter_sum(ctx, node, (node,))
+
+
+def lower_scatter_sum(ctx: LowerCtx, node: Expr, scatters: Sequence[Expr]) -> None:
+  """Zero ``node``'s buffer once, then let each scatter store into it, or accumulate when it repeats
+  an index or follows another scatter."""
   out = ctx.alloc_tmp(node)
   zname = ctx.names.allocate(f"z_{out.attrs['name']}")
   zrng = p.range_(zname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL)
   z = p.var(zname)
   ctx.statements.append(p.for_(zrng, [p.store(p.view(out, [z]), constant(0, node.type.dtype))]))
-  iname = ctx.names.allocate(f"i_{out.attrs['name']}")
-  repeated = len(set(idx.tolist())) != len(idx)
-  irng = p.range_(iname, 0, len(idx), kind=RangeKind.REDUCE if repeated else RangeKind.GLOBAL)
-  i = p.var(iname)
-  dst = ctx.index_at(idx, i)
-  target = p.view(out, [dst])
-  value = p.load(p.view(ctx.buf_of(src), [i]))
-  ctx.statements.append(p.for_(irng, [p.store(target, p.add(p.load(target), value) if repeated else value)]))
+  for k, leaf in enumerate(scatters):
+    idx = scatter_targets(leaf)
+    iname = ctx.names.allocate(f"i_{out.attrs['name']}")
+    repeated = len(set(idx.tolist())) != len(idx)
+    irng = p.range_(iname, 0, len(idx), kind=RangeKind.REDUCE if repeated else RangeKind.GLOBAL)
+    i = p.var(iname)
+    target = p.view(out, [ctx.index_at(idx, i)])
+    value = ctx.read_stored(leaf.args[2], np.arange(len(idx), dtype=np.int64), i)
+    stmt = p.store(target, p.add(p.load(target), value) if repeated or k else value)
+    if leaf.id in ctx.permutes:
+      ctx.emit([irng], [stmt], delinearize=True)
+    else:
+      ctx.statements.append(p.for_(irng, [stmt]))

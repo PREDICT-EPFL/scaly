@@ -178,7 +178,7 @@ def test_reverse_broadcast_evaluates_only_the_known_support():
     for arg in node.args:
       count(arg, iterations)
 
-  count(observed["pass:fuse_elementwise"])
+  count(observed["pass:prune_procedures"])
   assert work == [int(mask.sum())] * 2
   data = np.linspace(-0.7, 0.9, n)
   y = mask * data

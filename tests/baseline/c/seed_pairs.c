@@ -124,12 +124,12 @@ static inline void seed_pair_stage_support_raw(const double* x, const double* d,
 #endif
 }
 
-static inline __attribute__((always_inline)) void lanes_5(long long i, long long n, const double* d, const double* k0, double* s0) {
+static inline __attribute__((always_inline)) void lanes_5(long long i, long long n, const double* d, const double* k1, double* s0) {
   lanes_8_8_8_8_vec l;
   if (n == SCALY_WIDTH_8_8_8_8) l = *(const lanes_8_8_8_8_vec_mem*)(&d[i]);
   else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = d[((i + k) < 143 ? (i + k) : 143)];
   double l_2s[SCALY_WIDTH_8_8_8_8];
-  for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l_2s[k] = k0[((((((i + k) < 143 ? (i + k) : 143) / 4) % 12) * 4) + (((i + k) < 143 ? (i + k) : 143) % 4))];
+  for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l_2s[k] = k1[((((((i + k) < 143 ? (i + k) : 143) / 4) % 12) * 4) + (((i + k) < 143 ? (i + k) : 143) % 4))];
   lanes_8_8_8_8_vec l_2 = *(const lanes_8_8_8_8_vec_mem*)l_2s;
   lanes_8_8_8_8_vec_st(&s0[(i) + 0], (l * l_2), n);
 }
@@ -147,14 +147,14 @@ int seed_pair_map(const double** arg, double** res, int* iw, double* w, int mem)
   if (!arg[0]) return SCALY_ERR_NULL_INPUT;
   if (!arg[1]) return SCALY_ERR_NULL_INPUT;
   if (!res[0]) return SCALY_ERR_NULL_RESULT;
-  static const double k0[48] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
   double s0[144];
+  static const double k1[48] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
   double s1[36];
-  for (long long i_t1_start = 0; i_t1_start <= 144 - SCALY_WIDTH_8_8_8_8; i_t1_start += SCALY_WIDTH_8_8_8_8) {
-    lanes_5(i_t1_start, SCALY_WIDTH_8_8_8_8, arg[1], k0, s0);
+  for (long long i_t0_start = 0; i_t0_start <= 144 - SCALY_WIDTH_8_8_8_8; i_t0_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_5(i_t0_start, SCALY_WIDTH_8_8_8_8, arg[1], k1, s0);
   }
 #if (144 % SCALY_WIDTH_8_8_8_8) != 0
-  lanes_5(144 - 144 % SCALY_WIDTH_8_8_8_8, 144 % SCALY_WIDTH_8_8_8_8, arg[1], k0, s0);
+  lanes_5(144 - 144 % SCALY_WIDTH_8_8_8_8, 144 % SCALY_WIDTH_8_8_8_8, arg[1], k1, s0);
 #endif
   for (long long it_t2 = 0; it_t2 < 3; ++it_t2) {
     seed_pair_stage_support_raw((arg[0] + (4 * it_t2)), (s0 + (48 * it_t2)), (s1 + (it_t2 * 12)), NULL);

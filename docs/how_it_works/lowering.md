@@ -6,13 +6,15 @@ page shows what the first program looks like and what each optimization pass
 then does to it. Every listing is real output. The listings trim the attributes
 of `prog.proc` lines, and trim more where they say so.
 
-## One loop per operation
+## What lowering emits
 
-Lowering emits each expression operation on its own, with a buffer for its
-result and a loop nest that fills it. Neighbouring axes that every read and the
-write traverse contiguously share one loop, so each operation below is a single
-loop, while a transpose keeps one loop per axis and reads each operand at its
-strides. For this function
+Lowering emits a loop nest for each value that needs storage and evaluates
+every other value inside the loop that reads it. A value is stored when it is
+an output, when a call, a reduction, a product or a scatter computes it, or when
+two operations read it. An elementwise operation read by one other operation is
+not stored: its expression goes into that operation's loop at the coordinates it
+reads. A transpose, a reshape, a slice or a gather is not stored either. Its
+reader indexes the source through it. For this function
 
 ```python
 import scaly as sc
@@ -22,32 +24,57 @@ def f(x: sc.Expr, y: sc.Expr):
     return (x.sin() + y) * y
 ```
 
-the program straight after lowering, before any optimization pass, is:
+the program straight after lowering, before any optimization pass, is one loop:
 
 ```
 prog.module {
   prog.proc @f(%x: memref<8xfloat64>, %y: memref<8xfloat64>, %out: memref<8xfloat64>) {
-    %t0 = prog.buffer : memref<8xfloat64, private>
-    prog.for %i_t0 = 0 to 8 step 1 {kind=global} {
-      prog.store prog.sin(prog.load %x[%i_t0]), %t0[%i_t0] : float64
-    }
-    %t1 = prog.buffer : memref<8xfloat64, private>
-    prog.for %i_t1 = 0 to 8 step 1 {kind=global} {
-      prog.store prog.add(prog.load %t0[%i_t1], prog.load %y[%i_t1]), %t1[%i_t1] : float64
-    }
     prog.for %i_out = 0 to 8 step 1 {kind=global} {
-      prog.store prog.mul(prog.load %t1[%i_out], prog.load %y[%i_out]), %out[%i_out] : float64
+      prog.store prog.mul(prog.add(prog.sin(prog.load %x[%i_out]), prog.load %y[%i_out]), prog.load %y[%i_out]), %out[%i_out] : float64
     }
   }
 }
 ```
 
-This form is easy to produce and to verify, one rule per operation, but it
-writes two temporaries that nobody needs. Removing them is the passes' job,
-shown [below](#elementwise-fusion). The last operation writes straight into the
-output buffer, and a contiguous slice or a reshape becomes a view into existing
-storage rather than a copy. A called function becomes its own procedure and a
-`prog.call`, and `sc.vmap` becomes a loop around that call.
+Neighbouring axes that every read and the write traverse contiguously share one
+loop, so a transposed read keeps one loop per axis and indexes the source at its
+strides. The last operation writes straight into the output buffer. A called
+function becomes its own procedure and a `prog.call`, and `sc.vmap` becomes a
+loop around that call. A value a call reads is stored first, and a contiguous
+slice or a reshape it reads becomes a view into existing storage rather than a
+copy.
+
+Evaluating a value at its reader trades memory traffic for recomputation when
+the reader reads each value more than once[^halide]. Broadcasting is the common
+case. Here three sines feed twelve products:
+
+```python
+@sc.function(sc.arg("x", 3), sc.arg("y", (4, 3)), outputs=sc.arg("out"))
+def f(x: sc.Expr, y: sc.Expr):
+    return x.sin() * y
+```
+
+```
+prog.module {
+  prog.proc @f(%x: memref<3xfloat64>, %y: memref<4x3xfloat64>, %out: memref<4x3xfloat64>) {
+    %t0 = prog.buffer : memref<3xfloat64, private>
+    prog.for %i_t0 = 0 to 3 step 1 {kind=global} {
+      prog.store prog.sin(prog.load %x[%i_t0]), %t0[%i_t0] : float64
+    }
+    prog.for %i_out = 0 to 12 step 1 {kind=global} {
+      prog.store prog.mul(prog.load %t0[prog.mod(%i_out, 3)], prog.load %y[%i_out]), %out[%i_out] : float64
+    }
+  }
+}
+```
+
+Evaluating the sine in the product's loop would call `sin` twelve times instead
+of three, so lowering stores it. The same holds for an operand of a matrix
+product that each entry of the result reads again. A value that holds a call
+such as `sin`, `exp` or `pow` is evaluated in place only where it is read once,
+so the call is never repeated. In a function that `sc.vmap` or `sc.scan` runs
+with some arguments the same at every step, work on those arguments alone stays
+apart from the rest, so that `hoist_invariant` can run it once before the loop.
 
 A few limits come from lowering rather than from the expression dialect. The
 input and output leaves of a function must be `float64`. An unsupported case
@@ -152,8 +179,6 @@ The passes run in the order of `PASS_PIPELINE` in
 | `fold_tiles` | Shrinks a constant table made of one repeated tile to that tile |
 | `fuse_ranges` | Merges expanded stages into their mapped loop and drops unused outputs |
 | `prune_procedures` | Removes procedures that nothing calls any more |
-| `combine_scatter_sums` | Accumulates a sum of zero-padded scatters into one buffer |
-| `fuse_elementwise` | Substitutes an elementwise producer into its consumer's loop |
 | `fold_arith` | Replaces reads of constant buffers with constants and applies identities |
 | `unroll_unit_loops` | Removes empty loops and inlines one-iteration loops |
 | `fold_arith_after_unroll` | Runs `fold_arith` again on what unrolling exposed |
@@ -235,57 +260,11 @@ The pass does this only for stages that `scalarize` has already expanded, and it
 leaves a buffer in place wherever a dependency, an overlapping write or a
 pointer escaping into a call makes the substitution unsafe.
 
-## Elementwise fusion
-
-`fuse_elementwise` substitutes the expression that fills a buffer into the loop
-that reads it, then deletes the buffer and its loop. The program from the first
-section ends as one loop:
-
-```
-prog.module {
-  prog.proc @f(%x: memref<8xfloat64>, %y: memref<8xfloat64>, %out: memref<8xfloat64>) {
-    prog.for %i_out = 0 to 8 step 1 {kind=global} {
-      %v0 = prog.assign prog.load %y[%i_out] : float64 {declare=True}
-      prog.store prog.mul(prog.add(prog.sin(prog.load %x[%i_out]), %v0), %v0), %out[%i_out] : float64
-    }
-  }
-}
-```
-
-Fusion trades memory traffic for recomputation when the consumer reads each
-produced value more than once[^halide]. Broadcasting is the common case. Here
-three sines feed twelve products:
-
-```python
-@sc.function(sc.arg("x", 3), sc.arg("y", (4, 3)), outputs=sc.arg("out"))
-def f(x: sc.Expr, y: sc.Expr):
-    return x.sin() * y
-```
-
-```
-prog.module {
-  prog.proc @f(%x: memref<3xfloat64>, %y: memref<4x3xfloat64>, %out: memref<4x3xfloat64>) {
-    %s0 = prog.buffer : memref<3xfloat64, private>
-    prog.for %i_t0 = 0 to 3 step 1 {kind=global} {
-      prog.store prog.sin(prog.load %x[%i_t0]), %s0[%i_t0] : float64
-    }
-    prog.for %i_out = 0 to 12 step 1 {kind=global} {
-      prog.store prog.mul(prog.load %s0[prog.mod(%i_out, 3)], prog.load %y[%i_out]), %out[%i_out] : float64
-    }
-  }
-}
-```
-
-Fusing would call `sin` twelve times instead of three, so the pass keeps the
-buffer. It fuses freely when the producer is cheap arithmetic, and counts
-expensive calls such as `sin`, `exp` or `pow` through chains of producers. It
-also refuses to move a read past a write to the same buffer.
-
 ## Sums of scattered pieces
 
 The gradient of a function of overlapping slices adds one zero-padded
-contribution per slice. Lowered naively, each contribution is a full-size
-temporary filled with zeros and then summed:
+contribution per slice. Each contribution alone would be a full-size temporary
+filled with zeros, and then the temporaries would be summed:
 
 ```python
 @sc.function(sc.arg("x", 6), outputs=sc.arg("c"))
@@ -293,28 +272,29 @@ def cost(x):
     return (x[0:4].sin()).sum() + (x[2:6].cos()).sum()
 ```
 
+Lowering instead zeroes the output once and has each contribution add into its
+own window of it, so the two six-element temporaries never exist. This is the
+program straight after lowering:
+
 ```
 prog.module {
   prog.proc @cost_grad_c_x(%x: memref<6xfloat64>, %grad_c_x: memref<6xfloat64>) {
-    %t0 = prog.buffer : memref<4xfloat64, private> = prog.alias %x offset 2
-    %t4 = prog.buffer : memref<4xfloat64, private> = prog.alias %x offset 0
-    prog.for %z_t3 = 0 to 6 step 1 {kind=global} {
-      prog.store 0, %grad_c_x[%z_t3] : float64
+    prog.for %z_grad_c_x = 0 to 6 step 1 {kind=global} {
+      prog.store 0, %grad_c_x[%z_grad_c_x] : float64
     }
-    prog.for %i_t3 = 0 to 4 step 1 {kind=global} {
-      %v0 = prog.assign prog.add(2, %i_t3) : int64 {declare=True}
-      prog.store prog.sub(prog.load %grad_c_x[%v0], prog.sin(prog.load %t0[%i_t3])), %grad_c_x[%v0] : float64
+    prog.for %i_grad_c_x = 0 to 4 step 1 {kind=global} {
+      prog.store prog.neg(prog.sin(prog.load %x[prog.add(2, %i_grad_c_x)])), %grad_c_x[prog.add(2, %i_grad_c_x)] : float64
     }
-    prog.for %i_t6 = 0 to 4 step 1 {kind=global} {
-      prog.store prog.add(prog.load %grad_c_x[%i_t6], prog.cos(prog.load %t4[%i_t6])), %grad_c_x[%i_t6] : float64
+    prog.for %i_grad_c_x_2 = 0 to 4 step 1 {kind=global} {
+      prog.store prog.add(prog.load %grad_c_x[%i_grad_c_x_2], prog.cos(prog.load %x[%i_grad_c_x_2])), %grad_c_x[%i_grad_c_x_2] : float64
     }
   }
 }
 ```
 
-`combine_scatter_sums` zeroes the output once and has each contribution add
-into its own window of it, so the two six-element temporaries never exist. The
-`prog.alias` lines are the slices of `x`, which are views rather than copies.
+The slices of `x` are read in place. The terms are added in the order the
+expression writes them: a scatter that repeats an index an earlier term also
+writes keeps a buffer of its own.
 
 ## Repeated constant tables
 

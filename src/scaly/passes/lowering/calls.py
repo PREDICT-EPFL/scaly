@@ -6,7 +6,7 @@ import numpy as np
 
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp, invocation_key
-from ...ir.program import ProgramNode, ProgramOp, RangeKind
+from ...ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
 from ...ir.types import DType, dtypes
 from ...function.concrete import ConcreteFunction
 from ...ir.support import Support, _mapped_support_groups
@@ -36,6 +36,7 @@ def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction, arguments: tuple[Sup
       ctx.program_names,
       ctx.symbols,
       ctx.residuals,
+      ctx.broadcasts,
       observe_expr=ctx.observe_expr,
       argument_support=arguments,
       symbol=symbol,
@@ -251,6 +252,7 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
       ctx.program_names,
       ctx.symbols,
       ctx.residuals,
+      {**ctx.broadcasts, variant: ctx.broadcasts.get(callee, frozenset())},
       observe_expr=ctx.observe_expr,
       inout_carries=chains,
     )
@@ -395,7 +397,7 @@ def _loop_cost(proc: ProgramNode, procs: dict[str, ProgramNode]) -> int | None:
   stack = [(stmt, 1) for stmt in proc.args[proc.attrs["param_count"] :]]
   while stack:
     stmt, factor = stack.pop()
-    if stmt.dtype is not None and stmt.dtype not in (dtypes.float64, dtypes.int64, dtypes.bool_):
+    if any(n.dtype is not None and n.dtype not in (dtypes.float64, dtypes.int64, dtypes.bool_) for n in walk_program(stmt)):
       return None
     if stmt.op == ProgramOp.CALL:
       callee = procs.get(stmt.attrs["callee"])

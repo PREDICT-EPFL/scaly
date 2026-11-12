@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
-from ...ir.program import ProgramNode
 from ...ad.rules import ELEMENTWISE
-from .ctx import LowerCtx, lowers, _flat_coordinates
+from .ctx import LowerCtx, lowers
+from .gather import lower_scatter_sum
 from .plans import lower_elementwise, lower_supported_elementwise
 
 
@@ -17,20 +17,20 @@ def _lower_elementwise(ctx: LowerCtx, node: Expr) -> None:
 
   A broadcast stays flat rather than a nest of rows: lanes over such a nest store each row apart, and
   the gathers reading the result back stall (unbumpercars C=8 ran 7% slower). Until lanes handle
-  nests (#71)."""
+  nests (#71). An operand read through a transpose makes the loop a nest over the output, merged where
+  contiguous, so the remap divides only on the axes a reshape merges."""
   if node.type.pattern is not None:
     lower_elementwise(ctx, node, ELEMENTWISE[ExprOp(node.op)].program)
+    return
+  if (scatters := ctx.sums.get(node.id)) is not None:
+    lower_scatter_sum(ctx, node, scatters)
     return
   if lower_supported_elementwise(ctx, node, ELEMENTWISE[ExprOp(node.op)].program):
     return
   out = ctx.alloc_tmp(node)
+  if node.id in ctx.permutes:
+    ranges, coords = ctx.nest(node.shape, f"i_{out.attrs['name']}")
+    ctx.emit(ranges, [ctx.write(node, coords, ctx.compute(node, coords))], delinearize=True)
+    return
   ranges, (flat,) = ctx.nest((node.size,), f"i_{out.attrs['name']}")
-  coords = _flat_coordinates(flat, node.shape)
-
-  def load(a: Expr) -> ProgramNode:
-    if a.shape == node.shape:
-      return p.load(p.view(ctx.buf_of(a), [flat]))
-    return ctx.read(a, [c if d != 1 else p.const_int(0) for c, d in zip(coords[len(coords) - len(a.shape) :], a.shape, strict=True)])
-
-  computed = ProgramNode(ELEMENTWISE[ExprOp(node.op)].program, tuple(load(a) for a in node.args), dtype=node.type.dtype)
-  ctx.emit(ranges, [p.store(p.view(out, [flat]), computed)])
+  ctx.emit(ranges, [p.store(p.view(out, [flat]), ctx.compute_flat(node, flat))])

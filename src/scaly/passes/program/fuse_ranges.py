@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ...ad.rules import ELEMENTWISE
 from ...ir import program as p
 from ...ir.match import Pattern, rewrite
 from ...ir.program import walk_program, ProgramNode, ProgramOp
@@ -24,7 +25,12 @@ from ._common import (
   trip_count,
 )
 from .scheduling import ScalarNameAllocator, schedule_values
-from .fuse_elementwise import _has_expensive
+
+_EXPENSIVE_OPS = frozenset(row.program for row in ELEMENTWISE.values() if row.expensive)
+
+
+def _has_expensive(node: ProgramNode) -> bool:
+  return any(n.op in _EXPENSIVE_OPS for n in walk_program(node))
 
 
 @dataclass

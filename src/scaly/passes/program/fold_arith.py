@@ -7,21 +7,15 @@ from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
 from ...ir.types import dtypes
 from ...utils.names import NameScope
-from ..arith import CONSTANTS, constant, fold_program
+from ..arith import constant, fold_program
 from .fold_tiles import _period, _scalar_safe
 from ._common import (
-  _alias_sources,
   _map_procs,
-  _private_decls,
   _proc_parts,
   _rebuild_proc,
-  _size_of,
-  buffer_refs,
   name_scope,
-  inline_producer as _as_inline_producer,
   prune_dead_buffers,
   rebuild_program,
-  trip_count as _trip_count,
   substitute_var,
 )
 
@@ -30,8 +24,7 @@ def fold_arith(prog: ProgramNode) -> ProgramNode:
   """Fold arithmetic inside every procedure body, including ``FOR`` bodies.
 
   Runs after fusion, whose index substitution is what exposes ``x * 1``, ``x + 0`` and reads of a
-  uniform constant buffer (a broadcast scalar constant) inside loop bodies. A loop that fills a
-  private buffer with one constant becomes a constant buffer, so its readers fold on the next round.
+  uniform constant buffer (a broadcast scalar constant) inside loop bodies.
   """
   return _map_procs(prog, _fold_proc)
 
@@ -41,7 +34,7 @@ def _fold_proc(proc: ProgramNode) -> ProgramNode:
   names = name_scope(proc)
   changed = False
   while True:
-    new_body = _constant_fills(_fold_body(body, names))
+    new_body = _fold_body(body, names)
     if all(a is b for a, b in zip(new_body, body, strict=True)):
       break
     body, changed = new_body, True
@@ -169,38 +162,3 @@ def _fold_body(body: list[ProgramNode], names: NameScope) -> list[ProgramNode]:
 
   memo: dict[ProgramNode, ProgramNode] = {}
   return [scoped(stmt, {}, memo) for stmt in body]
-
-
-def _constant_fills(body: list[ProgramNode]) -> list[ProgramNode]:
-  """Turn ``for i: buf[i] <- c`` over a whole private, otherwise unwritten buffer into a constant buffer."""
-  private = _private_decls(body)
-  aliased = set(_alias_sources(body).values())
-  writers: dict[str, int] = {}
-  for stmt in body:
-    if stmt.op != ProgramOp.BUFFER:
-      refs = buffer_refs(stmt)
-      for name in refs.writes | refs.call_inputs:
-        writers[name] = writers.get(name, 0) + 1
-  fills: dict[str, ProgramNode] = {}
-  for stmt in body:
-    producer = _as_inline_producer(stmt)
-    if producer is None:
-      continue
-    name, _, rhs = producer
-    decl = private.get(name)
-    if decl is None or name in aliased or writers.get(name) != 1 or rhs.op not in CONSTANTS or rhs.dtype != decl.dtype or "alias_of" in decl.attrs:
-      continue
-    size = _size_of(decl.attrs["shape"])
-    if _trip_count(stmt.args[0]) == size:
-      fills[name] = p.const_buffer(name, decl.dtype, decl.attrs["shape"], [rhs.attrs["value"]] * size)
-  if not fills:
-    return body
-  out: list[ProgramNode] = []
-  for stmt in body:
-    if stmt.op == ProgramOp.BUFFER and stmt.attrs["name"] in fills:
-      out.append(fills[stmt.attrs["name"]])
-    elif (producer := _as_inline_producer(stmt)) is not None and producer[0] in fills:
-      continue
-    else:
-      out.append(stmt)
-  return out

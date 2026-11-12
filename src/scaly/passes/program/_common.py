@@ -33,30 +33,6 @@ def rebuild_program(node: ProgramNode, args: tuple[ProgramNode, ...]) -> Program
   return ProgramNode(node.op, args, node.attrs, dtype=node.dtype)
 
 
-def inline_producer(stmt: ProgramNode) -> tuple[str, str, ProgramNode] | None:
-  """Match ``for v in [0,N) step 1 { buf[v] = rhs }``."""
-  if stmt.op != ProgramOp.FOR:
-    return None
-  rng, *body = stmt.args
-  if rng.attrs.get("carried"):
-    return None
-  if len(body) != 1 or body[0].op != ProgramOp.STORE:
-    return None
-  target, rhs = body[0].args
-  if target.op != ProgramOp.VIEW or len(target.args) != 1:
-    return None
-  name = rng.attrs["name"]
-  index = target.args[0]
-  start, _stop, step = rng.args
-  if index.op != ProgramOp.VAR or index.attrs["name"] != name:
-    return None
-  if start.op != ProgramOp.CONST_INT or start.attrs["value"] != 0:
-    return None
-  if step.op != ProgramOp.CONST_INT or step.attrs["value"] != 1:
-    return None
-  return target.attrs["buffer"], name, rhs
-
-
 def substitute_var(node: ProgramNode, name: str, replacement: ProgramNode) -> ProgramNode:
   """Replace each variable named ``name`` below ``node``."""
   pattern = Pattern(ProgramOp.VAR, lambda n: n.attrs["name"] == name, lambda _n: replacement)

@@ -36,10 +36,7 @@ def test_npmpc_jacobian_source_is_independent_of_horizon_and_width(tmp_path: Pat
   small, large, wide = _build(tmp_path, "npmpc_jac", 6), _build(tmp_path, "npmpc_jac", 100), _build(tmp_path, "npmpc_decoder_jac", 128)
   assert large["source_lines"] < 1.2 * small["source_lines"]
   assert wide["source_lines"] < 1.2 * small["source_lines"]
-  # Seed-axis matrix products use 6144 doubles of fixed scratch; mapped outputs add 1600 at N=100.
-  # Crossing the frame budget can move more of the fixed scratch from the stack to the workspace.
-  assert int(small["w_size"]) <= 6144
-  assert int(large["w_size"]) <= 7744
+  assert int(small["w_size"]) == int(large["w_size"]) == 0
 
 
 def test_npmpc_lagrangian_hessian_source_is_independent_of_horizon_and_width(tmp_path: Path) -> None:
@@ -50,3 +47,13 @@ def test_npmpc_lagrangian_hessian_source_is_independent_of_horizon_and_width(tmp
   assert large["source_lines"] < 1.2 * small["source_lines"]
   assert small["nnz"] < large["nnz"], "the Hessian pattern must grow with the horizon even though its source does not"
   assert wide["source_lines"] < 1.2 * small["source_lines"]
+
+
+def test_chain_hessian_workspace_reads_its_transposed_blocks_in_place(tmp_path: Path) -> None:
+  # The stacked stage Hessians are scattered into the dense assembly through a transpose; read in
+  # place, that transpose holds no copy (109,944 doubles before #69, 66,744 after).
+  assert int(_build(tmp_path, "chain", 5)["w_size"]) < 100_000
+
+
+def test_race_cars_lagrangian_hessian_needs_no_workspace(tmp_path: Path) -> None:
+  assert int(_build(tmp_path, "race_cars", 5)["w_size"]) == 0

@@ -7,9 +7,7 @@ from scaly.ir.program import ProgramNode, ProgramOp, walk_program
 from scaly.ir.program_spec import verify_program
 from scaly.ir.types import dtypes
 from scaly.passes.program.fuse_ranges import fuse_ranges
-from scaly.passes.program.fuse_elementwise import fuse_elementwise
 from scaly.passes.program.fold_arith import fold_arith
-from scaly.passes.program.combine_scatter_sums import combine_scatter_sums
 from scaly.passes.program.hoist_invariant import hoist_invariant
 from scaly.passes.program.scalarize import scalarize_program
 from scaly.passes.program.unroll_unit_loops import unroll_unit_loops
@@ -139,18 +137,6 @@ def test_hoisting_keeps_effects_in_the_carried_body():
   assert hoist_invariant(prog) is prog
 
 
-@pytest.mark.parametrize("transform", [fuse_elementwise, fold_arith])
-def test_producer_optimizations_keep_carried_fills_and_the_exit_count(transform):
-  out = p.buffer("out", dtypes.float64, (4,))
-  count = p.buffer("count", dtypes.int64, (1,))
-  temp = p.buffer("temp", dtypes.float64, (4,), address_space="private")
-  i = p.var("i")
-  fill = _exit_loop(_range("i", 4), [p.store(p.view(temp, [i]), p.const_float(2))])
-  copy = p.for_(p.range_("j", 0, 4), [p.store(p.view(out, [p.var("j")]), p.load(p.view(temp, [p.var("j")])))])
-  prog = p.program([p.proc("root", [out, count], [temp, fill, p.store(p.view(count, [p.const_int(0)]), i), copy])])
-  assert transform(prog) is prog
-
-
 def test_index_folding_keeps_carried_coordinates_unsplit():
   out = p.buffer("out", dtypes.int64, (16,))
   i, j = p.var("i"), p.var("j")
@@ -160,21 +146,3 @@ def test_index_folding_keeps_carried_coordinates_unsplit():
   outer = p.for_(p.range_("i", 0, 2), [carried])
   prog = p.program([p.proc("root", [out], [outer])])
   assert fold_arith(prog) is prog
-
-
-@pytest.mark.parametrize("which", ["fill", "scatter", "sum"])
-def test_scatter_combination_keeps_carried_ranges(which):
-  x = p.buffer("x", dtypes.float64, (2,))
-  out = p.buffer("out", dtypes.float64, (4,))
-  a, b = (p.buffer(name, dtypes.float64, (4,), address_space="private") for name in ("a", "b"))
-  i = p.var("i")
-  body = [a, b]
-  for index, buf in enumerate((a, b)):
-    fill_range = _range("i", 4) if which == "fill" else p.range_("i", 0, 4)
-    body.append(p.for_(fill_range, [p.store(p.view(buf, [i]), p.const_float(0))]))
-    scatter_range = _range("i", 2) if which == "scatter" else p.range_("i", 0, 2)
-    body.append(p.for_(scatter_range, [p.store(p.view(buf, [p.add(p.mul(i, p.const_int(2)), p.const_int(index))]), p.load(p.view(x, [i])))]))
-  sum_range = _range("i", 4) if which == "sum" else p.range_("i", 0, 4)
-  body.append(p.for_(sum_range, [p.store(p.view(out, [i]), p.add(p.load(p.view(a, [i])), p.load(p.view(b, [i]))))]))
-  prog = p.program([p.proc("root", [x, out], body)])
-  assert combine_scatter_sums(prog) is prog

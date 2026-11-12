@@ -27,7 +27,8 @@ def emit_reduction(
 
   Four output lanes expand during emission, each with its own named accumulator. A strided
   reduction carries its running sums in the destination between iterations, with batch axes outside. Loaded bounds keep
-  their output coordinates outside the reduction and disable lane expansion.
+  their output coordinates outside the reduction and disable lane expansion, and so does a carried output range, which
+  is never split or moved inside another loop.
   """
   if identity is None:
     identity = constant(
@@ -47,7 +48,8 @@ def emit_reduction(
     return name, p.var(name, value.dtype), p.assign(name, identity, declare=True)
 
   loaded = any(n.op == ProgramOp.LOAD for r in reductions for bound in r.args[:2] for n in walk_program(bound))
-  if strided and not loaded:
+  carried = any(r.attrs.get("carried") for r in outputs)
+  if strided and not loaded and not carried:
     ctx.emit(outputs, [p.store(target, identity)])
     ctx.emit([*outputs[:batch_axes], *reductions, *outputs[batch_axes:]], [p.store(target, combine(p.load(target), value))])
     return
@@ -63,7 +65,7 @@ def emit_reduction(
     ctx.emit(outer, [*(initial for _, _, initial in accumulators), *loops, *stores])
 
   count = trip_count(outputs[-1]) if outputs else 1
-  if count is not None and count >= 4 and not loaded:
+  if count is not None and count >= 4 and not loaded and not carried:
     axis = outputs[-1]
     blocks, tail = divmod(count, 4)
     block_name = ctx.names.allocate(f"{axis.attrs['name']}_block")

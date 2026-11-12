@@ -198,25 +198,29 @@ def test_leading_seed_matvec_access_maps() -> None:
   assert int(rng.args[1].attrs["value"]) == 12 and _strides(tangent, "t") == [{rng.attrs["name"]: 1}]
 
 
-def test_reshape_reads_a_materialized_transpose_in_place() -> None:
-  """A reshape after a transpose is not affine in the reshape's coordinates. Lowering materializes
-  the transpose with strided reads, and the reshape aliases that copy, which the product reads at
-  its own flat position."""
+@needs_cc
+def test_reshape_reads_a_transpose_in_place() -> None:
+  """A reshape after a transpose is not affine in the reshape's coordinates. The product reads the
+  transpose in place as a 4 x 6 nest: output axis 0 is source axis 2, and output axis 1 merges source
+  axes 0 and 1, whose quotient and remainder split that loop into digits. The digits walk every access
+  contiguously, so they merge back and no index divides."""
   fn = _compiled("nest_pin_transpose", ((2, 3, 4), (6,)), lambda a, b: a.transpose((2, 0, 1)).reshape((4, 6)) * b)
-  copy, product = _nests(_lowered(fn))
-  assert not _divides(copy)
-  # Output axes 1 and 2 are source axes 0 and 1, contiguous in both, so the copy is a 4 x 6 nest.
-  outer, inner = (r.attrs["name"] for r in _loops(copy))
-  assert [int(r.args[1].attrs["value"]) for r in _loops(copy)] == [4, 6]
-  assert _strides(copy, "x0") == [{outer: 1, inner: 4}]
-  copied = next(v.attrs["buffer"] for v in walk_program(copy) if v.op == ProgramOp.VIEW and v.attrs["buffer"] != "x0")
-  (rng,) = _loops(product)
-  assert _strides(product, copied) == [{rng.attrs["name"]: 1}]
+  (product,) = _nests(_lowered(fn))
+  assert not _divides(product)
+  outer, inner = (r.attrs["name"] for r in _loops(product))
+  assert [int(r.args[1].attrs["value"]) for r in _loops(product)] == [4, 6]
+  assert _strides(product, "x0") == [{outer: 1, inner: 4}]
+  _check(
+    "nest_pin_transpose_values",
+    ((2, 3, 4), (6,)),
+    lambda a, b: a.transpose((2, 0, 1)).reshape((4, 6)) * b,
+    lambda a, b: a.transpose((2, 0, 1)).reshape(4, 6) * b,
+  )
 
 
-def test_fusion_keeps_a_transpose_and_inlines_a_broadcast() -> None:
-  """Until lowering-time fusion, a transposed copy stays a buffer; a broadcast product and a scalar
-  chain, whose unit loops index by their variable, are inlined."""
+def test_fusion_reads_a_transpose_and_a_broadcast_in_place() -> None:
+  """A transposed operand, a broadcast product and a scalar chain, whose unit loops index by their
+  variable, are all evaluated in their consumer's loop."""
 
   def privates(fn: sc.Function) -> int:
     from scaly.codegen import render_c_module
@@ -224,7 +228,7 @@ def test_fusion_keeps_a_transpose_and_inlines_a_broadcast() -> None:
     proc = main_proc(render_c_module(fn, lanes=1).program)
     return sum(s.op == ProgramOp.BUFFER and s.attrs["address_space"] == "private" and "alias_of" not in s.attrs for s in proc.args)
 
-  assert privates(_compiled("nest_keep_transpose", ((3, 4),), lambda a: a.T.sin())) == 1
+  assert privates(_compiled("nest_keep_transpose", ((3, 4),), lambda a: a.T.sin())) == 0
   assert privates(_compiled("nest_inline_broadcast", ((3, 4), (4,)), lambda a, b: (a * b).sin())) == 0
   assert privates(_compiled("nest_inline_scalar", ((), ()), lambda a, b: (a * b).sin() * a)) == 0
 

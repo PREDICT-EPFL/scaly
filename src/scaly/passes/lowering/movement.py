@@ -6,9 +6,9 @@ import numpy as np
 
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
-from ...ir.program import ProgramNode
 from ...ir.types import _uniform_value
-from .ctx import LowerCtx, lowers, _flat_coordinates, _shift, _shape_or_scalar, _stride
+from .ctx import LowerCtx, lowers, _flat_coordinates, _shape_or_scalar, _shift, _slice_coords
+from .fusion import _contiguous_slice_offset
 from .plans import lower_movement, emit_map
 
 
@@ -29,8 +29,14 @@ def _lower_reshape(ctx: LowerCtx, node: Expr) -> None:
     return
   if _sparse_movement(ctx, node):
     return
-  # Metadata-only: the result aliases its source buffer (no copy).
-  ctx.value_buffers[node.id] = ctx.value_buffers[node.args[0].id]
+  src = node.args[0]
+  if src.id in ctx.value_buffers or src.id not in ctx.deferred:
+    # Metadata-only: the result aliases its source buffer (no copy).
+    ctx.value_buffers[node.id] = ctx.raw_buf_of(src).attrs["name"]
+    return
+  out = ctx.alloc_tmp(node)
+  ranges, (k,) = ctx.nest((node.size,), f"i_{out.attrs['name']}")
+  ctx.emit(ranges, [p.store(p.view(out, [k]), ctx.read_flat(src, k))])
 
 
 @lowers(ExprOp.CONST)
@@ -54,42 +60,6 @@ def _lower_const(ctx: LowerCtx, node: Expr) -> None:
     ctx.value_buffers[node.id] = name
 
 
-def _contiguous_slice_offset(index: tuple[object, ...], in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> int | None:
-  """If the slice selects a contiguous sub-block of ``src`` at a constant flat offset (no stride,
-  at most one partial leading slice with full trailing dims), return that offset; else None. Port
-  of ``codegen/c.py::_contiguous_slice_offset`` — the precondition for pointer aliasing."""
-  if not out_shape:
-    offset = 0
-    for dim, item in enumerate(index):
-      if not isinstance(item, int):
-        return None
-      offset += (item if item >= 0 else in_shape[dim] + item) * _stride(in_shape, dim)
-    return offset
-  first_slice = None
-  offset = 0
-  out_dim = 0
-  for dim, item in enumerate(index):
-    stride = _stride(in_shape, dim)
-    if isinstance(item, int):
-      if first_slice is not None and in_shape[dim] != 1:
-        return None
-      offset += (item if item >= 0 else in_shape[dim] + item) * stride
-      continue
-    assert isinstance(item, slice)
-    start, stop, step = item.indices(int(in_shape[dim]))
-    if step != 1:
-      return None
-    if first_slice is None:
-      first_slice = dim
-      offset += start * stride
-      out_dim += 1
-      continue
-    if start != 0 or stop != int(in_shape[dim]) or out_shape[out_dim] != int(in_shape[dim]):
-      return None
-    out_dim += 1
-  return offset
-
-
 @lowers(ExprOp.SLICE)
 def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
   """General SLICE: integer indices drop a dim, slices keep one. A contiguous slice (constant
@@ -101,8 +71,12 @@ def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
   src = node.args[0]
   src_shape = src.shape
   index = node.attrs["index"]
-  # Contiguous + not an output: alias the source pointer instead of copying (legacy parity).
-  if node.id not in ctx._output_alias and (offset := _contiguous_slice_offset(index, src_shape, node.shape)) is not None:
+  # A contiguous slice of a stored value that is not an output aliases the source pointer.
+  if (
+    node.id not in ctx._output_alias
+    and src.id in ctx.value_buffers
+    and (offset := _contiguous_slice_offset(index, src_shape, node.shape)) is not None
+  ):
     alias = ctx.new_alias(node.type.dtype, node.shape, ctx.value_buffers[src.id], offset)
     ctx.value_buffers[node.id] = alias.attrs["name"]
     return
@@ -111,16 +85,7 @@ def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
   # lanes over such a nest split each row's vector store across cache lines, and the loads that
   # read the copy back stall (chain M=9 ran 1.4 times slower). Until lanes handle nests (#71).
   ranges, (k,) = ctx.nest((node.size,), f"i_{out.attrs['name']}")
-  coords = _flat_coordinates(k, node.shape)
-  source: list[ProgramNode] = []
-  out_dim = 0
-  for dim, item in enumerate(index):
-    if isinstance(item, int):
-      source.append(p.const_int(item if item >= 0 else int(src_shape[dim]) + item))
-      continue
-    start, _stop, step = item.indices(int(src_shape[dim]))
-    source.append(_shift(coords[out_dim], start, step))
-    out_dim += 1
+  source = _slice_coords(index, src_shape, _flat_coordinates(k, node.shape))
   ctx.emit(ranges, [p.store(p.view(out, [k]), ctx.read(src, source))])
 
 
