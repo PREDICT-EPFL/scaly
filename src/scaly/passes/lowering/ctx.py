@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable, Sequence
 import numpy as np
 
 from ...ir import program as p
-from ...ir.expr import Expr, ExprOp, OP_INFO, callees_of, gather, invocation_key, topo
+from ...ir.expr import Expr, ExprOp, OP_INFO, _index_values, callees_of, gather, invocation_key, topo
 from ...ir.match import Pattern, rewrite
 from ...function.concrete import ConcreteFunction
 from ...function.extern import _Extern
@@ -122,9 +122,9 @@ def _declared_values(stored: Expr, layout: SparseLayout) -> Expr | None:
   order, identity = np.asarray(layout.order, dtype=np.int64), np.arange(len(layout.order))
   if np.array_equal(order, identity):
     return stored
-  if stored.op != ExprOp.GATHER or stored.size != len(order) or stored.args[0].type.pattern is not None:
+  if stored.op != ExprOp.GATHER or stored.size != len(order) or stored.args[0].type.pattern is not None or stored.args[1].value is None:
     return None
-  source, indices = stored.args[0], stored.attrs["indices"].reshape(-1)[order]
+  source, indices = stored.args[0], _index_values(stored).reshape(-1)[order]
   return source if source.size == len(order) and np.array_equal(indices, identity) else gather(source, indices)
 
 
@@ -277,6 +277,7 @@ class LowerCtx:
     seen: set[int] = set()
     for k, (name, expr, layout) in enumerate(zip(self.output_names, self.fun.outputs, self.fun.output_tree.layouts, strict=True)):
       if k in self.inout_carries:
+        self._computed.append(expr)
         continue
       buf = _with_support(
         p.buffer(name, expr.type.dtype, _shape_or_scalar(expr.type.storage_shape), address_space="global"),
