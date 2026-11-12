@@ -16,6 +16,7 @@ from scaly.function.sugar import _mapped_call
 import scaly as sc
 from scaly.ad import finite_difference
 from scaly.ad.sparse import Triangle, _colored, _sparse_hessian, _sparse_jacobian
+from scaly.ad.sparsity import _prunable_support
 from scaly.ir.expr import ExprOp, topo
 from scaly.ir.types import CanonicalPattern
 from scaly.passes.expr import simplify_cse_fixpoint
@@ -43,7 +44,7 @@ def test_mixed_tangent_selections_preserve_zeros(boundary, movement) -> None:
       for node in topo(pending.pop()):
         if node.op in {ExprOp.MUL, ExprOp.MATMUL}:
           assert node.support != frozenset()
-        if node.op in {ExprOp.CALL, ExprOp.VMAP} and node.attrs["callee"] not in seen:
+        if node.op in {ExprOp.CALL, ExprOp.LOOP} and node.attrs["callee"] not in seen:
           seen.add(node.attrs["callee"])
           pending.append(node.attrs["callee"].results)
   fn = ConcreteFunction._from_exprs("mixed_tangent_values", [x, p, seeds], [tangent, simplified], ["x", "p", "seeds"], ["raw", "simplified"])
@@ -131,6 +132,33 @@ def test_call_sparsity_falls_back_conservatively_after_support_cache_bound(mappe
   np.testing.assert_array_equal(sc.jacobian_sparsity(product(x, sc.const(masks[1])), x).to_mask(), expected[1].astype(bool))
   fn = ConcreteFunction._from_exprs("bounded_jac_values", [x], [sc.jacobian(y, x)], ["x"], ["jac"])
   np.testing.assert_allclose(fn(np.arange(6, dtype=float)), expected.reshape((240, 6)))
+
+
+@pytest.mark.parametrize("selected", ["sibling", "residual"])
+def test_map_support_pruning_checks_only_the_selected_result(selected) -> None:
+  @sc.function(sc.arg("x", 2))
+  def masked(x):
+    return sc.concat([x[:1], 0.0 * x[1:]])
+
+  @sc.function()
+  def fwd(x):
+    return masked(x), masked(x)
+
+  @sc.function()
+  def bwd(residual, cotangent):
+    return cotangent
+
+  ruled = sc.custom_derivative(masked, fwd=fwd, bwd=bwd)
+
+  @sc.function(sc.arg("x", 2))
+  def pair(x):
+    return masked(x), ruled(x)
+
+  x = sc.sym("selected_map_x", 4)
+  mapped = _mapped_call(as_concrete(pair if selected == "sibling" else ruled), 2, [(x, 0, 2)], output=int(selected == "residual"))
+  assert mapped.support == frozenset({0, 2})
+  assert _prunable_support(mapped) == frozenset({0, 2})
+  assert _prunable_support(_mapped_call(as_concrete(ruled), 2, [(x, 0, 2)])) is None
 
 
 @pytest.mark.parametrize("boundary", ["inline", "call", "map"])

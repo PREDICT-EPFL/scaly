@@ -26,7 +26,7 @@ def hoist_invariant(prog: ProgramNode) -> ProgramNode:
   """Split a mapped callee whose inputs are partly the same at every trip into a prologue, run once
   before the loop, and a body that receives the prologue's buffers as extra inputs.
 
-  A callee cannot know which of its arguments a ``VMAP`` broadcasts, so it recomputes everything
+  A callee cannot know which of its arguments a mapped loop broadcasts, so it recomputes everything
   derived from them at every trip. Inside the callee, a private buffer is invariant when every
   statement writing it reads only invariant inputs, constants and other invariant buffers; the
   statements producing the invariant buffers the rest of the body reads move to the prologue.

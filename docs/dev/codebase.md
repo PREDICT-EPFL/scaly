@@ -67,7 +67,7 @@ src/scaly/
     digest.py            the digests of a graph and of the installed source that the JIT index keys on
     factory.py           the typed derivative specs and the AD each dispatches to
     api.py               the @function decorator and the convenience derivative wrappers
-    sugar.py             typed mapped callables, markers, and the private VMAP node builder
+    sugar.py             typed mapped callables, markers, and the private LOOP node builder
 
   ad/                    derivative construction, all of it inside the expression dialect
     forward.py           jvp, jvp_many

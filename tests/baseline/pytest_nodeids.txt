@@ -2705,6 +2705,8 @@ tests/ad/test_sparsity.py::test_dependency_composition_keeps_exactly_256_shared_
 tests/ad/test_sparsity.py::test_jacobian_sparsity_for_matmul_and_call_chain_rule
 tests/ad/test_sparsity.py::test_jacobian_sparsity_for_structural_ops
 tests/ad/test_sparsity.py::test_jacobian_sparsity_tracks_concat_axis_layout
+tests/ad/test_sparsity.py::test_map_support_pruning_checks_only_the_selected_result[residual]
+tests/ad/test_sparsity.py::test_map_support_pruning_checks_only_the_selected_result[sibling]
 tests/ad/test_sparsity.py::test_mapped_coefficient_support_uses_stage_windows[False-0]
 tests/ad/test_sparsity.py::test_mapped_coefficient_support_uses_stage_windows[False-1]
 tests/ad/test_sparsity.py::test_mapped_coefficient_support_uses_stage_windows[False-2]
@@ -4402,6 +4404,14 @@ tests/function/test_sparse_derivative_layouts.py::test_declared_sparse_output_pr
 tests/function/test_sparse_derivative_layouts.py::test_values_follow_the_declared_layout[coordinate-lower]
 tests/function/test_sparse_derivative_layouts.py::test_values_follow_the_declared_layout[csc-full]
 tests/function/test_sparse_derivative_layouts.py::test_values_follow_the_declared_layout[csr-upper]
+tests/function/test_sugar.py::test_a_map_and_its_trip_count_share_one_invocation
+tests/function/test_sugar.py::test_a_no_carry_loop_with_step_control_keeps_its_loop_rules[condition]
+tests/function/test_sugar.py::test_a_no_carry_loop_with_step_control_keeps_its_loop_rules[index]
+tests/function/test_sugar.py::test_a_no_carry_loop_with_step_control_keeps_its_loop_rules[reverse]
+tests/function/test_sugar.py::test_a_no_carry_loop_with_step_control_keeps_its_loop_rules[trip]
+tests/function/test_sugar.py::test_a_scan_without_carries_uses_the_map_derivatives[0]
+tests/function/test_sugar.py::test_a_scan_without_carries_uses_the_map_derivatives[1]
+tests/function/test_sugar.py::test_a_scan_without_carries_uses_the_map_derivatives[4]
 tests/function/test_sugar.py::test_affine_views_equal_explicit_ir_windows_and_emit_identical_c
 tests/function/test_sugar.py::test_bare_map_and_resolution_errors
 tests/function/test_sugar.py::test_mapped_template_keeps_parameter_and_nested_output_trees
@@ -4953,6 +4963,8 @@ tests/passes/lowering/test_calls.py::test_custom_rule_residual_shares_its_primal
 tests/passes/lowering/test_calls.py::test_different_map_layouts_are_distinct_invocations
 tests/passes/lowering/test_calls.py::test_duplicate_loop_results_share_storage_and_hints[hints0]
 tests/passes/lowering/test_calls.py::test_duplicate_loop_results_share_storage_and_hints[hints1]
+tests/passes/lowering/test_calls.py::test_loop_residuals_precede_the_count_and_trajectories[False]
+tests/passes/lowering/test_calls.py::test_loop_residuals_precede_the_count_and_trajectories[True]
 tests/passes/lowering/test_calls.py::test_multi_output_map_uses_one_loop_and_matches_numpy[0]
 tests/passes/lowering/test_calls.py::test_multi_output_map_uses_one_loop_and_matches_numpy[1]
 tests/passes/lowering/test_calls.py::test_multi_output_map_uses_one_loop_and_matches_numpy[5]

@@ -448,5 +448,5 @@ def test_sparse_ad_helper_boundaries_use_canonical_order():
         layout is None or isinstance(layout, SparseLayout) and layout.format == "csr"
         for layout in (*function.input_tree.layouts, *function.output_tree.layouts)
       )
-    pending.extend(node.attrs["callee"] for node in topo(function.outputs) if node.op in {sc.ExprOp.CALL, sc.ExprOp.VMAP})
+    pending.extend(node.attrs["callee"] for node in topo(function.outputs) if node.op in {sc.ExprOp.CALL, sc.ExprOp.LOOP})
   assert helpers

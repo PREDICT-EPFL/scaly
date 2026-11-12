@@ -269,7 +269,7 @@ The outer function of the printed module is one mapped call, one gather and a
 ```
   expr.func @stages_spjac_residuals_zs(%zs: tensor<8xfloat64 diff>) -> (%spjac_residuals_zs: tensor<8x8xfloat64 diff nnz=16 pattern=a3f5f14ab331>) {
     %0 = expr.input {lowering="auto", name="zs"} : tensor<8xfloat64 diff>
-    %1 = expr.vmap(%0) {callee="stage_fwd_d88f5d3f27", length=4, output=0, slice_size=4, starts=[0], strides=[2]} : tensor<16xfloat64 diff>
+    %1 = expr.loop(%0) {callee="stage_fwd_d88f5d3f27", cond=None, in_place=[], index=False, length=4, n_carry=0, output=0, reverse=False, starts=[0], strides=[2]} : tensor<16xfloat64 diff>
     %2 = expr.const {lowering="auto", value=[ 0,  2,  1, ..., 14, 13, 15]} : tensor<16xint64>
     %3 = expr.gather(%1, %2) {axis=None, fill_value=0.0, mode="promise_in_bounds"} : tensor<16xfloat64 diff>
     %4 = expr.pack(%3) {pattern=pattern<8x8 nnz=16 digest=a3f5f14ab331>} : tensor<8x8xfloat64 diff nnz=16 pattern=a3f5f14ab331>
@@ -333,24 +333,25 @@ even stages and the odd stages, scatters each group into a vector the size of
     %2 = expr.input {lowering="auto", name="z"} : tensor<5xfloat64 diff>
     %3 = expr.input {lowering="auto", name="p"} : tensor<1xfloat64 diff>
     %4 = expr.const {lowering="auto", value=1.} : tensor<float64>
-    %5 = expr.const {lowering="auto", value=[1., 1., 1., 1.]} : tensor<4xfloat64>
-    %6 = expr.mul(%4, %5) : tensor<4xfloat64>
-    %7 = expr.reshape(%6) {shape=[4]} : tensor<4xfloat64>
+    %5 = expr.reshape(%4) {shape=[1]} : tensor<1xfloat64>
+    %6 = expr.const {lowering="auto", value=[1., 1., 1., 1.]} : tensor<4xfloat64>
+    %7 = expr.mul(%5, %6) : tensor<4xfloat64>
     %8 = expr.reshape(%7) {shape=[4]} : tensor<4xfloat64>
-    %9 = expr.vmap(%2, %3, %8) {callee="link_adj_8652465680", length=4, output=0, slice_size=2, starts=[0, 0, 0], strides=[1, 0, 1]} : tensor<8xfloat64 diff>
-    %10 = expr.const {lowering="auto", value=[0, 1, 4, 5]} : tensor<4xint64>
-    %11 = expr.gather(%9, %10) {axis=None, fill_value=0.0, mode="promise_in_bounds"} : tensor<4xfloat64 diff>
-    %12 = expr.scatter(%0, %1, %11) {axis=None, combine="add", mode="promise_in_bounds"} : tensor<5xfloat64 diff>
-    %13 = expr.const {lowering="auto", value=[1, 2, 3, 4]} : tensor<4xint64>
-    %14 = expr.const {lowering="auto", value=[2, 3, 6, 7]} : tensor<4xint64>
-    %15 = expr.gather(%9, %14) {axis=None, fill_value=0.0, mode="promise_in_bounds"} : tensor<4xfloat64 diff>
-    %16 = expr.scatter(%0, %13, %15) {axis=None, combine="add", mode="promise_in_bounds"} : tensor<5xfloat64 diff>
-    %17 = expr.add(%12, %16) : tensor<5xfloat64 diff>
-    expr.return %17
+    %9 = expr.reshape(%8) {shape=[4]} : tensor<4xfloat64>
+    %10 = expr.loop(%2, %3, %9) {callee="link_adj_8652465680", cond=None, in_place=[], index=False, length=4, n_carry=0, output=0, reverse=False, starts=[0, 0, 0], strides=[1, 0, 1]} : tensor<8xfloat64 diff>
+    %11 = expr.const {lowering="auto", value=[0, 1, 4, 5]} : tensor<4xint64>
+    %12 = expr.gather(%10, %11) {axis=None, fill_value=0.0, mode="promise_in_bounds"} : tensor<4xfloat64 diff>
+    %13 = expr.scatter(%0, %1, %12) {axis=None, combine="add", mode="promise_in_bounds"} : tensor<5xfloat64 diff>
+    %14 = expr.const {lowering="auto", value=[1, 2, 3, 4]} : tensor<4xint64>
+    %15 = expr.const {lowering="auto", value=[2, 3, 6, 7]} : tensor<4xint64>
+    %16 = expr.gather(%10, %15) {axis=None, fill_value=0.0, mode="promise_in_bounds"} : tensor<4xfloat64 diff>
+    %17 = expr.scatter(%0, %14, %16) {axis=None, combine="add", mode="promise_in_bounds"} : tensor<5xfloat64 diff>
+    %18 = expr.add(%13, %17) : tensor<5xfloat64 diff>
+    expr.return %18
   }
 ```
 
-`%11` holds the adjoints from stages 0 and 2, and `%15` those from stages 1 and 3.
+`%12` holds the adjoints from stages 0 and 2, and `%16` those from stages 1 and 3.
 For the shared weight, every stage reads the same slice, so the adjoint is the
 sum over stages. The outer function of `sc.gradient(chain, "cost", "p")` writes
 that sum as a product with a vector of ones:
@@ -360,15 +361,16 @@ that sum as a product with a vector of ones:
     %0 = expr.const {lowering="auto", value=[1., 1., 1., 1.]} : tensor<4xfloat64>
     %1 = expr.input {lowering="auto", name="z"} : tensor<5xfloat64 diff>
     %2 = expr.const {lowering="auto", value=1.} : tensor<float64>
-    %3 = expr.mul(%2, %0) : tensor<4xfloat64>
-    %4 = expr.reshape(%3) {shape=[4]} : tensor<4xfloat64>
+    %3 = expr.reshape(%2) {shape=[1]} : tensor<1xfloat64>
+    %4 = expr.mul(%3, %0) : tensor<4xfloat64>
     %5 = expr.reshape(%4) {shape=[4]} : tensor<4xfloat64>
-    %6 = expr.vmap(%1, %5) {callee="link_adj_7027c40181", length=4, output=0, slice_size=1, starts=[0, 0], strides=[1, 1]} : tensor<4xfloat64 diff>
-    %7 = expr.const {lowering="auto", value=[0, 1, 2, 3]} : tensor<4xint64>
-    %8 = expr.gather(%6, %7) {axis=None, fill_value=0.0, mode="promise_in_bounds"} : tensor<4xfloat64 diff>
-    %9 = expr.reshape(%8) {shape=[4, 1]} : tensor<4x1xfloat64 diff>
-    %10 = expr.matmul(%0, %9) : tensor<1xfloat64 diff>
-    expr.return %10
+    %6 = expr.reshape(%5) {shape=[4]} : tensor<4xfloat64>
+    %7 = expr.loop(%1, %6) {callee="link_adj_7027c40181", cond=None, in_place=[], index=False, length=4, n_carry=0, output=0, reverse=False, starts=[0, 0], strides=[1, 1]} : tensor<4xfloat64 diff>
+    %8 = expr.const {lowering="auto", value=[0, 1, 2, 3]} : tensor<4xint64>
+    %9 = expr.gather(%7, %8) {axis=None, fill_value=0.0, mode="promise_in_bounds"} : tensor<4xfloat64 diff>
+    %10 = expr.reshape(%9) {shape=[4, 1]} : tensor<4x1xfloat64 diff>
+    %11 = expr.matmul(%0, %10) : tensor<1xfloat64 diff>
+    expr.return %11
   }
 ```
 

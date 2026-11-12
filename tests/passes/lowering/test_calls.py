@@ -7,7 +7,7 @@ from scipy import sparse
 import scaly as sc
 from scaly.function.concrete import ConcreteFunction
 from scaly.function.model import as_concrete
-from scaly.function.sugar import _mapped_call
+from scaly.function.sugar import _loop_node, _mapped_call
 from scaly.ir.program import ProgramOp, walk_program
 from scaly.ir.types import CanonicalPattern, SparsityPattern
 from scaly.passes.lowering import lower_function, main_proc
@@ -74,6 +74,65 @@ def test_custom_rule_residual_shares_its_primal_invocation(mapped) -> None:
   calls = [node for node in walk_program(_lowered_main(fn)) if node.op == ProgramOp.CALL]
   assert len(calls) == 1
   assert calls[0].attrs["n_out"] == 2
+
+
+@pytest.mark.parametrize("carried", [False, True])
+def test_loop_residuals_precede_the_count_and_trajectories(carried) -> None:
+  @sc.function(sc.arg("x", ()))
+  def square(x):
+    return x * x
+
+  @sc.function()
+  def fwd(x):
+    return x * x, sc.stack([x, 2.0 * x])
+
+  @sc.function()
+  def bwd(residual, cotangent):
+    return residual[1] * cotangent
+
+  callee = as_concrete(sc.custom_derivative(square, fwd=fwd, bwd=bwd))
+  x = sc.sym("x", () if carried else 3)
+  attrs = {
+    "n_carry": int(carried),
+    "length": 3,
+    "starts": () if carried else (0,),
+    "strides": () if carried else (1,),
+    "index": False,
+    "reverse": False,
+    "in_place": (),
+  }
+  primal, residual, count = (_loop_node(callee, None, (x,), attrs, i).with_lowering("block") for i in range(3))
+  results = [primal, residual, count.cast(sc.dtypes.float64)]
+  if carried:
+    results.append(_loop_node(callee, None, (x,), attrs, 3))
+  else:
+    results += [sc.jvp(residual, x, sc.const(np.ones(3))), sc.vjp((residual,), (x,), (sc.const(np.ones(6)),))[0]]
+  fn = ConcreteFunction._from_exprs("loop_residuals", [x], results, ["x"], [f"y{i}" for i in range(len(results))])
+  entering = np.array([0.7, 0.7**2, 0.7**4]) if carried else np.array([0.7, 0.8, 0.9])
+  result = fn(np.array(0.7) if carried else entering)
+  np.testing.assert_allclose(result[0], entering[-1] ** 2 if carried else entering**2)
+  np.testing.assert_allclose(result[1], np.stack([entering, 2 * entering], axis=-1).reshape(-1))
+  assert result[2] == 3
+  if carried:
+    np.testing.assert_allclose(result[3], entering)
+
+    @sc.function(sc.arg("x", ()), outputs=sc.arg("go", sc.TensorType((), sc.dtypes.bool_)))
+    def positive(x):
+      return x > 0
+
+    @sc.function(sc.arg("x", ()))
+    def counted_custom_loop(x):
+      final, count = sc.while_loop(positive, callee, x, max_iter=3)
+      return final, count.cast(sc.dtypes.float64)
+
+    final, count = counted_custom_loop(np.array(0.7))
+    np.testing.assert_allclose(final, entering[-1] ** 2)
+    assert count == 3
+  else:
+    np.testing.assert_array_equal(result[3], np.tile([1.0, 2.0], 3))
+    np.testing.assert_array_equal(result[4], np.full(3, 3.0))
+  assert sc.jacobian_sparsity(residual, x).nnz == 6
+  assert sum(node.op == ProgramOp.CALL and node.attrs["callee"] == callee.name for node in walk_program(_lowered_main(fn))) == 1
 
 
 def test_different_map_layouts_are_distinct_invocations() -> None:

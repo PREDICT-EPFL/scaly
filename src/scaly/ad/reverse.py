@@ -6,7 +6,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ..ir.expr import _index_values, Expr, ExprOp, _uniform, gather, matmul, pack, _scatter_zero, topo, to_dense, values, where, zeros_like
+from ..ir.expr import _index_values, Expr, ExprOp, is_map, _uniform, gather, matmul, pack, _scatter_zero, topo, to_dense, values, where, zeros_like
 from ..ir.support import slice_indices, support_indices
 from ..ir.types import CanonicalPattern, stored_indices
 from .calls import _accumulate, _call_vjp, _cond_vjp, _vmap_vjp
@@ -65,7 +65,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
       or not needed(expr)
     ):
       continue
-    if expr.op == ExprOp.VMAP:
+    if is_map(expr):
       for arg, arg_cot in _vmap_vjp(expr, cot, wrts, dep_memo, pullback=vjp):
         if arg.id in expr_ids:
           adjoints[arg.id] = arg_cot if arg.id not in adjoints else _accumulate(adjoints[arg.id], arg_cot)

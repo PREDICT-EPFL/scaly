@@ -346,7 +346,7 @@ def _vmap_jvp_many(
   length = expr.attrs["length"]
   starts = expr.attrs["starts"]
   strides = expr.attrs["strides"]
-  slice_size = expr.attrs["slice_size"]
+  slice_size = callee.results[output_idx].type.storage_size
 
   maps: list[Expr] = []
 
@@ -558,9 +558,9 @@ def _vmap_adj_function(
   key = HelperKey.of(callee, "adjoint", (output_index,), active_formals, masked=masked)
   cache = callee._memo.helpers
   if key not in cache:
-    lam_name = f"lam:{callee.output_names[output_index]}"
-    lam = _tangent_symbol(lam_name, callee.outputs[output_index])
-    mask_name = f"mask:{callee.output_names[output_index]}"
+    lam_name = f"lam:{callee.result_names[output_index]}"
+    lam = _tangent_symbol(lam_name, callee.results[output_index])
+    mask_name = f"mask:{callee.result_names[output_index]}"
     # The condition travels as nondifferentiable 0/1 values in the cotangent's dtype.
     mask = Expr(ExprOp.INPUT, type=TensorType(lam.type.storage_shape, lam.type.dtype), name=mask_name) if masked else None
     seed = lam if mask is None else _masked_seed(lam, cast_expr(mask, dtypes.bool_))
@@ -579,7 +579,7 @@ def _vmap_adj_function(
       inputs += (mask,)
       input_names += (mask_name,)
     fn = ConcreteFunction._from_exprs(
-      helper_name(callee, key), inputs, [adj], input_names, [f"adj:{callee.output_names[output_index]}"], role="adjoint"
+      helper_name(callee, key), inputs, [adj], input_names, [f"adj:{callee.result_names[output_index]}"], role="adjoint"
     )
     cache[key] = (fn, arg_indices)
   return cast(_VmapAdjoint, cache[key])
@@ -595,7 +595,7 @@ def _vmap_vjp(
     return []
   starts = vmap_expr.attrs["starts"]
   strides = vmap_expr.attrs["strides"]
-  slice_size = vmap_expr.attrs["slice_size"]
+  slice_size = callee.results[output_idx].type.storage_size
   active_formals = tuple(k for k, arg in enumerate(vmap_expr.args) if any(_depends_on(arg, wrt, dep_memo, through_stops=False) for wrt in wrts))
   if not active_formals:
     return []

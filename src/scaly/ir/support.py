@@ -93,24 +93,26 @@ def _make_support(entries: np.ndarray) -> frozenset[int] | _SupportSet:
 _SPECIALIZATION_LIMIT = 32
 
 
-def compute_support(root: Expr, rules: Mapping[ExprOp, OpInfo]) -> Support:
+def compute_support(root: Expr, rules: Mapping[ExprOp, OpInfo], is_map: Callable[[Expr], bool]) -> Support:
   """Compute and cache support without recursing through operands or callees."""
   if root._support_cache is not None:
     return root._support_cache[0]
-  _run_support(_walk_support((root,), rules, None), rules)
+  _run_support(_walk_support((root,), rules, None, is_map), rules, is_map)
   return _cached(root)
 
 
-def specialize_support(callee: Any, arguments: tuple[Support, ...], rules: Mapping[ExprOp, OpInfo]) -> Callable[[Expr], Support]:
+def specialize_support(
+  callee: Any, arguments: tuple[Support, ...], rules: Mapping[ExprOp, OpInfo], is_map: Callable[[Expr], bool]
+) -> Callable[[Expr], Support]:
   """Return a node-support lookup for the callee, using its own supports beyond the cache bound."""
 
   def request():
     return (yield callee, arguments)
 
-  return _run_support(request(), rules)
+  return _run_support(request(), rules, is_map)
 
 
-def _run_support(walk, rules: Mapping[ExprOp, OpInfo]) -> Callable[[Expr], Support]:
+def _run_support(walk, rules: Mapping[ExprOp, OpInfo], is_map: Callable[[Expr], bool]) -> Callable[[Expr], Support]:
   """Suspend callee walks so deep call nesting uses no Python recursion."""
   pending = [walk]
   result = None
@@ -125,23 +127,23 @@ def _run_support(walk, rules: Mapping[ExprOp, OpInfo]) -> Callable[[Expr], Suppo
     if arguments in cache:
       result = cache[arguments].__getitem__
     elif len(cache) >= _SPECIALIZATION_LIMIT:
-      pending.append(_walk_support(callee.results, rules, None))
+      pending.append(_walk_support(callee.results, rules, None, is_map))
       result = None
     else:
-      pending.append(_specialized_support(callee, arguments, rules))
+      pending.append(_specialized_support(callee, arguments, rules, is_map))
       result = None
   assert result is not None
   return result
 
 
-def _specialized_support(callee: Any, arguments: tuple[Support, ...], rules: Mapping[ExprOp, OpInfo]):
+def _specialized_support(callee: Any, arguments: tuple[Support, ...], rules: Mapping[ExprOp, OpInfo], is_map: Callable[[Expr], bool]):
   context = {formal: _bound_support(formal, support) for formal, support in zip(callee.inputs, arguments, strict=True)}
-  result = yield from _walk_support(callee.results, rules, context)
+  result = yield from _walk_support(callee.results, rules, context, is_map)
   callee._memo.supports[arguments] = context
   return result
 
 
-def _walk_support(roots: Sequence[Expr], rules: Mapping[ExprOp, OpInfo], context: dict[Expr, Support] | None):
+def _walk_support(roots: Sequence[Expr], rules: Mapping[ExprOp, OpInfo], context: dict[Expr, Support] | None, is_map: Callable[[Expr], bool]):
   support_of = _cached if context is None else context.__getitem__
   stack = [(root, False) for root in reversed(roots)]
   while stack:
@@ -149,7 +151,7 @@ def _walk_support(roots: Sequence[Expr], rules: Mapping[ExprOp, OpInfo], context
     if (context is None and node._support_cache is not None) or (context is not None and node in context):
       continue
     if context is not None and not node.args:
-      yield from _walk_support((node,), rules, None)
+      yield from _walk_support((node,), rules, None, is_map)
       context[node] = _cached(node)
       continue
     info = rules[cast("ExprOp", node.op)]
@@ -164,10 +166,10 @@ def _walk_support(roots: Sequence[Expr], rules: Mapping[ExprOp, OpInfo], context
       for branch in node.attrs["branches"]:
         lookup = yield branch, arguments
         result = _combine(result, lookup(branch.outputs[node.attrs["output"]]), intersection=False)
-    elif rule == "loop":
+    elif rule == "loop" and not is_map(node):
       result = yield from _loop_support(node, support_of)
     else:
-      result = (yield from _call_support(node, rule, support_of)) if rule in {"call", "vmap"} else _rule(node, rule, support_of)
+      result = (yield from _call_support(node, rule, support_of)) if rule in {"call", "loop"} else _rule(node, rule, support_of)
     result = _bound_support(node, result)
     if context is None:
       object.__setattr__(node, "_support_cache", (result,))
@@ -231,7 +233,7 @@ def _loop_support(node: Expr, support_of: Callable[[Expr], Support]):
   growing after the specialization limit becomes unknown.
   """
   callee, n_carry, length, output = node.attrs["callee"], node.attrs["n_carry"], node.attrs["length"], node.attrs["output"]
-  n_ys = len(callee.outputs) - n_carry
+  n_ys = len(callee.results) - n_carry
   carries = [support_of(arg) for arg in node.args[:n_carry]]
   slices: list[Support] = []
   formals = callee.inputs[n_carry + node.attrs["index"] :]
@@ -257,7 +259,7 @@ def _loop_support(node: Expr, support_of: Callable[[Expr], Support]):
     if context is None:
       return frozenset()
     context = yield callee, (*carries, *index, *slices)
-    return _tile(context(callee.results[output]), callee.outputs[output].type, length)
+    return _tile(context(callee.results[output]), callee.results[output].type, length)
   if output == n_carry + n_ys:
     return None
   j = output - n_carry - n_ys - 1

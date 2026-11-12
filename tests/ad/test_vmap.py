@@ -6,6 +6,7 @@ import pytest
 from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 import scaly as sc
+from scaly.ir.expr import is_map
 
 
 def test_grad_factory_over_vmap_matches_unrolled_and_finite_difference() -> None:
@@ -28,7 +29,7 @@ def test_grad_factory_over_vmap_matches_unrolled_and_finite_difference() -> None
 
   mapped_grad = mapped_fn.factory("vmap_grad_factory_grad", ["z", "lam:y"], [sc.factory.Grad("gamma", "z")], aux={"gamma": ["y"]})
   unrolled_grad = unrolled_fn.factory("vmap_grad_unrolled_grad", ["z", "lam:y"], [sc.factory.Grad("gamma", "z")], aux={"gamma": ["y"]})
-  vmap_nodes = [node for node in topo(as_concrete(mapped_grad).outputs) if node.op == sc.ExprOp.VMAP]
+  vmap_nodes = [node for node in topo(as_concrete(mapped_grad).outputs) if is_map(node)]
   assert len(vmap_nodes) == 1
   assert "_adj_" in vmap_nodes[0].attrs["callee"].name
 

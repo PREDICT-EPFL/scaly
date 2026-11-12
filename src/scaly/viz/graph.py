@@ -21,7 +21,7 @@ _EXPR_COLORS = {
   ExprOp.INPUT: "#c0c0ff",
   ExprOp.CONST: "#e0e0e0",
   ExprOp.CALL: "#00b7c8",
-  ExprOp.VMAP: "#f6ccff",
+  ExprOp.LOOP: "#f6ccff",
   ExprOp.ADD: "#ffffc0",
   ExprOp.SUB: "#ffffc0",
   ExprOp.MUL: "#ffffc0",

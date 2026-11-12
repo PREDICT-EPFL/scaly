@@ -13,7 +13,7 @@ from ..ad.sparsity import _depends_on, _jac_mask
 from ..function.concrete import ConcreteFunction
 from ..function.model import Function
 from ..function.tree import group, arg, Tree
-from ..ir.expr import Expr, ExprOp, callees_of, concat, substitute, to_dense, topo, values as stored_values
+from ..ir.expr import Expr, ExprOp, is_map, callees_of, concat, substitute, to_dense, topo, values as stored_values
 from ..ir.types import SparsityPattern, TensorType
 from ..passes.expr import simplify_cse_fixpoint
 from .model import SolverDescriptor, descriptor_function, solver_options
@@ -82,7 +82,7 @@ def _decides_on(exprs: Sequence[Expr], variables: Sequence[Expr]) -> bool:
 
   def visit(targets: Sequence[Expr], active: Sequence[Expr]) -> bool:
     for node in topo(targets):
-      if callees_of(node) and node.op != ExprOp.LOOP:
+      if callees_of(node) and (node.op != ExprOp.LOOP or is_map(node)):
         actuals = node.args[1:] if node.op == ExprOp.COND else node.args
         for callee in callees_of(node):
           formals = tuple(f for f, a in zip(callee.inputs, actuals, strict=True) if any(_depends_on(a, v, memo) for v in active))
@@ -93,7 +93,9 @@ def _decides_on(exprs: Sequence[Expr], variables: Sequence[Expr]) -> bool:
               return True
       elif (
         not node.type.dtype.is_floating
-        or node.op in {ExprOp.LOOP, ExprOp.MAXIMUM, ExprOp.MINIMUM, ExprOp.ABS, ExprOp.FLOOR, ExprOp.CEIL}
+        or node.op == ExprOp.LOOP
+        and not is_map(node)
+        or node.op in {ExprOp.MAXIMUM, ExprOp.MINIMUM, ExprOp.ABS, ExprOp.FLOOR, ExprOp.CEIL}
         or node.op == ExprOp.REDUCE
         and node.attrs["kind"] != "add"
       ) and any(_depends_on(node, v, memo) for v in active):

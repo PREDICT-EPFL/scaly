@@ -5,7 +5,7 @@ import numpy as np
 import scaly as sc
 from scaly.ad.sparse import _sparse_hessian
 from scaly.ad.sparsity import star_coloring
-from scaly.ir.expr import Expr, ExprOp, OP_INFO, substitute, topo
+from scaly.ir.expr import is_map, Expr, ExprOp, OP_INFO, substitute, topo
 from scaly.ir.support import specialize_support
 
 
@@ -91,7 +91,7 @@ def test_chain_M9_hessian_seed_axis_support_matches_independent_jacobian_images(
   pending, seen, sites = [(hessian.values,)], set(), []
   while pending:
     for node in topo(pending.pop()):
-      if node.op in {ExprOp.CALL, ExprOp.VMAP}:
+      if node.op in {ExprOp.CALL, ExprOp.LOOP}:
         callee = node.attrs["callee"]
         if callee not in seen:
           seen.add(callee)
@@ -110,7 +110,7 @@ def test_chain_M9_hessian_seed_axis_support_matches_independent_jacobian_images(
     assert stage_input.shape == (48,)
     expected_input = _seed_image(state, stage_input, stage_seeds)
     assert call.args[-1].support == frozenset(map(int, np.flatnonzero(expected_input)))
-    context = specialize_support(helper, tuple(arg.support for arg in call.args), OP_INFO)
+    context = specialize_support(helper, tuple(arg.support for arg in call.args), OP_INFO, is_map)
     seed_nodes = [node for node in topo(helper.results) if node.shape and node.shape[0] == 42]
     seed_constants = [node for node in seed_nodes if node.op == ExprOp.CONST and np.any(node.value)]
     assert len(seed_constants) == 1

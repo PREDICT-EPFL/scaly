@@ -336,7 +336,7 @@ def _cases() -> list[Case]:
     [
       Case("pow-negative-base-constant-exponent", ExprOp.POW, (np.array([-0.5, -1.4]),), lambda x: x**3, lambda x: x**3),
       Case("call", ExprOp.CALL, (np.array([0.2, -0.7]),), lambda x: _piece(x), lambda x: np.sin(x) + x * x),
-      Case("vmap", ExprOp.VMAP, (np.linspace(0.1, 0.8, 6),), lambda x: _mapped_call(_piece, 3, [(x, 0, 2)]), lambda x: np.sin(x) + x * x),
+      Case("vmap", ExprOp.LOOP, (np.linspace(0.1, 0.8, 6),), lambda x: _mapped_call(_piece, 3, [(x, 0, 2)]), lambda x: np.sin(x) + x * x),
     ]
   )
   for value in (0.2, -0.2):
@@ -471,7 +471,7 @@ def test_baked_seeds_differences_and_duality(evaluated):
 def test_every_expr_op_is_accounted_for():
   assert set(UNARY) | {ExprOp.FLOOR, ExprOp.CEIL} | WITHOUT_TANGENT & COMMON_ELEMENTWISE_UNARY == COMMON_ELEMENTWISE_UNARY
   assert set(BINARY) | {ExprOp.MINIMUM, ExprOp.MAXIMUM} | WITHOUT_TANGENT & COMMON_ELEMENTWISE_BINARY == COMMON_ELEMENTWISE_BINARY
-  # STOP_GRADIENT has a held-fixed reference, covered by test_stop_gradient rather than finite differences. LOOP refuses
+  # STOP_GRADIENT has a held-fixed reference. LOOP uses the map case here; carried loops refuse
   # derivatives, tested in tests/function/test_loop.py.
   assert {case.op for case in CASES} | WITHOUT_TANGENT | {ExprOp.EXTERN, ExprOp.STOP_GRADIENT, ExprOp.LOOP} == set(ExprOp)
 

@@ -8,7 +8,7 @@ import pytest
 from scaly.function.model import as_concrete
 from scaly.function.sugar import _mapped_call
 import scaly as sc
-from scaly.ir.expr import ExprOp, topo
+from scaly.ir.expr import is_map, ExprOp, topo
 from scaly.ir.program import ProgramNode
 from scaly.passes.lowering import lower_function
 
@@ -124,7 +124,7 @@ def test_local_coloring_and_packed_contributions_keep_seed_order():
     )
   np.testing.assert_allclose(products((z, seeds)), expected, atol=1e-12, rtol=1e-12)
   np.testing.assert_allclose(products((z, seeds[::-1])), expected[::-1], atol=1e-12, rtol=1e-12)
-  maps = [node for node in topo(as_concrete(products).outputs) if node.op == ExprOp.VMAP]
+  maps = [node for node in topo(as_concrete(products).outputs) if is_map(node)]
   assert len(maps) == 1 and "_fwd_pack_" in maps[0].attrs["callee"].name
   helpers = []
   for key, entry in stage.instantiate()._memo.helpers.items():
@@ -181,5 +181,5 @@ def test_empty_constant_color_selection_drops_the_mapped_derivative():
   def products(z):
     return sc.jvp_many(_mapped_call(stage, 5, [(z, 0, 4)]), z, sc.const(seeds))
 
-  assert not any(node.op == ExprOp.VMAP for node in topo(as_concrete(products).outputs))
+  assert not any(is_map(node) for node in topo(as_concrete(products).outputs))
   np.testing.assert_array_equal(products(np.linspace(-0.4, 0.7, 20)), np.zeros((3, 10)))

@@ -10,7 +10,7 @@ from scaly.function.model import as_concrete
 from scaly.function.concrete import ConcreteFunction
 from scaly.function.sugar import _mapped_call
 import scaly as sc
-from scaly.ir.expr import topo
+from scaly.ir.expr import is_map, topo
 from scaly.solvers.registry import SolverPluginError
 
 
@@ -180,7 +180,7 @@ def test_single_block_problem_preserves_vmap_decision_input() -> None:
     return sc.ProblemSpec(minimize=(z * z).sum() + p, eq=(rows,))
 
   solve = sc.solver(mapped_problem, "sqp", name="single_block_vmap_sqp")
-  mapped = next(node for node in topo(as_concrete(solve.function).descriptor.base.outputs) if node.op == sc.ExprOp.VMAP)
+  mapped = next(node for node in topo(as_concrete(solve.function).descriptor.base.outputs) if is_map(node))
   assert mapped.args[0] is as_concrete(solve.function).descriptor.base.inputs[0]
 
   hess = as_concrete(solve.function).descriptor.hess

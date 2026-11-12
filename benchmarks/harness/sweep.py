@@ -21,7 +21,7 @@ from scaly.function.concrete import ConcreteFunction
 import scaly as sc
 from scaly.codegen.abi import c_ident
 from scaly.codegen.aot import render_c_module
-from scaly.ir.expr import ExprOp, topo
+from scaly.ir.expr import is_map, topo
 from scaly.ir.program import walk_program, ProgramNode, ProgramOp
 from benchmarks.harness import ROOT, RESULTS, constant_tables, gbench, object_bytes, object_constant_symbols, vector_libm
 from benchmarks.harness.correctness import check_dense_reference, write_samples
@@ -222,7 +222,7 @@ def _dispatch_metrics(fun: ConcreteFunction, prog: ProgramNode) -> tuple[int | s
   per-iteration arithmetic is largest; the arithmetic column is that family's per-iteration figure
   and the workspace is the maximum over every dispatch.
   """
-  vmaps = [node for node in topo(fun.outputs) if node.op == ExprOp.VMAP]
+  vmaps = [node for node in topo(fun.outputs) if is_map(node)]
   trip_counts = {int(node.attrs["length"]) for node in vmaps}
   if not vmaps:
     return "", "", ""

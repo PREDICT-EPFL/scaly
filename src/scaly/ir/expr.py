@@ -95,7 +95,6 @@ class ExprOp(StrEnum):
   CONCAT = "concat"
   MATMUL = "matmul"
   CALL = "call"
-  VMAP = "vmap"
   EXTERN = "extern"
   LOOP = "loop"
   COND = "cond"
@@ -103,7 +102,7 @@ class ExprOp(StrEnum):
   STOP_GRADIENT = "stop_gradient"
 
 
-CALLEE_OPS = {ExprOp.CALL, ExprOp.VMAP, ExprOp.LOOP, ExprOp.EXTERN, ExprOp.COND}
+CALLEE_OPS = {ExprOp.CALL, ExprOp.LOOP, ExprOp.EXTERN, ExprOp.COND}
 
 
 COMMON_ELEMENTWISE_UNARY = {
@@ -165,7 +164,6 @@ COMMON_STRUCTURAL = {
   ExprOp.CONCAT,
   ExprOp.MATMUL,
   ExprOp.CALL,
-  ExprOp.VMAP,
   ExprOp.EXTERN,
   ExprOp.LOOP,
   ExprOp.COND,
@@ -211,7 +209,6 @@ class OpInfo:
       "stack",
       "concat",
       "call",
-      "vmap",
       "loop",
       "cond",
     ]
@@ -278,7 +275,6 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.CONCAT: OpInfo(ExprOp.CONCAT, None, support_rule="concat"),
   ExprOp.MATMUL: OpInfo(ExprOp.MATMUL, 2, pattern_rule="matmul"),
   ExprOp.CALL: OpInfo(ExprOp.CALL, None, support_rule="call"),
-  ExprOp.VMAP: OpInfo(ExprOp.VMAP, None, support_rule="vmap"),
   ExprOp.EXTERN: OpInfo(ExprOp.EXTERN, None),
   ExprOp.COND: OpInfo(ExprOp.COND, None, support_rule="cond"),
   ExprOp.LOOP: OpInfo(ExprOp.LOOP, None, support_rule="loop"),
@@ -621,7 +617,7 @@ class Expr:
     Every other entry is zero for all finite input values. A product with a constant zero counts
     as zero. The result is a set or a sorted array of indices, computed on first access and cached.
     """
-    return compute_support(self, OP_INFO)
+    return compute_support(self, OP_INFO, is_map)
 
   def structural_key(self) -> tuple[Any, ...]:
     stack: list[tuple[Expr, bool]] = [(self, False)]
@@ -986,10 +982,22 @@ def callees_of(node: Expr) -> tuple[Any, ...]:
   return (node.attrs["callee"],) if node.op in CALLEE_OPS else ()
 
 
+def is_map(node: Expr) -> bool:
+  """Whether a result is a stacked output of an independent, forward, static loop."""
+  return (
+    node.op == ExprOp.LOOP
+    and node.attrs["n_carry"] == 0
+    and node.attrs["cond"] is None
+    and not node.attrs["index"]
+    and not node.attrs["reverse"]
+    and len(node.args) == len(node.attrs["starts"])
+    and node.attrs["output"] < len(node.attrs["callee"].results)
+  )
+
+
 def invocation_key(node: Expr) -> tuple[Any, ...]:
   """Group a call operation's results by operation, callee identity, argument identity and invocation attributes."""
-  # VMAP's slice size describes the selected result, not the invocation.
-  attrs = {k: v for k, v in node.attrs.items() if k not in ("callee", "branches", "output", "slice_size")}
+  attrs = {k: v for k, v in node.attrs.items() if k not in ("callee", "branches", "output")}
   return node.op, tuple(id(callee) for callee in callees_of(node)), tuple(arg.id for arg in node.args), _attrs_key(attrs)
 
 
@@ -1824,12 +1832,6 @@ def format_expr(outputs: Expr | Iterable[Expr]) -> str:
     elif e.op == ExprOp.CALL:
       callee = e.attrs["callee"]
       rhs = f"call {callee.name}[{e.attrs['output']}]({', '.join(f'%{loc[a.id]}' for a in e.args)})"
-    elif e.op == ExprOp.VMAP:
-      callee = e.attrs["callee"]
-      length = e.attrs["length"]
-      slice_size = e.attrs["slice_size"]
-      bindings = ", ".join(f"%{loc[a.id]}[{s}::{st}]" for a, s, st in zip(e.args, e.attrs["starts"], e.attrs["strides"], strict=True))
-      rhs = f"vmap[{length}x{slice_size}] {callee.name}[{e.attrs['output']}]({bindings})"
     elif e.op == ExprOp.COND:
       branches = ", ".join(fn.name for fn in e.attrs["branches"])
       rhs = f"cond [{branches}][{e.attrs['output']}]({', '.join(f'%{loc[a.id]}' for a in e.args)})"
