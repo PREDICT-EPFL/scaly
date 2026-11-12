@@ -837,3 +837,129 @@ def test_shared_outer_mask_keeps_the_union_of_inner_mapped_conditions() -> None:
   grad, hess = (np.asarray(v) for v in f(np.array([0.0, 4.0])))
   np.testing.assert_array_equal(grad, [0.0, 0.25])
   np.testing.assert_array_equal(hess, np.diag([0.0, -1.0 / 32.0]))
+
+
+@pytest.mark.parametrize(("mapped", "nested"), [(False, False), (True, False), (True, True)])
+def test_forward_calls_carry_selected_activity_in_both_directions(mapped: bool, nested: bool) -> None:
+  shape = () if mapped else (2,)
+
+  @sc.function(sc.arg("u", shape), outputs=sc.arg("y"), name="sd_boundary_root")
+  def root(u: sc.Expr) -> sc.Expr:
+    return u.sqrt()
+
+  @sc.function(sc.arg("u", shape), outputs=sc.arg("y"), name="sd_boundary_selected")
+  def selected(u: sc.Expr) -> sc.Expr:
+    return sc.where(u > 0.0, u, 0.0)
+
+  @sc.function(sc.arg("u", shape), outputs=sc.arg("y"), name="sd_boundary_nested_root")
+  def nested_root(u: sc.Expr) -> sc.Expr:
+    return root(u)
+
+  @sc.function(sc.arg("u", shape), outputs=sc.arg("y"), name="sd_boundary_nested_selected")
+  def nested_selected(u: sc.Expr) -> sc.Expr:
+    return selected(u)
+
+  @sc.function(sc.arg("u", shape), outputs=sc.arg("y"), name="sd_boundary_stationary")
+  def stationary(u: sc.Expr) -> sc.Expr:
+    return (root(u) - 2.0) ** 2
+
+  seeds = np.array([[1.0, 1.0], [0.0, -2.0]])
+
+  @sc.function(
+    sc.arg("x", 2),
+    sc.arg("seeds", (2, 2)),
+    outputs=sc.group(*(sc.arg(k) for k in ("y", "baked", "runtime", "g", "h", "second", "plain", "stationary_second"))),
+    name="sd_boundaries",
+  )
+  def derivatives(x: sc.Expr, seed: sc.Expr) -> tuple[sc.Expr, ...]:
+    root_fn = nested_root if nested else root
+    selected_fn = nested_selected if nested else selected
+    chosen = sc.where(x > 0.0, x, 0.0)
+    into = sc.vmap(root_fn, 2)(chosen) if mapped else root_fn(chosen)
+    outof = (sc.vmap(selected_fn, 2)(x) if mapped else selected_fn(x)).sqrt()
+    before = sc.vmap(selected_fn, 2)(x.sqrt()) if mapped else selected_fn(x.sqrt())
+    plain = sc.vmap(root_fn, 2)(x * x + 1.0) if mapped else root_fn(x * x + 1.0)
+    ys = [into, outof, before]
+    losses = [((y - 2.0) ** 2).sum() for y in ys]
+    first = [sc.jvp(loss, x, sc.const(np.ones(2))) for loss in losses]
+    stationary_loss = (sc.vmap(stationary, 2)(chosen) if mapped else stationary(chosen)).sum()
+    stationary_first = sc.jvp(stationary_loss, x, sc.const(np.ones(2)))
+    return (
+      sc.stack(ys),
+      sc.stack([sc.jvp_many(y, x, sc.const(seeds)) for y in ys]),
+      sc.stack([sc.jvp_many(y, x, seed) for y in ys]),
+      sc.stack([sc.gradient(loss, x) for loss in losses]),
+      sc.stack([sc.hessian(loss, x) for loss in losses]),
+      sc.stack([sc.jvp(t, x, sc.const(np.ones(2))) for t in first]),
+      sc.jvp_many(plain, x, seed),
+      sc.jvp(stationary_first, x, sc.const(np.ones(2))),
+    )
+
+  derivatives.instantiate()
+  called_root = (nested_root if nested else root).instantiate()
+  assert any(
+    any(inp.type.dtype.is_bool for inp in helper[0].inputs) and any(out.type.dtype.is_bool for out in helper[0].outputs)
+    for key, helper in called_root._memo.helpers.items()
+    if key.role == "forward" and key.masked and isinstance(helper, tuple)
+  )
+  for point in (np.array([-1.0, 4.0]), np.array([-2.0, 9.0])):
+    value, baked, runtime, grad, hess, second, plain, stationary_second = (np.asarray(v) for v in derivatives(point, seeds))
+    slope = np.array([0.0, 0.5 / np.sqrt(point[1])])
+    expected_grad = np.array([0.0, 1.0 - 2.0 / np.sqrt(point[1])])
+    curvature = 1.0 / point[1] ** 1.5
+    np.testing.assert_allclose(value, np.tile([0.0, np.sqrt(point[1])], (3, 1)))
+    np.testing.assert_allclose(baked, np.broadcast_to(seeds * slope, (3, 2, 2)), rtol=1e-14)
+    np.testing.assert_allclose(runtime, baked, rtol=1e-14)
+    np.testing.assert_allclose(grad, np.tile(expected_grad, (3, 1)), rtol=1e-14)
+    np.testing.assert_allclose(hess, np.broadcast_to(np.diag([0.0, curvature]), (3, 2, 2)), rtol=1e-14)
+    np.testing.assert_allclose(second, curvature, rtol=1e-14)
+    np.testing.assert_allclose(stationary_second, curvature, rtol=1e-14)
+    np.testing.assert_allclose(plain, seeds * (point / np.sqrt(point * point + 1.0)), rtol=1e-14)
+    expected_jacobian = np.tile(np.diag(slope), (3, 1))
+    np.testing.assert_allclose(finite_difference(lambda v: np.asarray(derivatives(v, seeds)[0]), point), expected_jacobian, rtol=1e-7, atol=1e-9)
+
+
+def test_forward_map_keeps_activity_when_another_formal_has_zero_partial() -> None:
+  @sc.function(sc.arg("a", ()), sc.arg("b", ()), outputs=sc.arg("y"), name="sd_forward_zero_formal")
+  def stage(a: sc.Expr, b: sc.Expr) -> sc.Expr:
+    return a + 0.0 * b
+
+  @sc.function(
+    sc.arg("x", 2), sc.arg("seed", 2), outputs=sc.group(sc.arg("baked"), sc.arg("runtime"), sc.arg("g")), name="sd_forward_zero_formal_map"
+  )
+  def f(x: sc.Expr, seed: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    y = sc.vmap(stage, 2)(sc.where(x > 0.0, x, 0.0), x).sqrt().sum()
+    return sc.jvp(y, x, sc.const(np.ones(2))), sc.jvp(y, x, seed), sc.gradient(y, x)
+
+  baked, runtime, grad = (np.asarray(v) for v in f(np.array([-1.0, 4.0]), np.ones(2)))
+  np.testing.assert_array_equal([baked, runtime], [0.25, 0.25])
+  np.testing.assert_array_equal(grad, [0.0, 0.25])
+
+
+def test_forward_call_conditions_use_sparse_stored_coordinates() -> None:
+  pattern = CanonicalPattern((2, 2), (0, 1), (0, 1))
+  type_ = sc.TensorType((2, 2), pattern=pattern)
+
+  @sc.function(sc.arg("u", type_), outputs=sc.arg("y"), name="sd_sparse_call_root")
+  def root(u: sc.Expr) -> sc.Expr:
+    return u.sqrt()
+
+  @sc.function(sc.arg("u", type_), outputs=sc.arg("y"), name="sd_sparse_call_selected")
+  def selected(u: sc.Expr) -> sc.Expr:
+    condition = sc.pack(sc.values(u) > 0.0, pattern)
+    return sc.where(condition, u, sc.pack(sc.const(np.zeros(2)), pattern))
+
+  seeds = np.array([[1.0, 1.0], [0.0, -2.0]])
+
+  @sc.function(
+    sc.arg("x", 2), sc.arg("seeds", (2, 2)), outputs=sc.group(sc.arg("y"), sc.arg("baked"), sc.arg("runtime")), name="sd_sparse_call_masks"
+  )
+  def f(x: sc.Expr, seed: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    ys = [sc.values(root(sc.pack(sc.where(x > 0.0, x, 0.0), pattern))), sc.values(selected(sc.pack(x, pattern)).sqrt())]
+    return sc.stack(ys), sc.stack([sc.jvp_many(y, x, sc.const(seeds)) for y in ys]), sc.stack([sc.jvp_many(y, x, seed) for y in ys])
+
+  value, baked, runtime = (np.asarray(v) for v in f(np.array([-1.0, 4.0]), seeds))
+  np.testing.assert_array_equal(value, [[0.0, 2.0], [0.0, 2.0]])
+  expected = np.broadcast_to(seeds * [0.0, 0.25], (2, 2, 2))
+  np.testing.assert_array_equal(baked, expected)
+  np.testing.assert_array_equal(runtime, expected)

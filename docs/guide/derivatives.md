@@ -423,8 +423,8 @@ among tied extrema. `abs` has slope `sign(x)`, with slope zero at zero.
 in forward and reverse mode. A branch that is not chosen contributes zero
 even when its local derivative is NaN or infinite.
 
-A selected zero also guards later partial derivatives within the same function
-body. For example, `sqrt(maximum(x, 0))` has derivative zero at `x = -1` in both modes.
+A selected zero also guards later partial derivatives across ordinary and mapped
+calls. For example, `sqrt(maximum(x, 0))` has derivative zero at `x = -1` in both modes.
 
 `argmin` and `argmax` return integer indices and have no derivative.
 Quadratic-program backends refuse variable-dependent nonsmooth operations,

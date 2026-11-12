@@ -1,51 +1,58 @@
-# Select masks: flush hold
+# Select masks: forward call extension under the push hold
 
-PR #434 covers #364 and folded-in #414 in compiler run section 4 (#24).
-The latest user instruction and ~/.scaly-suite/super/flush-common.md override
-all previous plan steps about pushing, readiness and queueing.
+PR #434 covers #364 and #414. The maintainer's latest instruction also includes
+forward call boundaries, so #432 is now in this PR rather than a follow-up.
+The Nov 12 scope update supersedes the earlier deferral of #432 on #24.
+Reverse dense-product transport and structural-zero semantics from #435 remain
+separate. COND, LOOP and custom-rule protocols remain outside this change.
 
-## Current instructions
+## Standing hold
 
-- Push nothing, mark nothing ready, queue nothing, open no PR and start no Claude
-  review. The coordinator owns the flush order and gives the next push instruction.
-- Keep this plan through the push. Finish the local checks and report, then stop.
-- Current base is origin/main at 589a2e8f, including #433 and the one-ULP assertion
-  fix #445. Rebase merged cleanly. The assertion was not modified by this task.
-- The live PR's green checks apply to its older pushed head. They do not validate
-  the newer local branch; local source must be pushed before the PR can be ready.
+Read ~/.scaly-suite/super/flush-common.md and ~/.scaly-suite/RULES.md. Push nothing,
+mark nothing ready, queue nothing, publish no PR change and start no Claude review.
+The coordinator schedules reviews and authorizes the push order. Keep this plan.
+The live PR still points at the older pushed head; its green checks do not cover
+this local extension. Do not claim the earlier reviews cover this new protocol.
 
-## Complete
+## Implemented locally
 
-- Sol xhigh full correctness review and one low delta: approved. Threads settled.
-- Fable high main review and one low delta: approved, no remaining actionable point.
-  Threads settled. No further review is authorized by this flush.
-- All review fixes are committed. Typed mapped-adjoint casts from main preserve
-  numerical parts and activity flags in the common buffer, then restore input dtype.
-- Updated test-cost rule applied to repeated grids. One mixed-formal integration
-  regression checks the rebase. Focused checks: 95 passed, including snapshots and
-  operation coverage. Log /tmp/scaly-434-flush-focused.log. Ruff and ty pass.
-- No C snapshots changed or regenerated. Ten extra C/header comparisons against
-  current main are byte-identical; proof path /tmp/scaly-434-flush-c-proof.path.
-- Full hook on main 589a2e8f passed: 6,402 tests, 56 skipped, exit 0.
-  Type, format, lint, snapshots, benchmark smoke, docs and private-name checks pass.
-  Log /tmp/scaly-434-flush-suite-nU1reR/final.log.
-- The latest section 4 decision is canonical:
-  https://github.com/PREDICT-EPFL/scaly/issues/24#issuecomment-6808554341
-  The prepared PR body copies its rule paragraph and boundary table verbatim.
-  #420 transport is now on main through #433; #442 records its producer limitation.
-  #432 and the select half of #435 are coordinated follow-up work after this PR.
-  The structural-zero half of #435 is a maintainer decision. #443 is code-size work.
-  COND/LOOP transport is section 9. No code was changed to apply this decision.
-- Proposed PR body is local only: /tmp/scaly-364-pr-body.md. Semantic section:
-  /tmp/scaly-364-zero-rule.md. No PR or #24 comment was updated during the flush.
+- Forward helpers accept boolean activity arguments for masked seeds and return
+  boolean activity results alongside numerical tangents when needed. The existing
+  helper key distinguishes the masked signature; no second AD engine was added.
+- Ordinary calls and mapped generic/periodic/colored assembly reconstruct SELECT
+  guards from those flags. Packing keeps boolean and numerical result buffers separate.
+- Higher forward helpers reserve names to avoid collisions with existing seed inputs.
+- An unused structurally-zero formal does not erase another formal's selected activity.
+- Guides and where docstring describe both call directions, with the custom-rule limit.
 
-## Finish before reporting
+## Evidence
 
-- [x] Full hook detached through ~/.scaly-suite/run on this rebased state.
-      Log /tmp/scaly-434-flush-suite-nU1reR/final.log; completion /tmp/scaly-434-flush-suite-nU1reR/final.exit.
-- [x] Exact rule paragraph and boundary table match latest #24 decision verbatim.
-      Semantic section is 27 lines. Proof /tmp/scaly-434-flush-semantic-check.log.
-- [x] Commit the final local evidence in this plan, keep the plan, and report branch,
-      head, ahead/behind main, hook counts, changed snapshot files and any open point.
-- Stop after reporting. Do not wait, poll, watch, push, mark ready or queue.
-  Only remaining work is a future coordinator-authorized push and its CI/queue steps.
+- Exact original scalar input/output reproductions returned NaN before the change.
+  /tmp/scaly-434-forward-boundaries-repro-before.log.
+- Five representative regression cases pass: ordinary/mapped/nested, runtime/baked
+  multiple seeds, both call directions plus caller seed assembly, sparse stored
+  coordinates, unused formals, masked/unmasked cache reuse, Hessians and second-forward
+  derivatives at a zero but changing tangent. Finite differences agree on finite domains.
+  /tmp/scaly-434-forward-boundaries-after.log.
+- All AD, C snapshot and operation coverage checks passed: 2,760 tests, with two workers.
+  /tmp/scaly-434-forward-boundaries-ad.log. Ruff and ty pass.
+- Removing the cache's mask bit fails a constructor/signature gate. Replacing condition
+  activity with numerical nonzero activity loses curvature 1/8 at a zero tangent.
+  /tmp/scaly-434-forward-cache-perturb.log and forward-activity-perturb.log.
+  Restoring the implementation passes: /tmp/scaly-434-forward-restored.log.
+- Fourteen extra C/header files match main byte for byte, covering smooth gradients,
+  maximum/shared-condition gradients and ordinary/mapped forward products without selects.
+  /tmp/scaly-434-forward-proof.path. No snapshots regenerated.
+- Prior Sol/Fable full reviews and deltas approved the previous #364/#414 scope only.
+  Their threads are settled. Coordinator review of this extension is still needed.
+
+## Finish
+
+- [ ] Refresh the base as required by the flush, preserve upstream work and rerun any
+      checks invalidated by a rebase. Regenerate only the node-ID baseline for added tests.
+- [ ] Update local PR-body draft/table for the Nov 12 scope change, keeping the rule itself
+      and all other boundary decisions. Do not publish or change #24 while held.
+- [ ] Full hook detached through ~/.scaly-suite/run; keep the turn alive until its exit file.
+- [ ] Commit the evidence here, retain this plan and report branch/head, ahead/behind main,
+      hook counts, snapshot differences and the remaining coordinator review/push hold.
+- Stop after the report; do not wait, poll, watch, push, mark ready or queue.
