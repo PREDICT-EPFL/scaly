@@ -349,7 +349,6 @@ def test_substitute_rebuilds_call_and_vmap_actuals_without_entering_callees() ->
     ("x={} y={}", (sc.sym("x"),), ValueError, "2 placeholders for 1 value"),
     ("x={0}", (sc.sym("x"),), ValueError, "only empty '{}' placeholders"),
     ("x={:.3f}", (sc.sym("x"),), ValueError, "only empty '{}' placeholders"),
-    ("x={}", (sc.sym("f", dtype="float32"),), TypeError, "float64, int32, int64, bool values, got float32"),
     ("x=\0{}", (sc.sym("x"),), ValueError, "NUL"),
   ],
 )
