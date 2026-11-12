@@ -12,7 +12,7 @@ from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.support import project_entries, slice_indices, transpose_entries, support_indices, _constant_condition
-from ...ir.types import CanonicalPattern, dtypes, stored_indices
+from ...ir.types import CanonicalPattern, dtypes, stored_indices, stored_slots
 from .ctx import LowerCtx
 from ..arith import constant, fold_program
 
@@ -66,6 +66,11 @@ class SparseProductPlan:
     )
 
 
+def _segment(ctx: LowerCtx, ptr: np.ndarray, index: ProgramNode) -> tuple[ProgramNode, ProgramNode]:
+  """The start and stop of segment ``index`` of the pointer table ``ptr``."""
+  return ctx.index_at(ptr, index, shared=True), ctx.index_at(ptr, p.add(index, p.const_int(1)), shared=True)
+
+
 def lower_sparse_product(ctx: LowerCtx, node: Expr) -> None:
   """Accumulate one column and write stored entries directly in their physical order."""
   if node.attrs.get("sampled") is not None:
@@ -81,15 +86,11 @@ def lower_sparse_product(ctx: LowerCtx, node: Expr) -> None:
   acc = ctx.new_private(node.type.dtype, (a.shape[0],))
   name = out.attrs["name"]
   columns, (column,) = ctx.nest((len(plan.output_ptr) - 1,), f"column_{name}", kind=RangeKind.SERIAL)
-
-  def bounds(ptr: np.ndarray, index: ProgramNode) -> tuple[ProgramNode, ProgramNode]:
-    return ctx.index_at(ptr, index, shared=True), ctx.index_at(ptr, p.add(index, p.const_int(1)), shared=True)
-
-  outputs, (i,) = ctx.nest((bounds(plan.output_ptr, column),), f"entry_{name}")
+  outputs, (i,) = ctx.nest((_segment(ctx, plan.output_ptr, column),), f"entry_{name}")
   row = ctx.index_at(plan.output_rows, i, shared=True)
   target = p.view(acc, [row])
   clear = ctx.nest_body(outputs, [p.store(target, p.const_float(0, dtype=node.type.dtype))])
-  right, (j,) = ctx.reduce((bounds(plan.right_ptr, column),), f"right_{name}")
+  right, (j,) = ctx.reduce((_segment(ctx, plan.right_ptr, column),), f"right_{name}")
   left, (k,) = ctx.reduce(((ctx.index_at(plan.left_starts, j, shared=True), ctx.index_at(plan.left_stops, j, shared=True)),), f"left_{name}")
   dst = p.view(acc, [ctx.index_at(plan.left_rows, k, shared=True)])
   term = p.mul(ctx.read_stored(a, plan.left_slots, k), ctx.read_stored(b, plan.right_slots, j))
@@ -144,9 +145,7 @@ def _lower_sampled_product(ctx: LowerCtx, node: Expr) -> None:
   physical = ctx.physical_slots(a, np.arange(a.type.storage_size))
   fill = ctx.nest_body(scatter, [p.store(target, ctx.index_at(physical, k, shared=True))])
   clear = ctx.nest_body(scatter, [p.store(target, p.const_int(-1))])
-  outputs, (entry,) = ctx.nest(
-    ((ctx.index_at(plan.output_ptr, row, shared=True), ctx.index_at(plan.output_ptr, p.add(row, p.const_int(1)), shared=True)),), f"entry_{name}"
-  )
+  outputs, (entry,) = ctx.nest((_segment(ctx, plan.output_ptr, row),), f"entry_{name}")
   right, (j,) = ctx.reduce(
     ((ctx.index_at(plan.right_starts, entry, shared=True), ctx.index_at(plan.right_stops, entry, shared=True)),), f"dot_{name}"
   )
@@ -176,7 +175,7 @@ def _guard_sampled_term(ctx: LowerCtx, operand: Expr, slot: ProgramNode, term: P
   # Guard the multiply itself: selecting a zero operand still evaluates 0 * inf.
   current = operand
   while True:
-    slots = stored_slots(current, logical)
+    slots = stored_slots(current.type, logical)
     valid = slots >= 0
     if not np.any(valid):
       break
@@ -195,7 +194,7 @@ def _guard_sampled_term(ctx: LowerCtx, operand: Expr, slot: ProgramNode, term: P
         break
       condition, inner = mask
       reads = np.full(len(logical), -1, dtype=np.int64)
-      reads[valid] = stored_slots(condition, project_entries(logical[valid], condition.shape, current.shape))
+      reads[valid] = stored_slots(condition.type, project_entries(logical[valid], condition.shape, current.shape))
       reads = ctx.physical_slots(condition, reads)
       index = ctx.index_at(reads, slot, shared=True)
       keep = p.load(p.view(ctx.raw_buf_of(condition), [index]))
@@ -210,17 +209,6 @@ def _guard_sampled_term(ctx: LowerCtx, operand: Expr, slot: ProgramNode, term: P
       continue
     current = current.args[0]
   return term
-
-
-def stored_slots(expr: Expr, logical: np.ndarray) -> np.ndarray:
-  """Map logical coordinates to canonical slots, with -1 for structural zeros."""
-  if expr.type.pattern is None:
-    return logical
-  entries = stored_indices(expr.type)
-  slots = np.searchsorted(entries, logical)
-  valid = slots < len(entries)
-  valid[valid] &= entries[slots[valid]] == logical[valid]
-  return np.where(valid, slots, -1)
 
 
 def map_regions(writes: np.ndarray, reads: Sequence[np.ndarray]) -> tuple[MapRegion, ...]:
@@ -263,13 +251,11 @@ def emit_map(
   operands = node.args if operands is None else operands
   writes = np.arange(node.type.storage_size, dtype=np.int64) if writes is None else writes
   writes = ctx.physical_slots(node, writes)
-  reads = tuple(ctx.physical_slots(arg, slots) for arg, slots in zip(operands, reads, strict=True))
   for region in map_regions(writes, reads):
 
     def statements(k: ProgramNode) -> list[ProgramNode]:
       values = tuple(
-        constant(0, arg.type.dtype) if indices[0] < 0 else p.load(p.view(ctx.raw_buf_of(arg), [ctx.index_at(indices, k, shared=True)]))
-        for arg, indices in zip(operands, region.reads, strict=True)
+        constant(0, arg.type.dtype) if slots[0] < 0 else ctx.read_stored(arg, slots, k) for arg, slots in zip(operands, region.reads, strict=True)
       )
       dst = ctx.index_at(region.writes, k, shared=True)
       return [p.store(p.view(out, [dst]), body(values))]
@@ -290,7 +276,7 @@ def lower_movement(ctx: LowerCtx, node: Expr) -> None:
     src = node.args[0]
     source = stored_indices(src.type)
     destinations = node.attrs["indices"].reshape(-1)[source]
-    dst = stored_slots(node, destinations)
+    dst = stored_slots(node.type, destinations)
     out = ctx.alloc_tmp(node)
     ranges, (i,) = ctx.nest((node.type.storage_size,), f"zero_{out.attrs['name']}")
     ctx.emit(ranges, [p.store(p.view(out, [i]), constant(0, node.type.dtype))])
@@ -313,7 +299,7 @@ def lower_movement(ctx: LowerCtx, node: Expr) -> None:
         source_coords[axis] -= offset
         offset += src.shape[axis]
       source = np.ravel_multi_index(tuple(source_coords), src.shape)
-      emit_map(ctx, node, [stored_slots(src, source)], lambda v: v[0], writes=np.flatnonzero(selected), operands=(src,))
+      emit_map(ctx, node, [stored_slots(src.type, source)], lambda v: v[0], writes=np.flatnonzero(selected), operands=(src,))
     return
   src = node.args[0]
   if op == ExprOp.TRANSPOSE:
@@ -322,13 +308,13 @@ def lower_movement(ctx: LowerCtx, node: Expr) -> None:
     logical = slice_indices(src.shape, node.attrs["index"], logical)
   elif op == ExprOp.GATHER:
     logical = node.attrs["indices"].reshape(-1)[logical]
-  emit_map(ctx, node, [stored_slots(src, logical)], lambda v: v[0])
+  emit_map(ctx, node, [stored_slots(src.type, logical)], lambda v: v[0])
 
 
 def lower_elementwise(ctx: LowerCtx, node: Expr, program_op) -> None:
   """Sample broadcast operands on the output pattern and emit its compact scalar body."""
   logical = stored_indices(node.type)
-  reads = [stored_slots(arg, project_entries(logical, arg.shape, node.shape)) for arg in node.args]
+  reads = [stored_slots(arg.type, project_entries(logical, arg.shape, node.shape)) for arg in node.args]
   if program_op == p.ProgramOp.SELECT:
     chosen = _constant_condition(node.args[0], logical, node.shape)
     if chosen is not None:

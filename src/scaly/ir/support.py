@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Mapping, cast
 
 import numpy as np
 
-from .types import CanonicalPattern, _uniform_value, stored_indices
+from .types import CanonicalPattern, _uniform_value, stored_indices, stored_slots
 
 if TYPE_CHECKING:
   from .expr import Expr, ExprOp, OpInfo
@@ -314,10 +314,8 @@ def _constant_condition(condition: Expr, entries: np.ndarray, shape: tuple[int, 
   logical = project_entries(entries, condition.shape, shape)
   if condition.type.pattern is None:
     return source.value.reshape(-1)[logical]
-  stored = stored_indices(condition.type)
-  slots = np.searchsorted(stored, logical)
-  keep = slots < len(stored)
-  keep[keep] &= stored[slots[keep]] == logical[keep]
+  slots = stored_slots(condition.type, logical)
+  keep = slots >= 0
   selected = np.zeros(len(entries), dtype=bool)
   selected[keep] = source.value.reshape(-1)[slots[keep]]
   return selected
@@ -374,14 +372,13 @@ def _rule(node: Expr, op: str | None, support_of: Callable[[Expr], Support]) -> 
       return combined
     entries = np.arange(node.size) if combined is None else support_indices(combined)
     chosen = _constant_condition(condition, entries, node.shape)
-    if chosen is not None:
-      return _make_support(
-        entries[
-          (chosen & (True if a is None else np.isin(entries, support_indices(a))))
-          | (~chosen & (True if b is None else np.isin(entries, support_indices(b))))
-        ]
-      )
-    return combined
+    assert chosen is not None
+    return _make_support(
+      entries[
+        (chosen & (True if a is None else np.isin(entries, support_indices(a))))
+        | (~chosen & (True if b is None else np.isin(entries, support_indices(b))))
+      ]
+    )
   if op == "numerator":
     return _broadcast_support(node.args[0], node.shape, support_of(node.args[0]))
   if op == "reduce":

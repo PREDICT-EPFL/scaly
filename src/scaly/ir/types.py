@@ -375,6 +375,17 @@ def stored_indices(type_: TensorType) -> np.ndarray:
   return (np.arange(batches, dtype=np.int64)[:, None] * (pattern.shape[0] * pattern.shape[1]) + local).reshape(-1)
 
 
+def stored_slots(type_: TensorType, logical: np.ndarray) -> np.ndarray:
+  """Map flat logical coordinates to canonical stored slots, with -1 for structural zeros."""
+  if type_.pattern is None:
+    return logical
+  entries = stored_indices(type_)
+  slots = np.searchsorted(entries, logical)
+  valid = slots < len(entries)
+  valid[valid] &= entries[slots[valid]] == logical[valid]
+  return np.where(valid, slots, -1)
+
+
 def broadcast_shape(a: tuple[int, ...], b: tuple[int, ...]) -> tuple[int, ...]:
   if not a:
     return b
