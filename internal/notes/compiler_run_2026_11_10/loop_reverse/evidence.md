@@ -140,3 +140,8 @@ After inheriting the fixed forward-loop base, 235 focused tests passed, includin
 build passed. Select-free RK4 C remained byte-identical at all three horizons,
 with 551 program nodes at each horizon. The reverse boundary table now explicitly
 states that local conditions guard steps without transporting activity between them.
+
+The full detached hook after inheriting the forward activity fix exited 0:
+6,621 tests passed and 56 skipped. Benchmark smoke, the documentation build,
+Ruff, ty and the private-name check passed. C snapshots were unchanged, and
+select-free RK4 C was byte-identical to the pre-fix branch at all three horizons.
