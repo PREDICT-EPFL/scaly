@@ -1,7 +1,7 @@
 # Vendored solver build context
 
 The `plugins/scaly-{piqp,ipopt,fatrop}/hatch_build.py` hooks ship each solver's shared library and C headers inside its plugin wheel. These notes preserve build constraints and the reasoning behind the hooks. Current work is tracked
-in GitHub Issues; `ci.yml` builds and tests the release wheels. Historical notes from the conda-prefix/delocate experiment live in [`native_toolchain_exploration.md`](native_toolchain_exploration.md).
+in GitHub Issues; `platforms.yml` builds and tests wheels on all four platforms after pushes to main and on manual branch runs. Nightly and Release supply the validated release artifacts. Historical notes from the conda-prefix/delocate experiment live in [`native_toolchain_exploration.md`](native_toolchain_exploration.md).
 
 ## 1. Runtime bundling replaced static linking — done, and enforced
 
@@ -61,7 +61,7 @@ Editable installs use `SCALY_BUILD_SOLVERS=auto` by default. The hook first trie
 - **Linux:** cibuildwheel's `auditwheel repair` produces `manylinux_2_24` (PIQP) and `manylinux_2_27` (IPOPT) wheels and leaves the `$ORIGIN` siblings under `lib/` alone. It still grafts a second `libquadmath` into `scaly_ipopt.libs/`, and `libipopt.so` ships twice (also as `libipopt.so.3`): about 28 MB of duplicates in the wheel measured during the September packaging review.
   This is a historical size observation, not a measurement of the latest artifact.
 - **macOS:** `delocate-wheel` finds nothing left to move after `_bundle_macos_runtime`, and the installed wheels load and solve on arm64 and x86_64. The IPOPT wheel requires macOS 15, the minimum of the bundled Homebrew runtime.
-- **Matrix:** the `build / <platform>` jobs of `ci.yml`, defined in `ci-build.yml`, build each platform's wheels once on its native runner with cibuildwheel, for the test and install jobs. `nightly.yml` shares `ci-build.yml`, and `release.yml` runs that nightly suite before publishing its artifacts.
+- **Matrix:** `ci-platform.yml` builds, installs and tests each platform on its native runner. `ci.yml` selects linux-x86_64; `platforms.yml` selects all four platforms. `nightly.yml` shares `ci-build.yml`, and `release.yml` uses full Nightly validation before publishing its artifacts.
 
 **Renaming is not a substitute.** The wheel's `*.dist-info/WHEEL` file records a `Tag:` line that installers cross-check against the filename. A wheel renamed from `py3-none-any.whl` to `py3-none-macosx_14_0_arm64.whl` still claims `any` internally and fails strict validation. Independently, PyPI refuses uploads with raw `linux_*` tags — only `manylinux_*` / `musllinux_*` are accepted, and those tags are contracts about glibc baseline and bundled deps, not free-form labels.
 

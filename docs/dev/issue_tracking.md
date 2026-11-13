@@ -32,7 +32,7 @@ maintainer's proposal can remain deferred. Apply one origin label and keep it af
 | Kind | `kind:bug`, `kind:feature`, `kind:maintenance`, `kind:research`, `kind:question` | One primary kind. Research can finish with a decision rather than code. |
 | Area | `area:api`, `area:compiler`, `area:solvers`, `area:c-api`, `area:benchmarks`, `area:docs`, `area:tooling` | Usually one area, several for work that crosses boundaries. Tooling includes packaging, continuous integration, and platform support. |
 | Assistance | `needs:reproduction`, `needs:feedback`, `help wanted`, `good first issue` | Missing information or opportunities to contribute. Remove `needs:*` labels when resolved. |
-| Alert | `ci:nightly-failing` | The issue the nightly workflow files for a failing run. Only the workflow applies it. |
+| Alert | `ci:nightly-failing`, `ci:platforms-failing` | Separate failure issues for Nightly and Platforms. Only their workflows apply these labels. Fix a red Platforms issue before starting new work. |
 
 Scaly uses kind labels and leaves native issue types unset to avoid duplicate classification.
 Add area labels only when they help readers find work.

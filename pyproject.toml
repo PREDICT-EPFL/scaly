@@ -138,8 +138,10 @@ include = ["benchmarks/**"]
 replace-imports-with-any = ["casadi.**"]
 
 [tool.pytest.ini_options]
+addopts = ["-m", "not slow"]
 testpaths = ["tests", "plugins", "typing_playground"]
 norecursedirs = ["third_party", ".venv"]
 markers = [
+  "slow: excluded by default; include with -m=",
   "solver(name): needs a loadable vendored solver; skipped without it, selected by CI's solver job",
 ]

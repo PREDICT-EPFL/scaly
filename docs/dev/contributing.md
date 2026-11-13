@@ -73,7 +73,7 @@ has no license directory.
 ## Run the checks
 
 ```bash
-uv run pytest -n=auto              # the suite, in parallel
+uv run pytest -n=auto              # tests except those marked slow, in parallel
 uv run ruff check                  # lint
 uv run ruff format --check         # formatting, as CI runs it; drop --check to fix
 uv run ty check --error-on-warning # types, including expected-error assertions
@@ -87,6 +87,9 @@ Type checking also covers the benchmarks. Their CasADi imports are treated as `A
 because CasADi does not supply complete type information. This exception applies only
 to benchmark files, so Scaly calls and the benchmark code's own annotations remain checked.
 
+Tests marked `@pytest.mark.slow` are deselected by default. Use `uv run pytest -n=auto -m=`
+to include every test, or `-m slow` to select only slow tests.
+
 The root `conftest.py` checks the full-collection node-ID baseline. After adding, removing, or
 renaming a test, regenerate it from the complete collection:
 
@@ -96,13 +99,13 @@ renaming a test, regenerate it from the complete collection:
   raw=$(mktemp)
   fresh=$(mktemp)
   trap 'rm -f "$raw" "$fresh"' EXIT
-  uv run pytest --collect-only -q >"$raw" 2>/dev/null || true
+  uv run pytest --collect-only -q -m= >"$raw" 2>/dev/null || true
   grep -E '^(tests|plugins|typing_playground)/[^:]+\.py::' "$raw" | LC_ALL=C sort >"$fresh"
   test -s "$fresh"
   mv "$fresh" tests/baseline/pytest_nodeids.txt
 )
 generation_status=$?
-[ "$generation_status" -eq 0 ] && uv run pytest --collect-only -q
+[ "$generation_status" -eq 0 ] && uv run pytest --collect-only -q -m=
 ```
 
 The first collection can exit nonzero because the existing baseline is stale or missing. The recipe
@@ -119,7 +122,7 @@ def test_something(): ...
 ```
 
 The root `conftest.py` skips those when the library is absent; CI installs both solver wheels and
-runs everything. Never hand-roll a "is the solver loadable" skip condition.
+requires every solver. Never hand-roll a "is the solver loadable" skip condition.
 
 ## What CI runs
 
@@ -131,31 +134,44 @@ Pull requests and the merge queue run the same jobs of `ci.yml`, all on the Pyth
   conventional-commit prefix, since the title becomes the commit title on main. Ruff forbids
   `sys.version_info`, because CI runs a single Python version and would never test the other branch.
 - `docs` builds the site and fails on any warning, such as a broken link.
-- `platforms / <platform>` runs on linux-x86_64, linux-arm64, macos-arm64 and windows-x86_64.
-  Each job builds the platform's wheels, installs them into a clean environment, a slim container
-  on Linux, and solves with every backend, then runs the whole suite against them. One job per
-  platform means a slow or failing platform never holds up the others.
-- `smoke / linux-x86_64` builds the wheels on its own and runs the benchmark and closed-loop
-  smoke checks, in parallel with the platform jobs.
-- `ci` passes only when every other job passed. It is the one required check, and its summary
-  has a row per platform saying whether the native libraries were built or came from the cache,
-  and the smoke result.
+- `platforms / linux-x86_64` builds the wheels, checks clean installations and runs the tests
+  except those marked `slow`.
+- `smoke / linux-x86_64` builds the wheels and runs the benchmark and closed-loop smoke checks.
+- `ci` passes only when every other job passed. It remains the one required check, and its summary
+  reports the Linux build, install, test and smoke results.
 
-The native cache tracks each plugin's `native_build.py`, `build_config.json` and `licenses/`, so
-edits to Python wrappers or lookup code reuse the libraries. Source builds also retain compiler
-identities in their keys. Google Benchmark is built once per compiler and restored from the cache too. A push to main runs CI again unless it only touches
-`internal/`, and stops after its first job when the merge queue already tested the same commit.
+`Platforms` runs after each push to main, except changes confined to `internal/**`. It runs the
+complete suite, including slow tests, on linux-x86_64, linux-arm64, macos-arm64 and windows-x86_64,
+and repeats it on linux-x86_64 with JIT index verification. One main run executes at a time, with
+at most one waiting. A newer push replaces the waiting run. Manual runs on other branches use
+separate concurrency groups.
+
+A pull request touching the toolchain, plugins or workflows must run `Platforms` on its branch
+before merge, and all platforms must pass:
+
+```bash
+gh workflow run platforms.yml --ref <branch>
+```
+
+A failing push run opens or updates the issue labelled `ci:platforms-failing`. The first green
+push run closes it. Fix a red Platforms issue before starting new work. Manual runs do not update
+this issue.
+
+`ci.yml` has no push trigger. Platforms saves uv and native-library caches on main for every
+platform. The native cache tracks each plugin's `native_build.py`, `build_config.json` and
+`licenses/`, so Python wrapper and lookup changes reuse the libraries. Google Benchmark builds
+are cached per compiler. Release validation uses Nightly or Release artifacts, independently of CI.
 
 ## Nightly and release checks
 
-The nightly builds the same wheels as CI, then checks three independent groups:
+The nightly builds wheels on all four platforms and includes slow tests in both test groups:
 
 - `toolchain / <image> <compiler>` runs the unit tests and benchmark smoke with each compiler
   and runner image.
 - `python / <version>` runs only the unit tests on linux-x86_64 for every Python version in the
   package classifiers.
 - `benchmarks / <platform>` runs the full benchmark smoke and every supported closed-loop pair
-  once on each of the five platforms.
+  once on each of the four platforms.
 
 Nightly compile caches and Google Benchmark builds start cold. The baseline toolchain entries
 save their compile caches for CI to restore through `SCALY_CACHE_DIR`. The nightly also saves

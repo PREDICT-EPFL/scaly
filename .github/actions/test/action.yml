@@ -13,6 +13,9 @@ inputs:
   suite:
     description: ci, smoke, verify, toolchain, python or benchmarks
     default: ci
+  include-slow:
+    description: Include tests marked slow
+    default: 'false'
   python:
     description: Python version, or the repository default
     default: ''
@@ -144,8 +147,12 @@ runs:
       if: inputs.suite != 'benchmarks' && inputs.suite != 'smoke'
       shell: bash
       env:
+        INCLUDE_SLOW: ${{ inputs.include-slow }}
         SCALY_JIT_KEY: ${{ inputs.suite == 'verify' && 'verify' || '' }}
-      run: uv run pytest -n=auto --durations=25
+      run: |
+        flags=()
+        if [ "$INCLUDE_SLOW" = true ]; then flags+=(-m=); fi
+        uv run pytest -n=auto --durations=25 "${flags[@]}"
 
     - name: Benchmark smoke
       if: ${{ !cancelled() && (inputs.suite == 'toolchain' || inputs.suite == 'benchmarks' || inputs.suite == 'smoke') }}
