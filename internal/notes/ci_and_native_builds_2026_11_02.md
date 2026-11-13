@@ -3,6 +3,15 @@
 Decided with the maintainer on 2026-11-02. This replaces the native-bundle plan of #228, #229 and
 #230 (PRs #231, #233 and #234), which were closed. The work is listed under [Work](#work).
 
+## CI revision, 2026-11-13
+
+Pull requests and the merge queue run lint, docs, Linux x86 tests without slow tests, and smoke.
+`Platforms` replaces CI on pushes to main and runs all tests, slow included, on all four platforms
+plus Linux x86 JIT index verification. It also saves the main caches. Release still uses Nightly
+or Release validation records. Toolchain, plugin and workflow pull requests must pass a branch
+run dispatched with `gh workflow run platforms.yml --ref <branch>` before merge. Fix an open
+`ci:platforms-failing` issue before new work. This supersedes the platform and push rules below.
+
 ## The problem
 
 Measured on 2026-11-02:

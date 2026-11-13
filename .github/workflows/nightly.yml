@@ -69,6 +69,7 @@ jobs:
     uses: ./.github/workflows/ci-test.yml
     with:
       suite: toolchain
+      include-slow: true
       environments: >-
         [{"platform":"linux-x86_64","runner":"ubuntu-latest","label":"ubuntu-latest cc","save-cache":true},
          {"platform":"linux-x86_64","runner":"ubuntu-22.04","label":"ubuntu-22.04 gcc-11","cc":"gcc-11","cxx":"g++-11"},
@@ -90,6 +91,7 @@ jobs:
     uses: ./.github/workflows/ci-test.yml
     with:
       suite: python
+      include-slow: true
       environments: ${{ needs.changes.outputs.python }}
 
   benchmarks:
@@ -132,32 +134,11 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       TITLE: 🔴 Nightly CI is failing
+      ALERT_LABEL: ci:nightly-failing
+      WORKFLOW_NAME: nightly
+      NEEDS: ${{ toJSON(needs) }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v7
 
-      - run: |
-          failed=$(gh run view "$GITHUB_RUN_ID" --json jobs -q '.jobs[] | select(.conclusion == "failure") | .name' | sort)
-          issue=$(gh issue list --state open --label ci:nightly-failing --json number -q '.[0].number')
-          if [ -z "$failed" ]; then
-            if [ -n "$issue" ]; then gh issue close "$issue" -c "Passing again at $GITHUB_SHA: $RUN_URL"; fi
-            exit 0
-          fi
-          labels=$(printf '%s\n' "$failed" | python3 .github/scripts/nightly.py labels)
-          if [ -n "$issue" ]; then
-            gh issue edit "$issue" --add-label "$labels"
-            if [[ ",$labels," != *,area:benchmarks,* ]]; then gh issue edit "$issue" --remove-label area:benchmarks; fi
-          fi
-          list() { if [ -n "$1" ]; then printf -- '- `%s`\n' $1; else echo "- none"; fi; }
-          if [ -z "$issue" ]; then
-            gh issue create --title "$TITLE" --label "$labels" \
-              --body "$(printf 'The nightly run at %s failed: %s\n\nFailing jobs:\n%s\n\n<!-- failing\n%s\n-->\n' "$GITHUB_SHA" "$RUN_URL" "$(IFS=$'\n'; list "$failed")" "$failed")"
-            exit 0
-          fi
-          previous=$(gh issue view "$issue" --json body,comments -q '[.body] + [.comments[].body] | last' | sed -n '/<!-- failing/,/-->/p' | sed '1d;$d' | sort)
-          IFS=$'\n'
-          new=$(comm -13 <(echo "$previous") <(echo "$failed") | grep . || true)
-          fixed=$(comm -23 <(echo "$previous") <(echo "$failed") | grep . || true)
-          still=$(comm -12 <(echo "$previous") <(echo "$failed") | grep . || true)
-          gh issue comment "$issue" --body "$(printf 'Still failing at %s: %s\n\nNewly failing:\n%s\n\nStill failing:\n%s\n\nFixed since the last report:\n%s\n\n<!-- failing\n%s\n-->\n' \
-            "$GITHUB_SHA" "$RUN_URL" "$(list "$new")" "$(list "$still")" "$(list "$fixed")" "$failed")"
+      - run: bash .github/scripts/report-ci.sh

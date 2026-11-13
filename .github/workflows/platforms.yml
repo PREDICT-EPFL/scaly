@@ -1,0 +1,48 @@
+name: Platforms
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["internal/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platforms-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  platforms:
+    uses: ./.github/workflows/ci-platform.yml
+    with:
+      include-slow: true
+
+  verify:
+    uses: ./.github/workflows/ci-platform.yml
+    with:
+      suite: verify
+      include-slow: true
+      environments: '[{"platform":"linux-x86_64","runner":"ubuntu-latest"}]'
+
+  report:
+    needs: [platforms, verify]
+    if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: 🔴 Platforms CI is failing
+      ALERT_LABEL: ci:platforms-failing
+      WORKFLOW_NAME: Platforms
+      NEEDS: ${{ toJSON(needs) }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - run: bash .github/scripts/report-ci.sh

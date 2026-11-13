@@ -7,6 +7,10 @@ on:
         description: ci, smoke or verify
         type: string
         default: ci
+      include-slow:
+        description: Include tests marked slow
+        type: boolean
+        default: false
       environments:
         description: JSON matrix with platform, runner and optional label, python, cc, cxx, toolchain and save-cache
         type: string
@@ -83,6 +87,7 @@ jobs:
         with:
           platform: ${{ matrix.platform }}
           suite: ${{ inputs.suite }}
+          include-slow: ${{ inputs.include-slow }}
           python: ${{ matrix.python }}
           cc: ${{ matrix.cc }}
           cxx: ${{ matrix.cxx }}

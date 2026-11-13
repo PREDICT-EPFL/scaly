@@ -2,9 +2,6 @@ name: CI
 
 # Pull requests and the merge queue run the same jobs. `ci` is the one required check.
 on:
-  push:
-    branches: [main]
-    paths-ignore: ["internal/**"]
   pull_request:
   merge_group:
   workflow_dispatch:
@@ -12,34 +9,12 @@ on:
 permissions:
   contents: read
 
-# Runs on main each get their own group, so none cancels another.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # A push to main of the commit the merge queue already tested ends here.
-  queue:
-    runs-on: ubuntu-latest
-    permissions:
-      checks: read
-    outputs:
-      tested: ${{ steps.check.outputs.tested }}
-    steps:
-      - id: check
-        if: github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          passed=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?check_name=ci" --jq '[.check_runs[] | select(.conclusion == "success")] | length')
-          if [ "$passed" -gt 0 ]; then
-            echo "The merge queue already tested $GITHUB_SHA"
-            echo "tested=true" >> "$GITHUB_OUTPUT"
-          fi
-
   lint:
-    needs: queue
-    if: needs.queue.outputs.tested != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -91,7 +66,7 @@ jobs:
 
       - name: Pytest node-ID baseline
         if: ${{ !cancelled() }}
-        run: uv run pytest --collect-only -q
+        run: uv run pytest --collect-only -q -m=
 
       - name: Cortex-M build tools
         run: |
@@ -105,8 +80,6 @@ jobs:
         run: find embedded-build -name report.txt -exec cat {} + >> "$GITHUB_STEP_SUMMARY"
 
   docs:
-    needs: queue
-    if: needs.queue.outputs.tested != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -132,31 +105,20 @@ jobs:
           fi
 
   platforms:
-    needs: queue
-    if: needs.queue.outputs.tested != 'true'
     uses: ./.github/workflows/ci-platform.yml
+    with:
+      environments: '[{"platform":"linux-x86_64","runner":"ubuntu-latest"}]'
 
   smoke:
-    needs: queue
-    if: needs.queue.outputs.tested != 'true'
     uses: ./.github/workflows/ci-platform.yml
     with:
       suite: smoke
       environments: '[{"platform":"linux-x86_64","runner":"ubuntu-latest"}]'
 
-  # The suite again, with every JIT index hit rendered and checked against the library it names.
-  verify:
-    needs: queue
-    if: needs.queue.outputs.tested != 'true'
-    uses: ./.github/workflows/ci-platform.yml
-    with:
-      suite: verify
-      environments: '[{"platform":"linux-x86_64","runner":"ubuntu-latest"}]'
-
   # A skipped required check counts as passed, so this runs whatever happened before it.
   ci:
-    needs: [queue, lint, docs, platforms, smoke, verify]
-    if: always() && needs.queue.outputs.tested != 'true'
+    needs: [lint, docs, platforms, smoke]
+    if: always()
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -172,18 +134,17 @@ jobs:
           {
             echo "| Platform | Native code | Install | Tests | Smoke |"
             echo "| --- | --- | --- | --- | --- |"
-            for platform in linux-x86_64 linux-arm64 macos-arm64 windows-x86_64; do
+            for platform in linux-x86_64; do
               native=$(step "platforms / $platform" Build)
               if [ "$native" = success ]; then
                 saved=$(step "platforms / $platform" "Save the native libraries")
                 if [ "$saved" = success ]; then native=built; else native=cached; fi
               fi
-              smoke="not run"
-              if [ "$platform" = linux-x86_64 ]; then smoke=$(step "smoke / $platform" Test); fi
+              smoke=$(step "smoke / $platform" Test)
               echo "| $platform | $native | $(step "platforms / $platform" Install) | $(step "platforms / $platform" Test) | $smoke |"
             done
             echo
-            echo "lint: $(result lint), docs: $(result docs), JIT index verified: $(step "verify / linux-x86_64" Test)"
+            echo "lint: $(result lint), docs: $(result docs)"
           } | tee -a "$GITHUB_STEP_SUMMARY"
           failed=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"$NEEDS")
           if [ -n "$failed" ]; then
