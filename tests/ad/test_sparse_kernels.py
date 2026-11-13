@@ -47,10 +47,11 @@ def test_banded_sparse_leaf_gradient_and_hessian_have_no_square_buffer(symmetric
       sizes = [np.prod(b.attrs["shape"]) for b in walk_program(program) if b.op == ProgramOp.BUFFER and b.attrs["address_space"] == "private"]
       assert max(sizes, default=0) <= 20 * n
   x = np.random.default_rng(46).normal(size=n)
-  np.testing.assert_allclose(grad(q, x), (q + q.T) @ x, atol=1e-12)
+  np.testing.assert_allclose(np.asarray(grad(q, x)), (q + q.T) @ x, atol=1e-12)
   hp = hess.sparsity()
   assert hp is not None
   actual = hess(q, x)
+  assert isinstance(actual, sparse.csc_array)
   np.testing.assert_allclose(actual.toarray(), (q + q.T).toarray(), atol=1e-12)
   for direction in np.random.default_rng(47).normal(size=(3, n)):
     eps = 1e-5

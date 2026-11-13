@@ -216,6 +216,7 @@ def _cycle(edges: set[tuple[str, str]]) -> list[str] | None:
   return None
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("module", sorted(IMPORT_LAYERS))
 def test_module_imports_standalone(module: str) -> None:
   """The runtime counterpart of the table above, and the half it cannot see: a module that is

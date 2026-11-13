@@ -159,9 +159,10 @@ def test_sparse_map_broadcast_and_raw_windows_use_declared_layout(layout, length
 
 @pytest.mark.parametrize("layout", ["csr", "coordinate"])
 @pytest.mark.parametrize("batch", [(2, 3), (0,)])
-def test_sparse_window_layout_matches_direct_values_for_batches_and_empty_patterns(layout, batch) -> None:
-  pattern = CanonicalPattern((3, 4), (0, 0, 1, 2, 2), (0, 3, 1, 0, 2))
-  order = SparsityPattern(pattern.shape, (2, 0, 2, 0, 1), (2, 0, 0, 3, 1))
+@pytest.mark.parametrize("empty", [False, True])
+def test_sparse_window_layout_matches_direct_values_for_batches_and_empty_patterns(layout, batch, empty: bool) -> None:
+  pattern = CanonicalPattern((3, 4), (), ()) if empty else CanonicalPattern((3, 4), (0, 0, 1, 2, 2), (0, 3, 1, 0, 2))
+  order = SparsityPattern(pattern.shape, (2, 0, 2, 0, 1), (2, 0, 0, 3, 1)) if not empty else SparsityPattern(pattern.shape, (), ())
   leaf = sc.arg("x", sc.TensorType((*batch, *pattern.shape), pattern=pattern), layout=order if layout == "coordinate" else layout)
   stage = sc.function(leaf, name="sparse_batched_window_stage")(lambda x: x.sin())
   mapped = sc.vmap(stage, 3)

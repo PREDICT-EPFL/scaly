@@ -120,6 +120,7 @@ print(json.dumps({"key": compiled.cache_key, "compiles": sum(compiles), "result"
 """
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("changed", ["library", "symlink", "dangling", "cycle", "unreadable"])
 def test_solver_build_change_misses_cache(tmp_path: Path, changed: str) -> None:
   if changed in ("symlink", "dangling", "cycle", "unreadable") and sys.platform == "win32":

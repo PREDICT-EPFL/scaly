@@ -454,29 +454,31 @@ def _assert_float32_special(got, expected):
   np.testing.assert_array_max_ulp(got[finite].astype(np.float32), expected[finite], maxulp=4)
 
 
-def test_float32_special_value_grid_matches_numpy():
+@pytest.mark.parametrize("mode", ["block", "scalar"])
+def test_float32_special_value_grid_matches_numpy(mode):
   """Adapt devrush's test_float32_ops_round_like_numpy_float32 to internal float32 values."""
   ops = [sc.ExprOp.MINIMUM, sc.ExprOp.MAXIMUM, sc.ExprOp.SELECT, sc.ExprOp.LE, sc.ExprOp.EQ, sc.ExprOp.ISFINITE, sc.ExprOp.ATAN2]
 
-  @sc.function(sc.arg("x", F32_X.size), sc.arg("y", F32_X.size), outputs=sc.arg("out"), name="float32_special_block")
+  @sc.function(sc.arg("x", F32_X.size), sc.arg("y", F32_X.size), outputs=sc.arg("out"), name=f"float32_special_{mode}")
   def fn(x, y):
     a, b = sc.cast(x, "float32"), sc.cast(y, "float32")
-    return sc.stack([sc.cast(_elementwise(op, a, b), "float64") for op in ops]).with_lowering("block")
+    return sc.stack([sc.cast(_elementwise(op, a, b), "float64") for op in ops]).with_lowering(mode)
 
   for op, got in zip(ops, np.asarray(fn(F32_X.astype(float), F32_Y.astype(float))), strict=True):
     with np.errstate(all="ignore"):
       _assert_float32_special(got, _reference(op, F32_X, F32_Y))
 
 
-def test_float32_special_libm_results_stay_float32():
+@pytest.mark.parametrize("mode", ["block", "scalar"])
+def test_float32_special_libm_results_stay_float32(mode):
   """Adapt devrush's float32 libm test, including the arithmetic around each libm result."""
   ops = [op for op, row in ELEMENTWISE.items() if OP_INFO[op].arity == 1 and row.c.isidentifier()]
 
-  @sc.function(sc.arg("x", F32_X.size), sc.arg("y", F32_X.size), outputs=sc.arg("out"), name="float32_special_libm_block")
+  @sc.function(sc.arg("x", F32_X.size), sc.arg("y", F32_X.size), outputs=sc.arg("out"), name=f"float32_special_libm_{mode}")
   def fn(x, y):
     a, b = sc.cast(x, "float32"), sc.cast(y, "float32")
     outputs = [_elementwise(op, a, b) for op in ops] + [a**b, a.floor() * 0.1 + a.abs().sqrt()]
-    return sc.stack([sc.cast(value, "float64") for value in outputs]).with_lowering("block")
+    return sc.stack([sc.cast(value, "float64") for value in outputs]).with_lowering(mode)
 
   with np.errstate(all="ignore"):
     expected = [_reference(op, F32_X, F32_Y) for op in ops] + [F32_X**F32_Y, np.floor(F32_X) * np.float32(0.1) + np.sqrt(np.abs(F32_X))]

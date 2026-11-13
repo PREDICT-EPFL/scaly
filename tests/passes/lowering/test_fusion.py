@@ -406,3 +406,15 @@ def test_loop_body_fuses_within_one_trip_and_keeps_shared_work_apart() -> None:
   got = fn(c0, w, v)
   np.testing.assert_allclose(got[0], c, rtol=1e-14)
   np.testing.assert_allclose(got[1], ys, rtol=1e-14)
+
+
+@needs_cc
+def test_automatic_scalarization_preserves_known_zeros_with_infinity() -> None:
+  stage = _function("known_zero_stage", ((2,), (2,)), lambda x, w: (x * sc.const([0.0, 1.0])) * sc.const([np.inf, 1.0]) + w)
+
+  @sc.function(sc.group(sc.arg("z", 4), sc.arg("v", 4)), outputs=sc.arg("y", 4), name="known_zero_map")
+  def fn(inputs):
+    z, v = inputs
+    return _mapped_call(stage, 2, [(z, 0, 2), (v, 0, 2)])
+
+  np.testing.assert_array_equal(fn((np.array([1.0, 2.0, 3.0, 4.0]), np.array([5.0, 6.0, 7.0, 8.0]))), [5.0, 8.0, 7.0, 12.0])

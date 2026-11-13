@@ -71,6 +71,7 @@ def _render_corpus() -> dict[str, tuple[str, str]]:
   return {name: (render_c_source(fun), render_c_api_header(fun)) for name, fun in functions.items()}
 
 
+@pytest.mark.slow
 def test_generated_c_is_independent_of_hash_seed() -> None:
   expected = None
   for seed in (0, 1, 4, 5, 7, 42):

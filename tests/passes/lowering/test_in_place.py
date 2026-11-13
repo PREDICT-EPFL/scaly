@@ -131,12 +131,12 @@ def test_returning_old_carry_refuses():
     lower_function(_loop(step, 4))
 
 
-@pytest.mark.parametrize("source", ["direct", "reshape"])
+@pytest.mark.parametrize("source", ["direct", "reshape", "slice"])
 def test_update_source_alias_refuses(source):
   @sc.function(sc.arg("carry", 4))
   def step(carry):
-    values = carry if source == "direct" else carry.reshape((2, 2)).reshape((4,))
-    return sc.scatter(carry, [1, 2, 3, 0], values, combine="set")
+    values = carry if source == "direct" else carry.reshape((2, 2)).reshape((4,)) if source == "reshape" else carry[:3]
+    return sc.scatter(carry, [1, 2, 3, 0] if source != "slice" else [1, 2, 3], values, combine="set")
 
   with pytest.raises(NotImplementedError, match="carry"):
     lower_function(_loop(step, 4))

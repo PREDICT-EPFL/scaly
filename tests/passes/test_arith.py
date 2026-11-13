@@ -80,7 +80,7 @@ def test_expression_graph(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", ["sub_self", "mul_zero", "zero_add", "add_zero", "mul_one", "one_mul", "neg_neg"])
-@pytest.mark.parametrize("hint", ["auto", "block"])
+@pytest.mark.parametrize("hint", ["auto", "scalar", "block", "opaque"])
 @pytest.mark.parametrize("batch", [(), (2,)])
 def test_sparse_expression_graph(name, hint, batch) -> None:
   pattern = CanonicalPattern((2, 3), (0, 1), (2, 0))

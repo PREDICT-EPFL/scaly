@@ -6,7 +6,11 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
+import pytest
+
 from benchmarks.harness.sweep import build_kernel
+
+pytestmark = pytest.mark.slow
 
 
 def _build(tmp_path: Path, workload: str, size: int) -> dict:

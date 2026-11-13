@@ -772,6 +772,7 @@ def test_a_loop_on_the_variables_is_a_decision_for_the_quadratic_proof() -> None
   assert not _decides_on((c,), (sc.sym("y", ()),))
 
 
+@pytest.mark.slow
 def test_rk4_forward_gradient_at_200_steps():
   from tests.function.test_loop_forward import evaluate
   from scaly.ad.derivatives import finite_difference
@@ -806,3 +807,21 @@ def test_rk4_forward_gradient_at_200_steps():
     counts.append(len(list(walk_program(module.program))))
   assert max(sizes) - min(sizes) < 200
   assert counts[0] == counts[1] == counts[2]
+
+
+def test_while_loop_edge_counts() -> None:
+  """Exit at step 0, reach ``max_iter``, stop on a condition that reads a non-finite value."""
+  never, always, finite = go(lambda c: c > 1e9, "never"), go(lambda c: c > -1e9, "always"), go(sc.isfinite, "finite")
+
+  @sc.function(sc.arg("c0", 1))
+  def f(c0):
+    outs = []
+    for cond, body, max_iter in ((never, inc, 5), (always, inc, 5), (finite, square, 40), (always, inc, 0), (always, inc, 1)):
+      c, count = sc.while_loop(cond, body, c0, max_iter=max_iter)
+      outs += [c, count.cast(sc.dtypes.float64)]
+    return tuple(outs)
+
+  a, na, b, nb, d, nd, z, nz, o, no = f(np.array([3.0]))
+  assert (a[0], na, b[0], nb) == (3.0, 0.0, 8.0, 5.0)
+  assert d[0] == np.inf and nd == 10
+  assert (z[0], nz, o[0], no) == (3.0, 0.0, 4.0, 1.0)

@@ -14,6 +14,7 @@ from scaly.function.concrete import ConcreteFunction
     ("i,i->", [(3,), (3,)]),
     ("ij->ji", [(2, 3)]),
     ("ii->i", [(3, 3)]),
+    ("ii->", [(3, 3)]),
     ("ijik->ijk", [(2, 3, 2, 4)]),
     ("...ij,...j->...i", [(2, 1, 3, 4), (5, 4)]),
     ("...ij,j->...i", [(2, 3, 4), (4,)]),

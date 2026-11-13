@@ -1,5 +1,6 @@
 """Sparse typed interfaces pass declared-order values and publish one local pattern per leaf."""
 
+from math import prod
 import re
 import subprocess
 
@@ -36,12 +37,13 @@ def _coordinates(header: str, prefix: str, format_: str, lang: str) -> tuple[np.
 
 @pytest.mark.parametrize("lang", ["c", "cpp"])
 @pytest.mark.parametrize("layout", ["csc", "csr", COORDINATES], ids=["csc", "csr", "coo"])
+@pytest.mark.parametrize("batch", [(), (2, 3)])
 @pytest.mark.parametrize("empty", [False, True], ids=["nonempty", "empty"])
-def test_sparse_headers_compile_and_run_declared_layouts(lang, layout, empty, tmp_path):
+def test_sparse_headers_compile_and_run_declared_layouts(lang, layout, batch, empty, tmp_path):
   pattern = CanonicalPattern(PATTERN.shape, (), ()) if empty else PATTERN
   if empty and isinstance(layout, sc.SparsityPattern):
     layout = sc.SparsityPattern(pattern.shape, (), ())
-  type_ = sc.TensorType((2, 3, *pattern.shape), pattern=pattern)
+  type_ = sc.TensorType((*batch, *pattern.shape), pattern=pattern)
   out_layout = "csr" if layout == "csc" else COORDINATES if layout == "csr" else "csc"
   if empty and isinstance(out_layout, sc.SparsityPattern):
     out_layout = sc.SparsityPattern(pattern.shape, (), ())
@@ -54,7 +56,7 @@ def test_sparse_headers_compile_and_run_declared_layouts(lang, layout, empty, tm
   header = module.header
   assert header == render_c_api_header(fun, lang=lang)
   assert not re.search(r"\w+\[0\] =", header)
-  count = 6 * pattern.nnz
+  count = prod(batch) * pattern.nnz
   if lang == "c":
     for ident in ("a", "b"):
       assert f"double data[{max(count, 1)}]; }} sparse_abi_{ident}_t;" in header
@@ -99,7 +101,8 @@ def test_sparse_headers_compile_and_run_declared_layouts(lang, layout, empty, tm
     assert len(rows) == pattern.nnz
     # Reconstruct the caller's matrix exclusively from the published tables.
     values = np.arange(1.0, count + 1.0).reshape(-1, pattern.nnz)
-    values[0, 0] = 0.0  # An explicit stored zero must still occupy its slot.
+    if count:
+      values[0, 0] = 0.0  # An explicit stored zero must still occupy its slot.
     references = [sparse.coo_array((v, (rows, cols)), shape=pattern.shape).toarray() * 2 for v in values]
     expected = np.array([matrix[out_rows, out_cols] for matrix in references]).reshape(-1)
     assert set(zip(rows, cols)) == set(zip(pattern.rows, pattern.cols))

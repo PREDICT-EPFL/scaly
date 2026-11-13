@@ -178,7 +178,7 @@ def _namespace_libraries(root, kind):
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="glibc linker namespaces")
-@pytest.mark.parametrize("kind", ["path", "soname", "transitive", "exhaustion"])
+@pytest.mark.parametrize("kind", ["path", "soname", pytest.param("transitive", marks=pytest.mark.slow), "exhaustion"])
 def test_compatible_linker_namespaces(tmp_path, kind):
   script = "from pathlib import Path; import sys; from tests.codegen.test_external import _namespace_libraries; _namespace_libraries(Path(sys.argv[1]), sys.argv[2])"
   result = subprocess.run(

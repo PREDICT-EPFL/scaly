@@ -26,6 +26,7 @@ def _function():
   return kernel
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("compiler", ["gcc", "clang"])
 @pytest.mark.parametrize("lanes,dialect", [(1, "gnu"), (4, "gnu"), ("auto", "c")])
 @pytest.mark.parametrize("budget", [8192, 0])

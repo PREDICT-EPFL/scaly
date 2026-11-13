@@ -290,3 +290,14 @@ def test_solver_warm_start_never_lowers_at_construction_or_on_an_index_hit(tmp_p
   assert relocated["result"] == first["result"]
   assert Path(relocated["library"]).parent.name == Path(first["library"]).parent.name
   assert Path(relocated["library"]).is_file()
+
+
+def _rename(prog: Any) -> Any:
+  return prog
+
+
+def test_a_pass_put_in_the_pipeline_gives_no_key(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  fun = _fn()
+  assert _index_key(fun) is not None
+  monkeypatch.setattr(program, "PASS_PIPELINE", (*program.PASS_PIPELINE, ("rename", _rename)))
+  assert _index_key(fun) is None

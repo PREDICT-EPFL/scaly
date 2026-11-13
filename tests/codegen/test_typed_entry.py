@@ -35,9 +35,11 @@ def leaf(name: str, shape: int | tuple[int, ...], dtype: str) -> Any:
   return sc.arg(name, sc.TensorType(shape if isinstance(shape, tuple) else (shape,), dtype=sc.dtypes.from_name(dtype)))
 
 
-def _unary(dtype: str) -> sc.Function:
-  @sc.function(leaf("x", 5, dtype), outputs=sc.arg("y"), name=f"typed_{dtype}")
+def _unary(dtype: str, n: int = 5) -> sc.Function:
+  @sc.function(leaf("x", n, dtype), outputs=sc.arg("y"), name=f"typed_{dtype}")
   def fn(x: sc.Expr) -> sc.Expr:
+    if dtype == "bool":
+      return ~x
     if dtype in ("int32", "int64"):
       return (x * 3 - 7) // 2 + x % 4
     return (x.sin() * 2.0 + 1.0).with_lowering("block")
@@ -176,13 +178,15 @@ def _run_driver(library: ctypes.CDLL, fun: sc.Function, inputs: list[np.ndarray]
 
 
 @pytest.mark.parametrize("lang", ["c", "cpp"])
-def test_each_leaf_dtype_matches_numpy_through_the_typed_headers(tmp_path, lang):
-  fun = _unary("float32")
-  x = np.linspace(-1.25, 1.5, 5, dtype=np.float32)
+@pytest.mark.parametrize("dtype", ["float64", "float32", "int32", "int64", "bool"])
+def test_each_leaf_dtype_matches_numpy_through_the_typed_headers(tmp_path, lang, dtype):
+  fun = _unary(dtype)
+  x = _values(dtype)
   header = render_c_api_header(fun, lang=lang)
-  assert ("Buffer<float, 5>" if lang == "cpp" else "float data[5];") in header
+  c_type = {"float64": "double", "float32": "float", "int32": "int32_t", "int64": "int64_t", "bool": "bool"}[dtype]
+  assert (f"Buffer<{c_type}, 5>" if lang == "cpp" else f"{c_type} data[5];") in header
   (got,) = _run_driver(_build_driver(tmp_path, fun, lang), fun, [x])
-  _assert_match(got, np.sin(x) * np.float32(2) + np.float32(1))
+  _assert_match(got, _unary_reference(dtype, x))
 
 
 @pytest.mark.parametrize("lang", ["c", "cpp"])
@@ -335,6 +339,7 @@ def test_every_elementwise_op_runs_with_float32_leaves():
 _SMOOTH = [op for op in _OPS if OP_INFO[op].differentiable and op not in {sc.ExprOp.CAST}]
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("op", _SMOOTH, ids=lambda op: op.name)
 def test_float32_derivatives_match_float64_with_float32_leaves(op):
   values = np.linspace(0.125, 0.875, 6, dtype=np.float32)
@@ -374,14 +379,15 @@ def test_solver_graphs_stay_float64():
     render_c_module(host)
 
 
-def test_sparse_float32_leaves_keep_their_dtype_through_the_jit():
+@pytest.mark.parametrize("layout", ["csc", "csr"])
+def test_sparse_float32_leaves_keep_their_dtype_through_the_jit(layout):
   from scipy import sparse
 
   dense = np.array([[1.5, 0.0, -2.0], [0.0, 3.0, 0.0]], dtype=np.float32)
   pattern = CanonicalPattern((2, 3), (0, 0, 1), (0, 2, 1))
   type_ = sc.TensorType((2, 3), dtype=sc.dtypes.float32, pattern=pattern)
 
-  @sc.function(sc.arg("a", type_, layout="csc"), outputs=sc.arg("b", type_, layout="csc"), name="sparse_float32_csc")
+  @sc.function(sc.arg("a", type_, layout=layout), outputs=sc.arg("b", type_, layout=layout), name=f"sparse_float32_{layout}")
   def fn(a: sc.Expr) -> sc.Expr:
     return a * 2.0
 
@@ -529,3 +535,19 @@ def test_external_functions_take_a_double_workspace_inside_a_byte_one():
 
   with pytest.raises(LoweringError, match="external C function needs float64 leaves"):
     lower_function(narrow_host)
+
+
+def _unary_reference(dtype: str, x: np.ndarray) -> np.ndarray:
+  if dtype == "bool":
+    return ~x
+  if dtype in ("int32", "int64"):
+    return (x * 3 - 7) // 2 + x % 4
+  return np.sin(x) * x.dtype.type(2) + x.dtype.type(1)
+
+
+def _values(dtype: str, n: int = 5) -> np.ndarray:
+  if dtype == "bool":
+    return np.array([True, False, True, True, False][:n])
+  if dtype in ("int32", "int64"):
+    return np.array([-9, -2, 0, 5, 2**30 if dtype == "int64" else 11][:n], dtype=dtype)
+  return np.linspace(-1.25, 1.5, n, dtype=dtype)

@@ -921,6 +921,7 @@ def test_forward_calls_carry_selected_activity_in_both_directions(mapped: bool, 
     np.testing.assert_allclose(finite_difference(lambda v: np.asarray(derivatives(v, seeds)[0]), point), expected_jacobian, rtol=1e-7, atol=1e-9)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("kind", ["jacobian", "hessian"])
 def test_selected_map_seeds_keep_local_coloring_code_size(kind: str) -> None:
   from scaly.codegen import render_c_source

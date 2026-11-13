@@ -388,6 +388,7 @@ def _error(x: sc.Expr) -> sc.Expr:
 
 # Ported from origin/devrush tests/ocp/test_direct.py, "the library transcribes the cart pole as by hand",
 # as a discrete map with a hard track limit: transcriptions and soft constraints are not part of the builder.
+@pytest.mark.slow
 @pytest.mark.solver("ipopt")
 def test_the_builder_states_the_cart_pole_as_by_hand() -> None:
   @sc.function(sc.arg("x", NX), sc.arg("u", NU), outputs=sc.arg("x_next", NX))

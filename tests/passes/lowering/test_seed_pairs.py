@@ -144,6 +144,7 @@ def test_supported_nonfloating_elementwise_uses_typed_zeros(dtype):
   np.testing.assert_array_equal(host(x), (3 * x * mask).astype(dtype).astype(float))
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("density", [0.3, 0.9])
 def test_supported_matmul_source_scales_with_operand_entries(density):
   n = 64

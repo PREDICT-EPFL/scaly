@@ -98,6 +98,7 @@ def test_reshape_size_mismatch_caught() -> None:
     ({"kind": "add"}, (3,), dtypes.float64),
     ({"kind": "add", "axes": (-1,)}, (2,), dtypes.float64),
     ({"kind": "add", "axes": (2,)}, (2,), dtypes.float64),
+    ({"kind": "add", "axes": (1, 0)}, (), dtypes.float64),
     ({"kind": "add", "axes": (0, 0)}, (3,), dtypes.float64),
     ({"kind": "add", "axes": (0,)}, (), dtypes.float64),
     ({"kind": "add", "axes": (0,)}, (3,), dtypes.float32),

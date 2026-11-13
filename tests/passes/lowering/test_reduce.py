@@ -125,16 +125,18 @@ def test_sparse_reductions_keep_loaded_bounds_and_linear_tables(kind):
 
 
 @pytest.mark.parametrize("kind", ["max", "min"])
-def test_sparse_extrema_without_stored_entries(kind):
-  pattern = CanonicalPattern((3, 4), (), ())
+@pytest.mark.parametrize("shape", [(3, 4), (3, 0)])
+def test_sparse_extrema_without_stored_entries(kind, shape):
+  pattern = CanonicalPattern(shape, (), ())
 
-  @sc.function(sc.arg("x", sc.TensorType((3, 4), pattern=pattern)), outputs=sc.group(sc.arg("full"), sc.arg("rows")))
+  @sc.function(sc.arg("x", sc.TensorType(shape, pattern=pattern)), outputs=sc.group(sc.arg("full"), sc.arg("rows")))
   def f(x):
     return _reduce(x, kind), _reduce(x, kind, 1)
 
   full, rows = f(np.empty(0))
-  np.testing.assert_array_equal(full, 0)
-  np.testing.assert_array_equal(rows, np.full(3, 0))
+  expected = 0 if shape[1] else -np.inf if kind == "max" else np.inf
+  np.testing.assert_array_equal(full, expected)
+  np.testing.assert_array_equal(rows, np.full(3, expected))
 
 
 @pytest.mark.parametrize("lowering", ["scalar", "block"])
