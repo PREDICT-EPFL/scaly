@@ -1,7 +1,8 @@
 # Compiler-run comparison
 
 Compare the pushed compiler-run start, `e7f80e1f`, with the pushed end, `5335c46d`, on la015.
-The plan is in the study thread. All results remain local.
+The plan is in the study thread. Raw results remain local. The publication pull request includes
+only the derived data the page needs, its figures and the analysis scripts.
 
 `prepare.py` archives the end revision's benchmark package and adds boundary adapters for the
 old and new sparse results, mapped expressions, external libraries and solver compilation.
@@ -36,9 +37,11 @@ Three selected sizes do not establish scaling between them. Three fresh Scaly bu
 between-build spread; repeated timing of a binary separately checks scheduling variation.
 Closed-loop step dispersion is variation along one trajectory, not a confidence interval.
 
-The maintainer also requested local documentation edits showing before/after plots. Prepare
-those from the completed comparison, without replacing the older provider-ranking data with
-this reduced control grid. No push, publication, tracker change or compiler fix is authorized.
+The maintainer requested documentation showing before/after plots, then authorized a pull request
+on this branch. The page keeps this comparison separate from the older provider-ranking study.
+Generated sources, binaries, samples, logs and raw timings stay in the ignored results directory,
+as the benchmark skill and `benchmarks/README.md` prescribe. The page's two derived CSV files
+and figure specifications are tracked. No measurement is repeated for publication.
 
 ## Audit and local figures
 
@@ -100,4 +103,5 @@ All analysis assertions, Ruff lint and formatting, and the local documentation b
 The converter compiled all 16 figure variants; the runtime and compilation plots were visually
 checked. One Fable prose review was applied once, and the changed labels, controller caveats and
 point-only uncertainty styling were checked locally. No new runnable documentation examples were
-added. Only this task's extra detached worktree was removed. Documentation edits remain uncommitted.
+added. Only this task's extra detached worktree was removed. The publication branch includes the
+reviewed documentation, with an explicit statement that today's `main` was not measured.
