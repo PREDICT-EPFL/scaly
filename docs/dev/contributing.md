@@ -90,8 +90,9 @@ to benchmark files, so Scaly calls and the benchmark code's own annotations rema
 Tests marked `@pytest.mark.slow` are deselected by default. Use `uv run pytest -n=auto -m=`
 to include every test, or `-m slow` to select only slow tests.
 
-The root `conftest.py` checks the full-collection node-ID baseline. After adding, removing, or
-renaming a test, regenerate it from the complete collection:
+The root `conftest.py` checks the node-ID baseline when collecting the complete suite with `-m=`.
+CI checks this in `lint`. After adding, removing, or renaming a test, regenerate it from the complete
+collection:
 
 ```bash
 (
@@ -137,14 +138,14 @@ Pull requests and the merge queue run the same jobs of `ci.yml`, all on the Pyth
 - `platforms / linux-x86_64` builds the wheels, checks clean installations and runs the tests
   except those marked `slow`.
 - `smoke / linux-x86_64` builds the wheels and runs the benchmark and closed-loop smoke checks.
-- `ci` passes only when every other job passed. It remains the one required check, and its summary
+- `ci` passes only when every other job passed. It is the one required check, and its summary
   reports the Linux build, install, test and smoke results.
 
 `Platforms` runs after each push to main, except changes confined to `internal/**`. It runs the
 complete suite, including slow tests, on linux-x86_64, linux-arm64, macos-arm64 and windows-x86_64,
-and repeats it on linux-x86_64 with JIT index verification. One main run executes at a time, with
-at most one waiting. A newer push replaces the waiting run. Manual runs on other branches use
-separate concurrency groups.
+and repeats it on linux-x86_64 with JIT index verification. One push run executes at a time, with
+at most one waiting. A newer push replaces the waiting run. Manual runs use separate concurrency groups per
+branch, including on main, so they cannot replace a waiting push run.
 
 A pull request touching the toolchain, plugins or workflows must run `Platforms` on its branch
 before merge, and all platforms must pass:
@@ -157,14 +158,14 @@ A failing push run opens or updates the issue labelled `ci:platforms-failing`. T
 push run closes it. Fix a red Platforms issue before starting new work. Manual runs do not update
 this issue.
 
-`ci.yml` has no push trigger. Platforms saves uv and native-library caches on main for every
-platform. The native cache tracks each plugin's `native_build.py`, `build_config.json` and
+Platforms saves uv and native-library caches on main for every platform. The native cache tracks each plugin's `native_build.py`, `build_config.json` and
 `licenses/`, so Python wrapper and lookup changes reuse the libraries. Google Benchmark builds
 are cached per compiler. Release validation uses Nightly or Release artifacts, independently of CI.
 
 ## Nightly and release checks
 
-The nightly builds wheels on all four platforms and includes slow tests in both test groups:
+The nightly builds wheels on all four platforms, then checks three groups. Its toolchain and
+Python groups include slow tests:
 
 - `toolchain / <image> <compiler>` runs the unit tests and benchmark smoke with each compiler
   and runner image.

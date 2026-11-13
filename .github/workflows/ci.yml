@@ -140,8 +140,7 @@ jobs:
                 saved=$(step "platforms / $platform" "Save the native libraries")
                 if [ "$saved" = success ]; then native=built; else native=cached; fi
               fi
-              smoke="not run"
-              if [ "$platform" = linux-x86_64 ]; then smoke=$(step "smoke / $platform" Test); fi
+              smoke=$(step "smoke / $platform" Test)
               echo "| $platform | $native | $(step "platforms / $platform" Install) | $(step "platforms / $platform" Test) | $smoke |"
             done
             echo
