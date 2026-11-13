@@ -44,6 +44,7 @@ nav = [
         { "Scalability" = "benchmarks/scalability.md" },
         { "Closed-loop control" = "benchmarks/closed_loop.md" },
         { "Are the comparisons fair?" = "benchmarks/fairness.md" },
+        { "Compiler revisions" = "benchmarks/compiler_revisions.md" },
     ] },
     { "Developer guide" = [
         { "Contributing" = "dev/contributing.md" },

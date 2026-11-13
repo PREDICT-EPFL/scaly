@@ -1,0 +1,217 @@
+problem,size,metric,status,revision,value
+"Chain Hessian, M",3,"Evaluation time, µs",smaller,before,21.23729283536726
+"Chain Hessian, M",3,"Evaluation time, µs",smaller,after,16.632570961138253
+"Chain Hessian, M",3,"C compilation, seconds",unresolved,before,1.6456333333333335
+"Chain Hessian, M",3,"C compilation, seconds",unresolved,after,1.6692333333333333
+"Chain Hessian, M",3,"C source, kB",larger,before,191.303
+"Chain Hessian, M",3,"C source, kB",larger,after,192.257
+"Chain Hessian, M",3,Operations per iteration,unchanged,before,3997.0
+"Chain Hessian, M",3,Operations per iteration,unchanged,after,3997.0
+"Chain Hessian, M",5,"Evaluation time, µs",larger,before,96.27717629166571
+"Chain Hessian, M",5,"Evaluation time, µs",larger,after,164.27240586834716
+"Chain Hessian, M",5,"C compilation, seconds",larger,before,2.991966666666667
+"Chain Hessian, M",5,"C compilation, seconds",larger,after,3.1882
+"Chain Hessian, M",5,"C source, kB",larger,before,581.518
+"Chain Hessian, M",5,"C source, kB",larger,after,788.491
+"Chain Hessian, M",5,Operations per iteration,larger,before,17315.0
+"Chain Hessian, M",5,Operations per iteration,larger,after,21679.0
+"Chain Hessian, M",9,"Evaluation time, µs",smaller,before,3633.1619226596104
+"Chain Hessian, M",9,"Evaluation time, µs",smaller,after,506.5633736420158
+"Chain Hessian, M",9,"C compilation, seconds",larger,before,5.8764666666666665
+"Chain Hessian, M",9,"C compilation, seconds",larger,after,20.764400000000002
+"Chain Hessian, M",9,"C source, kB",larger,before,597.615
+"Chain Hessian, M",9,"C source, kB",larger,after,2320.819
+"Chain Hessian, M",9,Operations per iteration,smaller,before,270299.0
+"Chain Hessian, M",9,Operations per iteration,smaller,after,58541.0
+"Chain Jacobian, M",3,"Evaluation time, µs",larger,before,6.400543107902662
+"Chain Jacobian, M",3,"Evaluation time, µs",larger,after,6.603844858500826
+"Chain Jacobian, M",3,"C compilation, seconds",unresolved,before,0.8542333333333334
+"Chain Jacobian, M",3,"C compilation, seconds",unresolved,after,0.8629666666666667
+"Chain Jacobian, M",3,"C source, kB",smaller,before,70.471
+"Chain Jacobian, M",3,"C source, kB",smaller,after,70.461
+"Chain Jacobian, M",3,Operations per iteration,unchanged,before,1348.0
+"Chain Jacobian, M",3,Operations per iteration,unchanged,after,1348.0
+"Chain Jacobian, M",5,"Evaluation time, µs",larger,before,105.67522895265094
+"Chain Jacobian, M",5,"Evaluation time, µs",larger,after,114.21386288886885
+"Chain Jacobian, M",5,"C compilation, seconds",larger,before,0.5891666666666666
+"Chain Jacobian, M",5,"C compilation, seconds",larger,after,1.0444666666666667
+"Chain Jacobian, M",5,"C source, kB",larger,before,95.279
+"Chain Jacobian, M",5,"C source, kB",larger,after,155.924
+"Chain Jacobian, M",5,Operations per iteration,smaller,before,17560.0
+"Chain Jacobian, M",5,Operations per iteration,smaller,after,6589.0
+"Chain Jacobian, M",9,"Evaluation time, µs",smaller,before,573.7142548736244
+"Chain Jacobian, M",9,"Evaluation time, µs",smaller,after,474.52475461270046
+"Chain Jacobian, M",9,"C compilation, seconds",larger,before,0.6363333333333333
+"Chain Jacobian, M",9,"C compilation, seconds",larger,after,2.1491
+"Chain Jacobian, M",9,"C source, kB",larger,before,103.868
+"Chain Jacobian, M",9,"C source, kB",larger,after,326.51
+"Chain Jacobian, M",9,Operations per iteration,smaller,before,53645.0
+"Chain Jacobian, M",9,Operations per iteration,smaller,after,17577.0
+"Race-car Hessian, N",5,"Evaluation time, µs",smaller,before,1.017430316152235
+"Race-car Hessian, N",5,"Evaluation time, µs",smaller,after,0.9611279560570092
+"Race-car Hessian, N",5,"C compilation, seconds",smaller,before,0.2545
+"Race-car Hessian, N",5,"C compilation, seconds",smaller,after,0.23053333333333334
+"Race-car Hessian, N",5,"C source, kB",smaller,before,77.016
+"Race-car Hessian, N",5,"C source, kB",smaller,after,71.628
+"Race-car Hessian, N",5,Operations per iteration,smaller,before,1292.0
+"Race-car Hessian, N",5,Operations per iteration,smaller,after,1189.0
+"Race-car Hessian, N",50,"Evaluation time, µs",unresolved,before,3.6746205167403483
+"Race-car Hessian, N",50,"Evaluation time, µs",unresolved,after,3.5937893891649706
+"Race-car Hessian, N",50,"C compilation, seconds",smaller,before,0.3078
+"Race-car Hessian, N",50,"C compilation, seconds",smaller,after,0.29223333333333334
+"Race-car Hessian, N",50,"C source, kB",smaller,before,77.068
+"Race-car Hessian, N",50,"C source, kB",smaller,after,74.937
+"Race-car Hessian, N",50,Operations per iteration,smaller,before,1292.0
+"Race-car Hessian, N",50,Operations per iteration,smaller,after,1189.0
+"Race-car Hessian, N",400,"Evaluation time, µs",larger,before,25.544907808229084
+"Race-car Hessian, N",400,"Evaluation time, µs",larger,after,26.544691829464394
+"Race-car Hessian, N",400,"C compilation, seconds",smaller,before,0.41556666666666664
+"Race-car Hessian, N",400,"C compilation, seconds",smaller,after,0.3938666666666667
+"Race-car Hessian, N",400,"C source, kB",larger,before,77.12
+"Race-car Hessian, N",400,"C source, kB",larger,after,100.205
+"Race-car Hessian, N",400,Operations per iteration,smaller,before,1292.0
+"Race-car Hessian, N",400,Operations per iteration,smaller,after,1189.0
+"Race-car Jacobian, N",5,"Evaluation time, µs",smaller,before,0.41033221604229836
+"Race-car Jacobian, N",5,"Evaluation time, µs",smaller,after,0.3714766429575021
+"Race-car Jacobian, N",5,"C compilation, seconds",smaller,before,0.14113333333333333
+"Race-car Jacobian, N",5,"C compilation, seconds",smaller,after,0.12076666666666666
+"Race-car Jacobian, N",5,"C source, kB",smaller,before,43.768
+"Race-car Jacobian, N",5,"C source, kB",smaller,after,38.8
+"Race-car Jacobian, N",5,Operations per iteration,smaller,before,646.0
+"Race-car Jacobian, N",5,Operations per iteration,smaller,after,470.0
+"Race-car Jacobian, N",50,"Evaluation time, µs",smaller,before,4.316311969905834
+"Race-car Jacobian, N",50,"Evaluation time, µs",smaller,after,4.061080063363533
+"Race-car Jacobian, N",50,"C compilation, seconds",smaller,before,0.2687333333333333
+"Race-car Jacobian, N",50,"C compilation, seconds",smaller,after,0.2191
+"Race-car Jacobian, N",50,"C source, kB",smaller,before,43.894
+"Race-car Jacobian, N",50,"C source, kB",smaller,after,38.926
+"Race-car Jacobian, N",50,Operations per iteration,smaller,before,646.0
+"Race-car Jacobian, N",50,Operations per iteration,smaller,after,470.0
+"Race-car Jacobian, N",400,"Evaluation time, µs",smaller,before,33.421770454573036
+"Race-car Jacobian, N",400,"Evaluation time, µs",smaller,after,29.86162545162347
+"Race-car Jacobian, N",400,"C compilation, seconds",smaller,before,0.23413333333333333
+"Race-car Jacobian, N",400,"C compilation, seconds",smaller,after,0.16623333333333332
+"Race-car Jacobian, N",400,"C source, kB",smaller,before,44.06
+"Race-car Jacobian, N",400,"C source, kB",smaller,after,39.08
+"Race-car Jacobian, N",400,Operations per iteration,smaller,before,646.0
+"Race-car Jacobian, N",400,Operations per iteration,smaller,after,470.0
+"Neural MPC Hessian, N",6,"Evaluation time, µs",larger,before,7.804485219735737
+"Neural MPC Hessian, N",6,"Evaluation time, µs",larger,after,9.049171708184407
+"Neural MPC Hessian, N",6,"C compilation, seconds",smaller,before,0.5912333333333334
+"Neural MPC Hessian, N",6,"C compilation, seconds",smaller,after,0.4761666666666667
+"Neural MPC Hessian, N",6,"C source, kB",smaller,before,128.073
+"Neural MPC Hessian, N",6,"C source, kB",smaller,after,90.859
+"Neural MPC Hessian, N",6,Operations per iteration,smaller,before,28930.0
+"Neural MPC Hessian, N",6,Operations per iteration,smaller,after,28915.0
+"Neural MPC Hessian, N",12,"Evaluation time, µs",larger,before,14.82066682932556
+"Neural MPC Hessian, N",12,"Evaluation time, µs",larger,after,17.91320829070639
+"Neural MPC Hessian, N",12,"C compilation, seconds",smaller,before,1.0935
+"Neural MPC Hessian, N",12,"C compilation, seconds",smaller,after,0.8915666666666666
+"Neural MPC Hessian, N",12,"C source, kB",smaller,before,130.47
+"Neural MPC Hessian, N",12,"C source, kB",smaller,after,93.366
+"Neural MPC Hessian, N",12,Operations per iteration,smaller,before,28930.0
+"Neural MPC Hessian, N",12,Operations per iteration,smaller,after,28915.0
+"Neural MPC Hessian, N",200,"Evaluation time, µs",larger,before,197.64894118849227
+"Neural MPC Hessian, N",200,"Evaluation time, µs",larger,after,238.9648008535305
+"Neural MPC Hessian, N",200,"C compilation, seconds",smaller,before,0.789
+"Neural MPC Hessian, N",200,"C compilation, seconds",smaller,after,0.6011333333333333
+"Neural MPC Hessian, N",200,"C source, kB",smaller,before,219.236
+"Neural MPC Hessian, N",200,"C source, kB",smaller,after,183.471
+"Neural MPC Hessian, N",200,Operations per iteration,smaller,before,28930.0
+"Neural MPC Hessian, N",200,Operations per iteration,smaller,after,28915.0
+"Neural MPC Jacobian, N",6,"Evaluation time, µs",larger,before,4.902679170599066
+"Neural MPC Jacobian, N",6,"Evaluation time, µs",larger,after,5.531597600121783
+"Neural MPC Jacobian, N",6,"C compilation, seconds",smaller,before,0.32153333333333334
+"Neural MPC Jacobian, N",6,"C compilation, seconds",smaller,after,0.3113666666666667
+"Neural MPC Jacobian, N",6,"C source, kB",smaller,before,82.99
+"Neural MPC Jacobian, N",6,"C source, kB",smaller,after,67.303
+"Neural MPC Jacobian, N",6,Operations per iteration,smaller,before,20011.0
+"Neural MPC Jacobian, N",6,Operations per iteration,smaller,after,19778.0
+"Neural MPC Jacobian, N",12,"Evaluation time, µs",larger,before,10.540363533054459
+"Neural MPC Jacobian, N",12,"Evaluation time, µs",larger,after,11.357348737165767
+"Neural MPC Jacobian, N",12,"C compilation, seconds",larger,before,0.5882000000000001
+"Neural MPC Jacobian, N",12,"C compilation, seconds",larger,after,0.6114333333333333
+"Neural MPC Jacobian, N",12,"C source, kB",smaller,before,83.054
+"Neural MPC Jacobian, N",12,"C source, kB",smaller,after,67.375
+"Neural MPC Jacobian, N",12,Operations per iteration,smaller,before,20011.0
+"Neural MPC Jacobian, N",12,Operations per iteration,smaller,after,19778.0
+"Neural MPC Jacobian, N",200,"Evaluation time, µs",larger,before,127.52948412313134
+"Neural MPC Jacobian, N",200,"Evaluation time, µs",larger,after,139.17163506837892
+"Neural MPC Jacobian, N",200,"C compilation, seconds",unresolved,before,0.4167
+"Neural MPC Jacobian, N",200,"C compilation, seconds",unresolved,after,0.43173333333333336
+"Neural MPC Jacobian, N",200,"C source, kB",smaller,before,83.159
+"Neural MPC Jacobian, N",200,"C source, kB",smaller,after,67.481
+"Neural MPC Jacobian, N",200,Operations per iteration,smaller,before,20011.0
+"Neural MPC Jacobian, N",200,Operations per iteration,smaller,after,19778.0
+"Decoder Hessian, width",16,"Evaluation time, µs",larger,before,6.181727238580288
+"Decoder Hessian, width",16,"Evaluation time, µs",larger,after,7.460766899285809
+"Decoder Hessian, width",16,"C compilation, seconds",smaller,before,1.0079333333333333
+"Decoder Hessian, width",16,"C compilation, seconds",smaller,after,0.8055
+"Decoder Hessian, width",16,"C source, kB",smaller,before,130.456
+"Decoder Hessian, width",16,"C source, kB",smaller,after,93.297
+"Decoder Hessian, width",16,Operations per iteration,smaller,before,9410.0
+"Decoder Hessian, width",16,Operations per iteration,smaller,after,9395.0
+"Decoder Hessian, width",64,"Evaluation time, µs",larger,before,40.08310555631858
+"Decoder Hessian, width",64,"Evaluation time, µs",larger,after,57.053163732179605
+"Decoder Hessian, width",64,"C compilation, seconds",smaller,before,1.0168000000000001
+"Decoder Hessian, width",64,"C compilation, seconds",smaller,after,0.7831333333333333
+"Decoder Hessian, width",64,"C source, kB",smaller,before,130.604
+"Decoder Hessian, width",64,"C source, kB",smaller,after,93.409
+"Decoder Hessian, width",64,Operations per iteration,smaller,before,98690.0
+"Decoder Hessian, width",64,Operations per iteration,smaller,after,98675.0
+"Decoder Hessian, width",256,"Evaluation time, µs",larger,before,516.2002234529599
+"Decoder Hessian, width",256,"Evaluation time, µs",larger,after,708.2712779671953
+"Decoder Hessian, width",256,"C compilation, seconds",smaller,before,1.0211333333333332
+"Decoder Hessian, width",256,"C compilation, seconds",smaller,after,0.7681
+"Decoder Hessian, width",256,"C source, kB",smaller,before,130.982
+"Decoder Hessian, width",256,"C source, kB",smaller,after,93.586
+"Decoder Hessian, width",256,Operations per iteration,smaller,before,1377410.0
+"Decoder Hessian, width",256,Operations per iteration,smaller,after,1377395.0
+"Decoder Jacobian, width",16,"Evaluation time, µs",unresolved,before,7.292119671650787
+"Decoder Jacobian, width",16,"Evaluation time, µs",unresolved,after,7.294079572559502
+"Decoder Jacobian, width",16,"C compilation, seconds",unresolved,before,1.3471666666666668
+"Decoder Jacobian, width",16,"C compilation, seconds",unresolved,after,1.3276000000000001
+"Decoder Jacobian, width",16,"C source, kB",smaller,before,303.906
+"Decoder Jacobian, width",16,"C source, kB",smaller,after,302.793
+"Decoder Jacobian, width",16,Operations per iteration,unchanged,before,4543.0
+"Decoder Jacobian, width",16,Operations per iteration,unchanged,after,4543.0
+"Decoder Jacobian, width",64,"Evaluation time, µs",larger,before,27.388167968909542
+"Decoder Jacobian, width",64,"Evaluation time, µs",larger,after,30.26360804810592
+"Decoder Jacobian, width",64,"C compilation, seconds",larger,before,0.5271666666666667
+"Decoder Jacobian, width",64,"C compilation, seconds",larger,after,0.5781666666666666
+"Decoder Jacobian, width",64,"C source, kB",smaller,before,83.063
+"Decoder Jacobian, width",64,"C source, kB",smaller,after,67.898
+"Decoder Jacobian, width",64,Operations per iteration,smaller,before,68587.0
+"Decoder Jacobian, width",64,Operations per iteration,smaller,after,68162.0
+"Decoder Jacobian, width",256,"Evaluation time, µs",smaller,before,456.9043060677586
+"Decoder Jacobian, width",256,"Evaluation time, µs",smaller,after,297.93604738977155
+"Decoder Jacobian, width",256,"C compilation, seconds",unresolved,before,0.5430333333333333
+"Decoder Jacobian, width",256,"C compilation, seconds",unresolved,after,0.5720666666666667
+"Decoder Jacobian, width",256,"C source, kB",smaller,before,83.273
+"Decoder Jacobian, width",256,"C source, kB",smaller,after,70.907
+"Decoder Jacobian, width",256,Operations per iteration,smaller,before,962155.0
+"Decoder Jacobian, width",256,Operations per iteration,smaller,after,960578.0
+"Unbumpercars Hessian, C",2,"Evaluation time, µs",larger,before,112.92893487750375
+"Unbumpercars Hessian, C",2,"Evaluation time, µs",larger,after,163.59659206214596
+"Unbumpercars Hessian, C",2,"C compilation, seconds",smaller,before,0.9764333333333333
+"Unbumpercars Hessian, C",2,"C compilation, seconds",smaller,after,0.8740333333333333
+"Unbumpercars Hessian, C",2,"C source, kB",larger,before,238.918
+"Unbumpercars Hessian, C",2,"C source, kB",larger,after,362.487
+"Unbumpercars Hessian, C",2,Operations per iteration,smaller,before,997936.0
+"Unbumpercars Hessian, C",2,Operations per iteration,smaller,after,981502.0
+"Unbumpercars Hessian, C",8,"Evaluation time, µs",larger,before,380.3259297696643
+"Unbumpercars Hessian, C",8,"Evaluation time, µs",larger,after,393.5299217501561
+"Unbumpercars Hessian, C",8,"C compilation, seconds",unresolved,before,3.1955666666666667
+"Unbumpercars Hessian, C",8,"C compilation, seconds",unresolved,after,3.2428000000000003
+"Unbumpercars Hessian, C",8,"C source, kB",smaller,before,317.982
+"Unbumpercars Hessian, C",8,"C source, kB",smaller,after,295.187
+"Unbumpercars Hessian, C",8,Operations per iteration,smaller,before,993625.0
+"Unbumpercars Hessian, C",8,Operations per iteration,smaller,after,976466.0
+"Unbumpercars Hessian, C",32,"Evaluation time, µs",smaller,before,7491.227382670486
+"Unbumpercars Hessian, C",32,"Evaluation time, µs",smaller,after,4000.205262783778
+"Unbumpercars Hessian, C",32,"C compilation, seconds",unresolved,before,2.600166666666667
+"Unbumpercars Hessian, C",32,"C compilation, seconds",unresolved,after,2.571333333333333
+"Unbumpercars Hessian, C",32,"C source, kB",smaller,before,473.316
+"Unbumpercars Hessian, C",32,"C source, kB",smaller,after,451.57
+"Unbumpercars Hessian, C",32,Operations per iteration,smaller,before,993625.0
+"Unbumpercars Hessian, C",32,Operations per iteration,smaller,after,976466.0

@@ -10,10 +10,13 @@ four optimal-control problems, and answer three questions:
 - **What does it cost to build?** The time from the model to compiled code, and the size of that
   code.
 
-All numbers come from one study run on October 29, 2026, at revision
+The provider comparisons below come from one study run on October 29, 2026, at revision
 [`06e10c16`](https://github.com/PREDICT-EPFL/scaly/commit/06e10c16), against CasADi 3.8.0, on an AMD
 Ryzen 9 7940HS desktop. [Are the comparisons fair?](fairness.md) explains what the two sides
 share and where the comparison has limits.
+
+A separate [compiler revision comparison](compiler_revisions.md) measures the changes between
+two Scaly revisions, measured on November 12, 2026, including evaluation times, compilation times and source sizes.
 
 ## The problems
 

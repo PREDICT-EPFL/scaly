@@ -1,0 +1,124 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "params": [
+    {
+      "name": "measure",
+      "value": "Evaluation time, \u00b5s",
+      "bind": {
+        "input": "select",
+        "name": "Metric: ",
+        "options": [
+          "Evaluation time, \u00b5s",
+          "C compilation, seconds",
+          "C source, kB",
+          "Operations per iteration"
+        ]
+      }
+    }
+  ],
+  "transform": [
+    {
+      "filter": "datum.metric === measure"
+    }
+  ],
+  "facet": {
+    "field": "problem",
+    "title": null,
+    "sort": [
+      "Chain Hessian, M",
+      "Chain Jacobian, M",
+      "Race-car Hessian, N",
+      "Race-car Jacobian, N",
+      "Neural MPC Hessian, N",
+      "Neural MPC Jacobian, N",
+      "Decoder Hessian, width",
+      "Decoder Jacobian, width",
+      "Unbumpercars Hessian, C"
+    ]
+  },
+  "columns": 3,
+  "resolve": {
+    "scale": {
+      "x": "independent",
+      "y": "independent"
+    }
+  },
+  "data": {
+    "url": "compiler_run_values.csv",
+    "format": {
+      "type": "csv",
+      "parse": {
+        "size": "number",
+        "value": "number"
+      }
+    }
+  },
+  "spec": {
+    "width": 180,
+    "height": 150,
+    "mark": {
+      "type": "line",
+      "point": true
+    },
+    "encoding": {
+      "x": {
+        "field": "size",
+        "type": "quantitative",
+        "title": "Size",
+        "scale": {
+          "type": "log",
+          "nice": false
+        },
+        "axis": {
+          "format": "~g",
+          "tickCount": 3,
+          "grid": false
+        }
+      },
+      "y": {
+        "field": "value",
+        "type": "quantitative",
+        "title": null,
+        "scale": {
+          "type": "log",
+          "zero": false
+        }
+      },
+      "color": {
+        "field": "revision",
+        "title": null,
+        "scale": {
+          "domain": [
+            "before",
+            "after"
+          ],
+          "range": [
+            "#2a78d6",
+            "#eb6834"
+          ]
+        }
+      },
+      "tooltip": [
+        {
+          "field": "problem"
+        },
+        {
+          "field": "size"
+        },
+        {
+          "field": "revision"
+        },
+        {
+          "field": "metric"
+        },
+        {
+          "field": "value",
+          "format": ".5~g"
+        },
+        {
+          "field": "status"
+        }
+      ]
+    }
+  }
+}

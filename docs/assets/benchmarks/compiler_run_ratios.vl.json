@@ -1,0 +1,281 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "params": [
+    {
+      "name": "measure",
+      "value": "Evaluation time, \u00b5s",
+      "bind": {
+        "input": "select",
+        "name": "Metric: ",
+        "options": [
+          "Evaluation time, \u00b5s",
+          "C compilation, seconds",
+          "C source, kB",
+          "Operations per iteration"
+        ]
+      }
+    }
+  ],
+  "transform": [
+    {
+      "filter": "datum.metric === measure"
+    }
+  ],
+  "facet": {
+    "field": "problem",
+    "title": null,
+    "sort": [
+      "Chain Hessian, M",
+      "Chain Jacobian, M",
+      "Race-car Hessian, N",
+      "Race-car Jacobian, N",
+      "Neural MPC Hessian, N",
+      "Neural MPC Jacobian, N",
+      "Decoder Hessian, width",
+      "Decoder Jacobian, width",
+      "Unbumpercars Hessian, C"
+    ]
+  },
+  "columns": 3,
+  "resolve": {
+    "scale": {
+      "x": "independent",
+      "y": "independent"
+    }
+  },
+  "data": {
+    "url": "compiler_run_ratios.csv",
+    "format": {
+      "type": "csv",
+      "parse": {
+        "size": "number",
+        "ratio": "number",
+        "low95": "number",
+        "high95": "number",
+        "before": "number",
+        "after": "number"
+      }
+    }
+  },
+  "spec": {
+    "width": 180,
+    "height": 150,
+    "layer": [
+      {
+        "transform": [
+          {
+            "filter": "datum.metric === 'Evaluation time, \u00b5s'"
+          },
+          {
+            "aggregate": [],
+            "groupby": [
+              "problem"
+            ]
+          }
+        ],
+        "mark": {
+          "type": "rect",
+          "color": "#c3c2b7",
+          "opacity": 0.35
+        },
+        "encoding": {
+          "y": {
+            "datum": 0.9840143713354798,
+            "type": "quantitative",
+            "scale": {
+              "type": "log",
+              "nice": false,
+              "zero": false
+            },
+            "axis": {
+              "format": ".4~g",
+              "grid": false,
+              "tickCount": 4
+            }
+          },
+          "y2": {
+            "datum": 1.0162453203227357
+          }
+        }
+      },
+      {
+        "mark": {
+          "type": "rule",
+          "color": "#c3c2b7"
+        },
+        "encoding": {
+          "y": {
+            "datum": 1,
+            "scale": {
+              "type": "log",
+              "nice": false,
+              "zero": false
+            },
+            "axis": {
+              "format": ".4~g",
+              "grid": false,
+              "tickCount": 4
+            }
+          }
+        }
+      },
+      {
+        "mark": {
+          "type": "rule",
+          "color": "#52514e"
+        },
+        "encoding": {
+          "y": {
+            "field": "low95",
+            "type": "quantitative",
+            "title": "After / before",
+            "scale": {
+              "type": "log",
+              "nice": false,
+              "zero": false
+            },
+            "axis": {
+              "format": ".4~g",
+              "grid": false,
+              "tickCount": 4
+            }
+          },
+          "y2": {
+            "field": "high95"
+          },
+          "x": {
+            "field": "size",
+            "type": "quantitative",
+            "title": "Size",
+            "scale": {
+              "type": "log",
+              "nice": false
+            },
+            "axis": {
+              "format": "~g",
+              "tickCount": 3,
+              "grid": false
+            }
+          }
+        }
+      },
+      {
+        "mark": {
+          "type": "line",
+          "color": "#2a78d6",
+          "opacity": 0.55
+        },
+        "encoding": {
+          "x": {
+            "field": "size",
+            "type": "quantitative",
+            "title": "Size",
+            "scale": {
+              "type": "log",
+              "nice": false
+            },
+            "axis": {
+              "format": "~g",
+              "tickCount": 3,
+              "grid": false
+            }
+          },
+          "y": {
+            "field": "ratio",
+            "type": "quantitative",
+            "title": "After / before",
+            "scale": {
+              "type": "log",
+              "nice": false,
+              "zero": false
+            },
+            "axis": {
+              "format": ".4~g",
+              "grid": false,
+              "tickCount": 4
+            }
+          }
+        }
+      },
+      {
+        "mark": {
+          "type": "point",
+          "filled": true,
+          "color": "#2a78d6"
+        },
+        "encoding": {
+          "y": {
+            "field": "ratio",
+            "type": "quantitative",
+            "title": "After / before",
+            "scale": {
+              "type": "log",
+              "nice": false,
+              "zero": false
+            },
+            "axis": {
+              "format": ".4~g",
+              "grid": false,
+              "tickCount": 4
+            }
+          },
+          "opacity": {
+            "condition": {
+              "test": "datum.status === 'unresolved' || datum.status === 'unchanged'",
+              "value": 0.35
+            },
+            "value": 1
+          },
+          "tooltip": [
+            {
+              "field": "problem"
+            },
+            {
+              "field": "size"
+            },
+            {
+              "field": "metric"
+            },
+            {
+              "field": "before",
+              "format": ".5~g"
+            },
+            {
+              "field": "after",
+              "format": ".5~g"
+            },
+            {
+              "field": "ratio",
+              "format": ".4f"
+            },
+            {
+              "field": "low95",
+              "format": ".4f"
+            },
+            {
+              "field": "high95",
+              "format": ".4f"
+            },
+            {
+              "field": "status"
+            }
+          ],
+          "x": {
+            "field": "size",
+            "type": "quantitative",
+            "title": "Size",
+            "scale": {
+              "type": "log",
+              "nice": false
+            },
+            "axis": {
+              "format": "~g",
+              "tickCount": 3,
+              "grid": false
+            }
+          }
+        }
+      }
+    ]
+  }
+}
