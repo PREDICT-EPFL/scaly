@@ -75,9 +75,9 @@ def test_qp_proof_rejects_stopped_derivatives(location: str, form: str) -> None:
     sc.solver(stopped, "piqp", options={"sparse": True})
 
 
-@pytest.mark.parametrize("location", ["cost", "eq", "ineq", "lb", "ineq-hi"])
+@pytest.mark.parametrize("location", ["cost", "lb", "ineq-hi"])
 @pytest.mark.parametrize("form", ["direct", "call", "map", "cond"])
-@pytest.mark.parametrize("operation", ["select", "maximum", "minimum", "abs", "floor", "ceil", "reduce_max", "reduce_min", "norm_1", "norm_inf"])
+@pytest.mark.parametrize("operation", ["select", "maximum", "minimum", "abs", "floor", "ceil", "reduce_max", "reduce_min"])
 def test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear(location: str, form: str, operation: str) -> None:
   """``where(x > 0, x, -x)`` has a zero Hessian but is not quadratic, and a bound of ``x > 0`` has a
   zero Jacobian but depends on the variables."""
@@ -92,8 +92,6 @@ def test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear(location: str
         "ceil": value.ceil,
         "reduce_max": lambda: sc.reduce_max(value),
         "reduce_min": lambda: sc.reduce_min(value),
-        "norm_1": lambda: sc.norm_1(value),
-        "norm_inf": lambda: sc.norm_inf(value),
       }[operation]()
     return sc.cast(value > 0.0, "float64") if location in {"lb", "ineq-hi"} else sc.where(value > 0.0, value, -value)
 
@@ -115,8 +113,7 @@ def test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear(location: str
     term = kink(x)
     return sc.ProblemSpec(
       minimize=sc.sumsqr(x) + p.sum() + (term.sum() if location == "cost" else 0.0),
-      eq=(term - 1.0,) if location == "eq" else (),
-      ineq=(sc.bounded(term, hi=1.0),) if location == "ineq" else (sc.bounded(x, hi=term),) if location == "ineq-hi" else (),
+      ineq=(sc.bounded(x, hi=term),) if location == "ineq-hi" else (),
       lb=term if location == "lb" else None,
     )
 

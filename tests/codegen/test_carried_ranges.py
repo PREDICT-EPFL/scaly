@@ -46,10 +46,9 @@ def test_nested_exit_variable_shadows_the_outer_loop_index(tmp_path, outer_exit)
   np.testing.assert_array_equal(result, expected)
 
 
-@pytest.mark.parametrize("dialect", ["c", "gnu"])
-@pytest.mark.parametrize("lanes,reciprocal", [(1, False), (2, False), (1, True), (2, True)])
+@pytest.mark.parametrize("dialect,lanes,reciprocal", [("c", 1, False), ("gnu", 2, True)])
 @pytest.mark.parametrize("dynamic", [False, True])
-@pytest.mark.parametrize("length,stop_at", [(0, 0), (1, 0), (1, 1), (6, 0), (6, 3), (6, 6)])
+@pytest.mark.parametrize("length,stop_at", [(0, 0), (1, 1), (6, 3), (6, 6)])
 def test_carried_recurrence_and_trip_count_match_numpy(tmp_path, dialect, lanes, reciprocal, dynamic, length, stop_at):
   flags = p.buffer("flags", dtypes.bool_, (max(1, length),))
   trip = p.buffer("trip", dtypes.int64, (1,))

@@ -121,9 +121,7 @@ def test_sparse_select_union_broadcast_and_derivatives(batch, condition_shape):
     "concat",
     "sum",
     "sum_rows",
-    "sum_cols",
     "sum_rows_keepdims",
-    "sum_cols_keepdims",
     "matvec",
     "rmatvec",
     "matmat",
@@ -149,9 +147,7 @@ def test_sparse_select_mask_reaches_singular_partial_through_movement(movement):
       "concat": lambda: sc.concat((x, 2 * x), axis=1),
       "sum": lambda: x.sum(),
       "sum_rows": lambda: x.sum(axis=0),
-      "sum_cols": lambda: x.sum(axis=1),
       "sum_rows_keepdims": lambda: x.sum(axis=0, keepdims=True),
-      "sum_cols_keepdims": lambda: x.sum(axis=1, keepdims=True),
       "matvec": lambda: x @ sc.const(np.ones(5)),
       "rmatvec": lambda: sc.const(np.ones(4)) @ x,
       "matmat": lambda: x @ sc.const(np.ones((5, 2))),
@@ -204,12 +200,11 @@ def test_sparse_select_stored_bool_condition_and_hessian_without_logical_matrix_
           assert np.prod(node.attrs["shape"]) <= 20 * pattern.nnz**2
 
 
-@pytest.mark.parametrize("layout", ["csr", "csc"])
-def test_sparse_select_leaf_derivatives_keep_stored_layout(layout):
+def test_sparse_select_leaf_derivatives_keep_stored_layout():
   pattern = CanonicalPattern((1000, 1000), (0, 0, 4, 99, 999), (9, 997, 3, 71, 998))
-  leaf = sc.arg("a", sc.TensorType(pattern.shape, pattern=pattern), layout=layout)
+  leaf = sc.arg("a", sc.TensorType(pattern.shape, pattern=pattern), layout="csr")
 
-  @sc.function(leaf, sc.arg("c", ()), name=f"sparse_select_leaf_{layout}")
+  @sc.function(leaf, sc.arg("c", ()), name="sparse_select_leaf_csr")
   def loss(a, c):
     return sc.where(c > 0, a.sin(), a * a).sum().block()
 

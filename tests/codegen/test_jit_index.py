@@ -82,15 +82,6 @@ def test_a_process_with_another_hash_seed_loads_the_library_without_lowering(tmp
   assert first["library"] == second["library"] == verified["library"]
 
 
-def test_a_library_in_the_index_is_loaded_without_lowering(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-  fun = _fn()
-  built = jit._build_artifact(fun)
-  _fresh()
-  lowered = _lowered(monkeypatch)
-  assert jit._build_artifact(fun) == built
-  assert lowered == []
-
-
 def test_a_missing_library_behind_an_index_entry_is_rebuilt(isolated_cache: Path) -> None:
   fun = _fn()
   built = jit._build_artifact(fun)
@@ -200,17 +191,6 @@ def test_the_key_changes_with_the_compile_options(isolated_cache: Path, monkeypa
   assert _index_key(fun) not in (None, default)
 
 
-def _rename(prog: Any) -> Any:
-  return prog
-
-
-def test_a_pass_put_in_the_pipeline_gives_no_key(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-  fun = _fn()
-  assert _index_key(fun) is not None
-  monkeypatch.setattr(program, "PASS_PIPELINE", (*program.PASS_PIPELINE, ("rename", _rename)))
-  assert _index_key(fun) is None
-
-
 def test_a_wrapper_carrying_a_scaly_passs_name_gives_no_key(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   (name, first), *rest = program.PASS_PIPELINE
 
@@ -310,3 +290,14 @@ def test_solver_warm_start_never_lowers_at_construction_or_on_an_index_hit(tmp_p
   assert relocated["result"] == first["result"]
   assert Path(relocated["library"]).parent.name == Path(first["library"]).parent.name
   assert Path(relocated["library"]).is_file()
+
+
+def _rename(prog: Any) -> Any:
+  return prog
+
+
+def test_a_pass_put_in_the_pipeline_gives_no_key(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  fun = _fn()
+  assert _index_key(fun) is not None
+  monkeypatch.setattr(program, "PASS_PIPELINE", (*program.PASS_PIPELINE, ("rename", _rename)))
+  assert _index_key(fun) is None

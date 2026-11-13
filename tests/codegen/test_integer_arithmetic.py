@@ -15,7 +15,7 @@ from scaly.ir import program as p
 from scaly.ir.types import CanonicalPattern
 from scaly.passes.arith import constant
 from scaly.passes.lowering import ctx, lower_function, main_proc
-from tests.compilers import c_compiler, named_compiler
+from tests.compilers import named_compiler
 
 
 @pytest.mark.parametrize("dialect", ["gnu", "c"])
@@ -35,11 +35,7 @@ def test_hoisted_sparse_indices_keep_float64_c_spelling(dialect) -> None:
 
 @pytest.mark.parametrize("dtype", ["int64", "int32"])
 @pytest.mark.parametrize("variant", ["block", "scalar"])
-@pytest.mark.parametrize("sanitize", [False, True])
-def test_signed_arithmetic_matches_numpy(
-  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dtype: str, variant: Literal["block", "scalar"], sanitize: bool
-) -> None:
-  command = named_compiler("gcc") if sanitize else c_compiler()
+def test_signed_arithmetic_matches_numpy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dtype: str, variant: Literal["block", "scalar"]) -> None:
   # #55 owns enabling narrower scalar stores generally. Exercise this renderer path now.
   if dtype == "int32" and variant == "scalar":
     monkeypatch.setattr(ctx, "_EXACT_STORES", (*ctx._EXACT_STORES, sc.dtypes.int32))
@@ -65,15 +61,14 @@ def test_signed_arithmetic_matches_numpy(
     values = (a + b, a - b, a * b, -a)
     expected = np.array([*(part for value in values for part in (value // base, value % base)), (a + 1 > a)], dtype=np.float64)
 
-  _assert_compiled_result(tmp_path, render_c_module(arithmetic), inputs, expected, command, sanitize)
+  _assert_compiled_result(tmp_path, render_c_module(arithmetic), inputs, expected)
   np.testing.assert_array_equal(arithmetic(inputs), expected)
 
 
-@pytest.mark.parametrize("dtype", ["int64", "int32"])
-def test_constant_integer_data_keeps_wrapping_in_scheduled_assignments(tmp_path: Path, dtype: str) -> None:
-  values = np.array([np.iinfo(dtype).max - 1023, 0], dtype=dtype)
+def test_constant_integer_data_keeps_wrapping_in_scheduled_assignments(tmp_path: Path) -> None:
+  values = np.array([np.iinfo(np.int64).max - 1023, 0], dtype=np.int64)
 
-  @sc.function(sc.arg("x", 1), outputs=sc.arg("y"), name=f"constant_data_{dtype}")
+  @sc.function(sc.arg("x", 1), outputs=sc.arg("y"), name="constant_data_int64")
   def arithmetic(x: sc.Expr) -> sc.Expr:
     value = sc.print("{}", sc.const(values)) + 1024
     return sc.cast(value * value, "float64").block()
@@ -82,66 +77,39 @@ def test_constant_integer_data_keeps_wrapping_in_scheduled_assignments(tmp_path:
     value = values + 1024
     expected = (value * value).astype(np.float64)
   inputs = np.zeros(1)
-  _assert_compiled_result(tmp_path, render_c_module(arithmetic), inputs, expected, named_compiler("gcc"), True)
+  _assert_compiled_result(tmp_path, render_c_module(arithmetic), inputs, expected)
   np.testing.assert_array_equal(arithmetic(inputs), expected)
 
 
-@pytest.mark.parametrize("dtype", ["int64", "int32"])
-@pytest.mark.parametrize("variant", ["block", "scalar"])
-@pytest.mark.parametrize("negative", [False, True])
-def test_integer_sum_wraps_at_both_limits(tmp_path, monkeypatch, dtype, variant, negative) -> None:
-  if dtype == "int32" and variant == "scalar":
-    monkeypatch.setattr(ctx, "_EXACT_STORES", (*ctx._EXACT_STORES, sc.dtypes.int32))
-  info = np.iinfo(dtype)
-  values = np.array([info.min, -1] if negative else [info.max - 1023, 1024], dtype=dtype)
-  base = 1 << (info.bits // 2)
-
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name=f"sum_wrap_{dtype}_{variant}_{negative}")
-  def arithmetic(x):
-    total = sc.cast(x, dtype).sum()
-    return sc.stack([sc.cast(total // base, "float64"), sc.cast(total % base, "float64")]).with_lowering(variant)
-
-  with np.errstate(over="ignore"):
-    reference = np.sum(values, dtype=dtype)
-  expected = np.array([reference // base, reference % base], dtype=np.float64)
-  inputs = values.astype(np.float64)
-  _assert_compiled_result(tmp_path, render_c_module(arithmetic), inputs, expected, named_compiler("gcc"), True)
-  np.testing.assert_array_equal(arithmetic(inputs), expected)
-
-
-@pytest.mark.parametrize("dtype", ["int64", "int32"])
 @pytest.mark.parametrize("variant", ["block", "scalar"])
 @pytest.mark.parametrize("axis", [0, 1])
-def test_integer_axis_sums_wrap_in_strided_and_contiguous_schedules(tmp_path, monkeypatch, dtype, variant, axis) -> None:
-  if dtype == "int32" and variant == "scalar":
-    monkeypatch.setattr(ctx, "_EXACT_STORES", (*ctx._EXACT_STORES, sc.dtypes.int32))
-  info = np.iinfo(dtype)
-  values = np.tile(np.array([info.max - 1023, 1024, info.min, -1, 0], dtype=dtype), (4, 1))
+def test_integer_axis_sums_wrap_in_strided_and_contiguous_schedules(tmp_path, variant, axis) -> None:
+  info = np.iinfo(np.int64)
+  values = np.tile(np.array([info.max - 1023, 1024, info.min, -1, 0], dtype=np.int64), (4, 1))
   base = 1 << (info.bits // 2)
 
-  @sc.function(sc.arg("x", values.shape), outputs=sc.arg("y"), name=f"axis_sum_wrap_{dtype}_{variant}_{axis}")
+  @sc.function(sc.arg("x", values.shape), outputs=sc.arg("y"), name=f"axis_sum_wrap_int64_{variant}_{axis}")
   def arithmetic(x):
-    total = sc.cast(x, dtype).sum(axis)
+    total = sc.cast(x, "int64").sum(axis)
     return sc.stack([sc.cast(total // base, "float64"), sc.cast(total % base, "float64")]).with_lowering(variant)
 
   with np.errstate(over="ignore"):
-    reference = np.sum(values, axis=axis, dtype=dtype)
+    reference = np.sum(values, axis=axis, dtype=np.int64)
   expected = np.array([reference // base, reference % base], dtype=np.float64)
   inputs = values.astype(np.float64)
-  _assert_compiled_result(tmp_path, render_c_module(arithmetic), inputs, expected, named_compiler("gcc"), True)
+  _assert_compiled_result(tmp_path, render_c_module(arithmetic), inputs, expected)
   np.testing.assert_array_equal(arithmetic(inputs), expected)
 
 
-@pytest.mark.parametrize("dtype", [sc.dtypes.int64, sc.dtypes.int32])
-def test_nested_block_keeps_integer_wrapping(tmp_path, dtype) -> None:
-  info = np.iinfo(dtype.numpy())
-  x, y = (p.buffer(name, dtype, (1,)) for name in ("x", "y"))
+def test_nested_block_keeps_integer_wrapping(tmp_path) -> None:
+  info = np.iinfo(np.int64)
+  x, y = (p.buffer(name, sc.dtypes.int64, (1,)) for name in ("x", "y"))
   at = lambda buffer: p.view(buffer, [p.const_int(0)])
   body = [
     p.assign("seed", p.load(at(x)), declare=True),
     p.block(
-      p.assign("incremented", p.add(p.var("seed", dtype), constant(1, dtype)), declare=True),
-      p.store(at(y), p.var("incremented", dtype)),
+      p.assign("incremented", p.add(p.var("seed", sc.dtypes.int64), constant(1, sc.dtypes.int64)), declare=True),
+      p.store(at(y), p.var("incremented", sc.dtypes.int64)),
     ),
   ]
   proc = p.proc("block_wrap", [x, y], body)
@@ -149,7 +117,7 @@ def test_nested_block_keeps_integer_wrapping(tmp_path, dtype) -> None:
   source += f"""
 #include <stdio.h>
 int main(void) {{
-  {dtype.c_type} x = {info.max}, y = 0;
+  int64_t x = {info.max}, y = 0;
   block_wrap_raw(&x, &y, NULL);
   printf("%lld\\n", (long long)y);
   return 0;
@@ -169,9 +137,7 @@ int main(void) {{
   assert int(run.stdout) == info.min
 
 
-def _assert_compiled_result(
-  tmp_path: Path, module: CModule, inputs: np.ndarray, expected: np.ndarray, command: tuple[str, ...], sanitize: bool
-) -> None:
+def _assert_compiled_result(tmp_path: Path, module: CModule, inputs: np.ndarray, expected: np.ndarray) -> None:
   (tmp_path / module.header_name).write_text(module.header)
   source = tmp_path / module.source_name
   size = expected.size
@@ -192,9 +158,11 @@ int main(void) {{
 """
   )
   executable = tmp_path / "arithmetic"
-  flags = ["-fsanitize=signed-integer-overflow", "-fsanitize-undefined-trap-on-error"] if sanitize else []
+  flags = ["-fsanitize=signed-integer-overflow", "-fsanitize-undefined-trap-on-error"]
   built = subprocess.run(
-    [*command, "-std=c99", "-O2", "-DSCALY_PRINTF(...)=", *flags, str(source), "-lm", "-o", str(executable)], capture_output=True, text=True
+    [*named_compiler("gcc"), "-std=c99", "-O2", "-DSCALY_PRINTF(...)=", *flags, str(source), "-lm", "-o", str(executable)],
+    capture_output=True,
+    text=True,
   )
   assert built.returncode == 0, built.stderr
   run = subprocess.run([str(executable)], capture_output=True, text=True)

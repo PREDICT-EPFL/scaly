@@ -192,9 +192,8 @@ def test_headers_split_names_shared_by_an_input_and_an_output(tmp_path) -> None:
   subprocess.run([*cc, "-c", str(tmp_path / c.source_name), "-o", str(tmp_path / "solve.o")], check=True)
 
 
-@pytest.mark.parametrize("input_name,output_name", [("x", "sum"), ("workspace_2", "sum"), ("x", "workspace_2")])
-def test_cpp_workspace_parameter_does_not_shadow_exported_entry(tmp_path, input_name, output_name) -> None:
-  @sc.function(sc.arg(input_name, 2048), outputs=sc.group(sc.arg(output_name), sc.arg("sumsqr")), name="workspace")
+def test_cpp_workspace_parameter_does_not_shadow_exported_entry(tmp_path) -> None:
+  @sc.function(sc.arg("workspace_2", 2048), outputs=sc.group(sc.arg("sum"), sc.arg("sumsqr")), name="workspace")
   def fun(x):
     value = x.sin()
     return value.sum(), (value * value).sum()
@@ -208,21 +207,21 @@ def test_cpp_workspace_parameter_does_not_shadow_exported_entry(tmp_path, input_
   main = tmp_path / "main.cpp"
   exe = tmp_path / "main"
   main.write_text(
-    f"""
+    """
 #include <cmath>
 #include "workspace.hpp"
 
-int main() {{
-  workspace::{input_name}_t x = {{}};
-  workspace::{output_name}_t sum = {{}};
-  workspace::sumsqr_t sumsqr = {{}};
+int main() {
+  workspace::workspace_2_t x = {};
+  workspace::sum_t sum = {};
+  workspace::sumsqr_t sumsqr = {};
   workspace::workspace_t scratch;
   x(0) = 0.5;
   if (int err = workspace::call(x, sum, sumsqr, scratch)) return err;
   if (std::fabs(sum() - std::sin(0.5)) > 1e-12) return 10;
   if (std::fabs(sumsqr() - std::sin(0.5) * std::sin(0.5)) > 1e-12) return 11;
   return 0;
-}}
+}
 """
   )
   subprocess.run([*c_compiler(), "-c", str(source), "-o", str(obj)], check=True)

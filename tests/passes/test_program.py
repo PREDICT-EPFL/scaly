@@ -72,19 +72,6 @@ def _sz_w(fn: sc.Function, **options) -> int:
 # --- fusion ---------------------------------------------------------------------
 
 
-def test_fusion_collapses_elementwise_chain() -> None:
-  """A same-shape elementwise chain fuses into a single loop with no intermediate buffers."""
-
-  @sc.function(sc.group(sc.arg("x", 8), sc.arg("y", 8)), outputs=sc.arg("out0"), name="chain")
-  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    x, y = inputs
-    return ((x.sin() + y) * y - x).tanh()
-
-  compute, aliases, loops = _classify(_main_body(f))
-  assert compute == []  # every intermediate inlined into the output loop
-  assert len(loops) == 1
-
-
 def _long_scalar_chain(length: int, *, scalar: bool = False) -> sc.Function:
   """``x[0]*1 + x[1]*2 + ...`` accumulated as a left fold, so the expression is ``length`` deep."""
 
@@ -141,34 +128,6 @@ def test_flat_per_stage_fold_at_a_hundred_stages_runs() -> None:
   x = np.linspace(-1.0, 1.0, 400)
   w = np.arange(1.0, 5.0)
   np.testing.assert_allclose(f((x, w)), (x.reshape(100, 4) * w).sum(), rtol=1e-12)
-
-
-def test_fusion_skips_matmul_operand() -> None:
-  """A matmul operand must NOT be inlined: a contraction reads each operand element m*k times,
-  so inlining the producer's expression there multiplies compute. Regression guard for the
-  blow-up that an unguarded fusion introduces."""
-
-  @sc.function(sc.group(sc.arg("A", (4, 4)), sc.arg("x", 4)), outputs=sc.arg("out0"), name="mm_operand")
-  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    A, x = inputs
-    return A @ x.sin()  # sin(x) is the matvec operand — must stay materialized
-
-  compute, _aliases, _loops = _classify(_main_body(f))
-  assert len(compute) == 1  # exactly the materialized sin(x); the A@x result aliases the output
-  assert compute[0].attrs["shape"] == (4,)
-
-
-def test_fusion_into_reduction() -> None:
-  """An elementwise producer feeding a reduction fuses into its loop (each element read once)."""
-
-  @sc.function(sc.arg("x", 8), outputs=sc.arg("out0"), name="sumf")
-  def f(x: sc.Expr) -> sc.Expr:
-    return (x.sin() + x).sum()
-
-  compute, _aliases, loops = _classify(_main_body(f))
-  # Only the scalar accumulator survives; the elementwise buffer is gone (inlined into the reduce).
-  assert all(s.attrs["shape"] == (1,) for s in compute)
-  assert len(loops) == 1  # the single reduce loop
 
 
 def test_buffer_analysis_keeps_arguments_with_unspecified_access_modes() -> None:

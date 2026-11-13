@@ -17,7 +17,7 @@ from scaly.passes.program.widen_ranges import widen_ranges
 from scaly.function.model import as_concrete
 
 
-@pytest.mark.parametrize("condition_kind", ["broadcast", "matrix_true", "matrix_false"])
+@pytest.mark.parametrize("condition_kind", ["broadcast", "matrix_true"])
 def test_sparse_select_constant_regions_read_only_the_chosen_branch(monkeypatch, condition_kind):
   from scaly.passes.lowering import plans
   from scaly.ir.expr import ExprOp

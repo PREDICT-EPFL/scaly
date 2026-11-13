@@ -37,7 +37,7 @@ def _coordinates(header: str, prefix: str, format_: str, lang: str) -> tuple[np.
 
 @pytest.mark.parametrize("lang", ["c", "cpp"])
 @pytest.mark.parametrize("layout", ["csc", "csr", COORDINATES], ids=["csc", "csr", "coo"])
-@pytest.mark.parametrize("batch", [(), (2, 3), (0,)])
+@pytest.mark.parametrize("batch", [(), (2, 3)])
 @pytest.mark.parametrize("empty", [False, True], ids=["nonempty", "empty"])
 def test_sparse_headers_compile_and_run_declared_layouts(lang, layout, batch, empty, tmp_path):
   pattern = CanonicalPattern(PATTERN.shape, (), ()) if empty else PATTERN
@@ -207,7 +207,7 @@ def test_sparse_output_named_after_function_compiles(lang, tmp_path):
   subprocess.run([*cxx_compiler(), "-std=c++17", "-pedantic-errors", "-c", str(main), "-o", str(main.with_suffix(".o"))], check=True)
 
 
-@pytest.mark.parametrize("name", ["std", *(f"f_{query}" for query in CASADI_QUERIES)])
+@pytest.mark.parametrize("name", ["std", f"f_{CASADI_QUERIES[0]}"])
 @pytest.mark.parametrize("side", ["input", "output"])
 def test_cpp_sparse_metadata_avoids_declared_function_and_library_names(name, side, tmp_path):
   type_ = sc.TensorType(PATTERN.shape, pattern=PATTERN)

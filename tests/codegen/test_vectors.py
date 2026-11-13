@@ -79,6 +79,7 @@ def _evaluate(function, x, count):
   return y
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("compiler", ["gcc", "clang", "zig"])
 @pytest.mark.parametrize("dialect", ["gnu", "c"])
 @pytest.mark.parametrize("lanes", [1, 2, 4, 8])

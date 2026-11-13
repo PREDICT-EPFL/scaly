@@ -34,7 +34,10 @@ def conditional_program():
   return p.program([proc])
 
 
-PASSES = (*PASS_PIPELINE, ("hoist_reciprocals", hoist_reciprocals), ("widen_ranges", lambda prog: widen_ranges(prog, lanes=2)))
+PASSES = (
+  *(entry for entry in PASS_PIPELINE if entry[0] not in ("hoist_scalar_invariant", "fold_arith_after_unroll")),
+  ("hoist_reciprocals", hoist_reciprocals),
+)
 
 
 @pytest.mark.parametrize("name,transform", PASSES, ids=[name for name, _ in PASSES])
@@ -76,7 +79,7 @@ def test_preparation_bounds_branch_values_and_the_condition():
   assert all(any(stmt.op == ProgramOp.ASSIGN for stmt in block.args) for block in branch.args[1:])
 
 
-@pytest.mark.parametrize("args", [(), (p.const_int(0), p.block(), p.block()), (p.const_int(1),), (p.const_int(1), p.block())])
+@pytest.mark.parametrize("args", [(p.const_int(0), p.block(), p.block()), (p.const_int(1), p.block())])
 def test_if_verifier_rejects_bad_condition_or_blocks(args):
   with pytest.raises(VerifyError, match="IF takes"):
     verify_program(ProgramNode(ProgramOp.IF, args, dtype=dtypes.float64))

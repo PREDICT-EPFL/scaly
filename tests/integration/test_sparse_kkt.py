@@ -15,6 +15,7 @@ from scaly.passes.lowering import lower_function
 DATA = Path(__file__).with_name("data") / "maros_meszaros"
 PROBLEMS = sorted(p.stem for p in DATA.glob("*.npz") if not p.stem.endswith("_patterns"))
 assert len(PROBLEMS) == 48
+FAST_PROBLEMS = {"HS21", "HS35MOD", "HS51", "HS118", "HS268", "CVXQP2_S", "QAFIRO", "LOTSCHD", "DUAL4", "DUALC1", "PRIMALC2", "QPCBLEND", "QSHARE2B"}
 
 
 def _problem(name):
@@ -61,7 +62,7 @@ def _check_buffers(program, budget, full_sizes):
       assert size not in full_sizes
 
 
-@pytest.mark.parametrize("name", PROBLEMS)
+@pytest.mark.parametrize("name", [pytest.param(name, marks=() if name in FAST_PROBLEMS else pytest.mark.slow) for name in PROBLEMS])
 def test_maros_meszaros_kkt_and_products_without_dense_matrix_buffers(name):
   P, A, G = _problem(name)
   n, p, m = P.shape[0], A.shape[0], G.shape[0]

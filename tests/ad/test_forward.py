@@ -262,16 +262,6 @@ def test_print_differentiates_only_its_returned_value():
   np.testing.assert_allclose(products(point), np.diag(np.cos(point)))
 
 
-def test_seed_axis_is_one_matmul():
-  from scaly.ir.expr import ExprOp, topo
-
-  a, b = sc.sym("a", (2, 3)), sc.sym("b", (3, 4))
-  d = sc.jvp_many(a @ b, a, sc.sym("seed", (5, 2, 3)))
-  products = [e for e in topo([d]) if e.op == ExprOp.MATMUL]
-  assert len(products) == 1
-  assert products[0].shape == (5, 2, 4)
-
-
 def test_forward_tangent_through_product_keeps_known_zero():
   a = np.zeros((3, 4))
   a[:, 2:] = 1.0

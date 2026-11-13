@@ -117,6 +117,7 @@ def _workload(n: int, entries: int) -> None:
   assert program
 
 
+@pytest.mark.slow
 def test_sparse_matrix_compiler_resource_gate() -> None:
   probe = subprocess.run(
     [

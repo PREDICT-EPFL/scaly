@@ -20,8 +20,10 @@ if TYPE_CHECKING:
   runner = run_race_cars
 
 
-@pytest.mark.parametrize("runner,problem", [(run_chain, "chain"), (run_race_cars, "race_cars")])
-@pytest.mark.parametrize("solver", [pytest.param("ipopt", marks=pytest.mark.solver("ipopt")), pytest.param("sqp", marks=pytest.mark.solver("sqp"))])
+@pytest.mark.parametrize("runner,problem", [(run_chain, "chain"), pytest.param(run_race_cars, "race_cars", marks=pytest.mark.slow)])
+@pytest.mark.parametrize(
+  "solver", [pytest.param("ipopt", marks=pytest.mark.solver("ipopt")), pytest.param("sqp", marks=[pytest.mark.solver("sqp"), pytest.mark.slow])]
+)
 def test_solver_backed_smoke_episode_writes_replay_and_harvest_artifacts(tmp_path: Path, runner: SmokeRunner, problem: str, solver: str) -> None:
   output = runner(smoke=True, out_dir=tmp_path, cli_args=["closed-loop", "--problem", problem, "--smoke"], solver=solver)
   assert output.name == f"{solver}+scaly"

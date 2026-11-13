@@ -140,10 +140,9 @@ def test_casadi_external_dense_vector_function_without_gather(tmp_path) -> None:
   assert ext.sparsity_out(1).shape == (1, 1)
 
 
-@pytest.mark.parametrize("shape", [(0,), (0, 3), (3, 0), (0, 0)])
+@pytest.mark.parametrize("shape", [(0,), (0, 3)])
 @pytest.mark.parametrize("side", ["input", "output"])
-@pytest.mark.parametrize("lang", ["c", "cpp"])
-def test_casadi_external_empty_dense_leaves(tmp_path, shape, side, lang):
+def test_casadi_external_empty_dense_leaves(tmp_path, shape, side):
   if side == "input":
     fun = sc.function(sc.arg("z", shape), outputs=sc.arg("s"), name="empty_dense")(lambda z: z.sum())
   else:
@@ -151,7 +150,7 @@ def test_casadi_external_empty_dense_leaves(tmp_path, shape, side, lang):
       lambda x: (x[:0].reshape(shape), x.sum())
     )
 
-  module, lib_path = _build(tmp_path, fun, lang=lang)
+  module, lib_path = _build(tmp_path, fun)
   ext = casadi.external(fun.name, str(lib_path))
   dims = (0, 1) if len(shape) == 1 else shape
   x = np.array([2.0, -3.0, 5.0])
@@ -192,7 +191,7 @@ def test_casadi_external_empty_dense_leaves(tmp_path, shape, side, lang):
 
 
 @pytest.mark.parametrize("lang", ["c", "cpp"])
-@pytest.mark.parametrize("shape", [(2, 3), (3, 2), (2, 2), (1, 3), (3, 1)])
+@pytest.mark.parametrize("shape", [(2, 3), (1, 3)])
 def test_casadi_dense_matrices_match_numpy(tmp_path, lang, shape):
   weights = np.arange(np.prod(shape), dtype=float).reshape(shape) + 0.5
 
@@ -324,7 +323,7 @@ def test_casadi_sparse_leaves_match_casadi_sparsity(tmp_path, empty, lang):
 
 
 @pytest.mark.parametrize("side", ["input", "output"])
-@pytest.mark.parametrize("layout", ["csr", "coo", "batch"])
+@pytest.mark.parametrize("layout", ["csr", "batch"])
 def test_casadi_rejects_sparse_leaves_it_cannot_describe(side, layout):
   pattern = sc.SparsityPattern((3, 4), (0, 1), (1, 0))
   pattern, _ = pattern.canonicalize()

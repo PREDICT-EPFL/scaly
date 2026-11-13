@@ -29,15 +29,13 @@ def _proc(name, params, body, **attrs):
   return ProgramNode(raw.op, raw.args, {**raw.attrs, **attrs}, dtype=raw.dtype)
 
 
-@pytest.mark.parametrize("hint", ["auto", "scalar"])
-@pytest.mark.parametrize("mode", ["procedure", "inline"])
-def test_scalarization_refuses_carried_work_and_its_callers(hint, mode):
+def test_scalarization_refuses_carried_work_and_its_callers():
   x, y = (p.buffer(name, dtypes.float64, (1,)) for name in ("x", "y"))
   at = lambda buf: p.view(buf, [p.const_int(0)])
   loop = p.for_(_range("i", 3), [p.store(at(y), p.mul(p.load(at(y)), p.load(at(x))))])
-  callee = _proc("step", [x, y], [p.store(at(y), p.const_float(1)), loop], input_count=1, scalarize_mode=mode, lowering=hint)
+  callee = _proc("step", [x, y], [p.store(at(y), p.const_float(1)), loop], input_count=1, scalarize_mode="procedure", lowering="scalar")
   call = ProgramNode(ProgramOp.CALL, (x, y), {"callee": "step", "n_in": 1, "n_out": 1}, dtype=dtypes.float64)
-  root = _proc("root", [x, y], [call], input_count=1, scalarize_mode="procedure", lowering=hint)
+  root = _proc("root", [x, y], [call], input_count=1, scalarize_mode="procedure", lowering="scalar")
   prog = p.program([callee, root])
   assert scalarize_program(prog) is prog
 

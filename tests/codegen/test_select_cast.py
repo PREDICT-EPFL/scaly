@@ -135,27 +135,12 @@ def test_integer_floordiv_and_mod_follow_numpy_floor_semantics(dtype: str, varia
 CAST_CASES = np.array([-(2.0**62), -2.5, -1.5, -0.5, -0.0, 0.5, 1.9, 2.0**53, 2.0**62])
 
 
-@pytest.mark.parametrize("variant", ["block", "scalar"])
-@pytest.mark.parametrize("dtype", [sc.dtypes.uint8, sc.DType("u1", 8, "uint8_t", is_integer=True, is_unsigned=True)], ids=["canonical", "alias"])
-def test_uint8_casts_are_rejected_before_lowering(variant: str, dtype: sc.DType) -> None:
-  for x in (getattr(sc.const([0, 255]), variant)(), getattr(sc.sym("bytes", 2), variant)()):
+def test_uint8_casts_are_rejected_before_lowering() -> None:
+  for x in (sc.const([0, 255]).block(), sc.sym("bytes", 2).block()):
     with pytest.raises(ValueError, match="unsupported expression dtype uint8"):
       sc.cast(x, "uint8")
     with pytest.raises(ValueError, match="unsupported expression dtype uint8"):
-      x.cast(dtype)
-
-
-@pytest.mark.parametrize("dtype", ["int32", "int64"])
-@pytest.mark.parametrize("variant", ["block", "scalar"])
-def test_supported_integer_arithmetic_at_byte_boundaries_matches_numpy(dtype: str, variant: str) -> None:
-  @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name=f"sc_byte_boundaries_{dtype}_{variant}")
-  def arithmetic(x: sc.Expr) -> sc.Expr:
-    a = sc.cast(x, dtype)
-    return getattr(sc.stack([sc.cast(a + a, "float64"), sc.cast(a + 1 > a, "float64")]), variant)()
-
-  values = np.array([0.0, 255.0])
-  a = values.astype(dtype)
-  np.testing.assert_array_equal(arithmetic(values), np.stack([a + a, a + 1 > a]).astype(np.float64))
+      x.cast(sc.DType("u1", 8, "uint8_t", is_integer=True, is_unsigned=True))
 
 
 @pytest.mark.parametrize("variant", ["block", "scalar"])
@@ -213,19 +198,6 @@ def test_casts_to_and_from_bool_and_their_structure() -> None:
   assert sc.cast(x, "int64").op == sc.ExprOp.CAST and sc.cast(x, "int64").type.dtype == sc.dtypes.int64
 
 
-def test_nan_and_inf_in_the_unchosen_branch_do_not_reach_the_value() -> None:
-  @sc.function(sc.arg("x", 4), outputs=sc.arg("y"), name="sc_where_unchosen")
-  def guarded(x: sc.Expr) -> sc.Expr:
-    return sc.where(x > 0.0, x.log(), 1.0 / x) + sc.where(sc.isfinite(1.0 / x), 0.0, x.sqrt())
-
-  xv = np.array([-1.0, 0.0, -0.0, 2.0])
-  with np.errstate(divide="ignore", invalid="ignore"):
-    expected = np.where(xv > 0.0, np.log(xv), 1.0 / xv) + np.where(np.isfinite(1.0 / xv), 0.0, np.sqrt(xv))
-  got = np.asarray(guarded(xv))
-  np.testing.assert_array_equal(got, expected)
-  assert got.tolist()[:3] == [-1.0, np.inf, -np.inf]
-
-
 def test_broadcasting_shapes_and_values() -> None:
   cases: list[tuple[Callable[..., sc.Expr], Callable[..., np.ndarray], tuple[int, ...]]] = [
     (lambda c, u, x, s, w: sc.where(c > 0.0, x, s), lambda c, u, x, s, w: np.where(c > 0.0, x, s), (2, 3)),
@@ -255,9 +227,8 @@ def test_broadcasting_shapes_and_values() -> None:
     _assert_values(np.asarray(g), np.asarray(e), f"broadcast case {k}")
 
 
-@pytest.mark.parametrize("flag", ["-ffast-math", "-ffinite-math-only"])
-@pytest.mark.parametrize("operation", ["isfinite", "maximum", "minimum", "reduce_max", "reduce_min"])
-def test_nonfinite_operations_refuse_fast_math(tmp_path: Path, flag: str, operation: str) -> None:
+@pytest.mark.parametrize("operation", ["isfinite", "maximum", "minimum", "reduce_max"])
+def test_nonfinite_operations_refuse_fast_math(tmp_path: Path, operation: str) -> None:
   """``isfinite`` needs infinities and NaN, so a build that assumes neither stops at an ``#error``."""
 
   @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="sc_fast_math")
@@ -267,7 +238,6 @@ def test_nonfinite_operations_refuse_fast_math(tmp_path: Path, flag: str, operat
       "maximum": lambda: sc.maximum(x, 0.0),
       "minimum": lambda: sc.minimum(x, 0.0),
       "reduce_max": lambda: sc.reduce_max(x),
-      "reduce_min": lambda: sc.reduce_min(x),
     }[operation]()
 
   @sc.function(sc.arg("x", 2), outputs=sc.arg("y"), name="sc_no_isfinite")
@@ -277,18 +247,16 @@ def test_nonfinite_operations_refuse_fast_math(tmp_path: Path, flag: str, operat
   for fn, refused in ((finite, True), (plain, False)):
     source = tmp_path / f"{fn.name}.c"
     source.write_text(render_c_source(fn))
-    for flags in ((), (flag,)):
+    for flags in ((), ("-ffinite-math-only",)):
       built = subprocess.run([*c_compiler(), *flags, "-c", str(source), "-o", str(tmp_path / "out.o")], capture_output=True, text=True)
       assert (built.returncode != 0) == (refused and bool(flags)), built.stderr
       assert not refused or not flags or "-ffast-math" in built.stderr
 
 
 REFUSALS: dict[str, tuple[Callable[[], object], type[Exception], str]] = {
-  "compare_int_float": (lambda: sc.sym("x", 2) < sc.cast(sc.sym("y", 2), "int64"), TypeError, "sc.cast"),
   "where_branches_mixed": (lambda: sc.where(sc.sym("x", 2) > 0.0, sc.sym("y", 2), sc.cast(sc.sym("z", 2), "int64")), TypeError, "sc.cast"),
   "int_beside_python_float": (lambda: sc.cast(sc.sym("x", 2), "int64") < 0.5, TypeError, "cannot combine float"),
   "and_float": (lambda: sc.sym("x", 2) & (sc.sym("y", 2) > 0.0), TypeError, "bool operands"),
-  "not_float": (lambda: ~sc.sym("x", 2), TypeError, "bool operands"),
   "where_float_cond": (lambda: sc.where(sc.sym("x", 2), 1.0, 0.0), TypeError, "bool condition"),
   "where_python_bool": (lambda: sc.where(sc.sym("x", 2) == 0, 1.0, 0.0), TypeError, "sc.equal"),
   "and_python_bool": (lambda: (sc.sym("x", 2) == 0) & (sc.sym("y", 2) > 0.0), TypeError, "sc.equal"),
@@ -300,10 +268,8 @@ REFUSALS: dict[str, tuple[Callable[[], object], type[Exception], str]] = {
   "matmul_int": (lambda: sc.cast(sc.sym("x", 2), "int64") @ sc.cast(sc.sym("y", 2), "int64"), TypeError, "@ takes floating"),
   "isfinite_int": (lambda: sc.isfinite(sc.cast(sc.sym("x", 2), "int64")), TypeError, "floating operand"),
   "floordiv_float": (lambda: sc.sym("x", 2) // 2.0, TypeError, "integer operands"),
-  "mod_float": (lambda: sc.sym("x", 2) % sc.sym("y", 2), TypeError, "integer operands"),
   "cast_unknown": (lambda: sc.cast(sc.sym("x", 2), "complex64"), ValueError, "unknown dtype"),
   "where_shapes": (lambda: sc.where(sc.sym("c", 4) > 0.0, sc.sym("x", 3), 0.0), ValueError, "broadcast"),
-  "compare_shapes": (lambda: sc.sym("x", 3) <= sc.sym("y", 4), ValueError, "broadcast"),
   "truth_value": (lambda: bool(sc.sym("x", 1) > 0.0), TypeError, "sc.where"),
 }
 

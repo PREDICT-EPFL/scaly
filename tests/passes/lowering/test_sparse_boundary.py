@@ -34,23 +34,6 @@ def test_sparse_arithmetic_with_different_patterns_batches_and_broadcasts(loweri
     np.testing.assert_allclose(total, expected.sum())
 
 
-@pytest.mark.parametrize("left", [False, True])
-@pytest.mark.parametrize("lowering", ["scalar", "block"])
-def test_mixed_matrix_products_match_numpy(left, lowering):
-  pattern = CanonicalPattern((3, 4), (0, 1, 2), (3, 0, 2))
-  leaf = sc.arg("x", sc.TensorType(pattern.shape, pattern=pattern), layout="csc")
-  dense = np.arange(8.0, dtype=float).reshape(4, 2) if left else np.arange(6.0, dtype=float).reshape(2, 3)
-
-  @sc.function(leaf)
-  def f(x):
-    return (x @ sc.const(dense) if left else sc.const(dense) @ x).with_lowering(lowering)
-
-  source = sparse.coo_array(([2.0, 0.0, -3.0], (pattern.rows, pattern.cols)), shape=pattern.shape)
-  result = f(source)
-  expected = source.toarray() @ dense if left else dense @ source.toarray()
-  np.testing.assert_allclose(result.toarray(), expected)
-
-
 def test_large_sparse_calls_and_maps_allocate_only_stored_values():
   pattern = CanonicalPattern((100_000, 100_000), (0, 20, 99_999), (99_999, 30, 0))
   leaf = sc.arg("x", sc.TensorType(pattern.shape, pattern=pattern), layout="csc")

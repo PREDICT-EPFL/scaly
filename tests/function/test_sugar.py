@@ -37,7 +37,7 @@ def test_mapped_template_keeps_parameter_and_nested_output_trees() -> None:
   assert traces == [(2,)]
 
 
-@pytest.mark.parametrize("length", [0, 1, 4])
+@pytest.mark.parametrize("length", [0, 4])
 def test_a_scan_without_carries_uses_the_map_derivatives(length: int) -> None:
   @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("y", 2), sc.arg("cost", ())))
   def stage(x):

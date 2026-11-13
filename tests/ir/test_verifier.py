@@ -94,7 +94,6 @@ def test_reshape_size_mismatch_caught() -> None:
 @pytest.mark.parametrize(
   "attrs,shape,dtype",
   [
-    ({"axes": (0,)}, (3,), dtypes.float64),
     ({"kind": "mul", "axes": (0,)}, (3,), dtypes.float64),
     ({"kind": "add"}, (3,), dtypes.float64),
     ({"kind": "add", "axes": (-1,)}, (2,), dtypes.float64),

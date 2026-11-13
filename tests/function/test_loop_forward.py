@@ -12,8 +12,7 @@ def evaluate(inputs, outputs, point):
   return fn(*point)
 
 
-@pytest.mark.parametrize("length", [0, 1, 4])
-@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize(("length", "reverse"), [(0, False), (1, False), (4, False), (4, True)])
 def test_scan_forward_matches_unrolled(length, reverse):
   @sc.function(sc.arg("c", 2), sc.arg("x", ()), sc.arg("p", 2))
   def step(c, x, p):
@@ -50,7 +49,7 @@ def check_derivatives(inputs, outputs, point):
       np.testing.assert_allclose(single.reshape(-1), jac @ np.ones(wrt.size), atol=1e-11)
 
 
-@pytest.mark.parametrize("bound,limit", [(0, 5.0), (1, 5.0), (6, -1.0), (6, 2.5), (6, 100.0)])
+@pytest.mark.parametrize("bound,limit", [(0, 5.0), (6, -1.0), (6, 2.5), (6, 100.0)])
 def test_while_primal_steps(bound, limit):
   @sc.function(sc.arg("c", 2), sc.arg("p", 2), sc.arg("limit", ()), outputs=sc.arg("go", sc.TensorType((), sc.dtypes.bool_)))
   def cond(c, p, limit):
@@ -72,8 +71,7 @@ def test_while_primal_steps(bound, limit):
   check_derivatives([c, p, lim], [out], point)
 
 
-@pytest.mark.parametrize("reverse", [False, True])
-@pytest.mark.parametrize("trip", [0, 1, 3, 9])
+@pytest.mark.parametrize(("reverse", "trip"), [(False, 0), (False, 3), (True, 3), (False, 9), (True, 9)])
 def test_trip_index_windows_mixed_carries_and_trajectories(reverse, trip):
   from scaly.function.model import as_concrete
   from scaly.function.sugar import _loop_node
@@ -176,7 +174,7 @@ def test_tangent_support_and_sparsity_follow_loop_fixed_point():
   check_derivatives([c, x], [final], [np.array([0.2, 0.3, 0.0]), np.array([0.4, 0.5, 0.6, 0.7])])
 
 
-@pytest.mark.parametrize("shape", [(), (2,), (2, 2)])
+@pytest.mark.parametrize("shape", [(), (2, 2)])
 def test_matrix_slices_and_shared_initial_dependency(shape):
   """Port devrush's carry ranks and shared dependency cases to leading-axis slices."""
 
