@@ -25,7 +25,7 @@ import numpy as np
 
 import scaly as sc
 from scaly.codegen.aot import render_c_module
-from scaly.codegen.external import compile_library, prepare_library
+from scaly.codegen.external import compile_library, link_flags, prepare_library
 from scaly.solvers.paths import solver_loadable, solver_paths
 from benchmarks.harness import (
   CLOSED_LOOP_PAIRS,
@@ -166,7 +166,7 @@ def _solver_call_smoke(required: bool) -> str | None:
     compiler = gbench.c_compiler()
     builds = tuple(prepare_library(library, compiler) for library in module._libraries)
     library_objects.extend(obj for build in builds for obj in compile_library(build, compiler))
-    for flag in (*module.recipe.link_flags, *(flag for build in builds for flag in build.link_flags)):
+    for flag in (*module.recipe.link_flags, *link_flags(builds)):
       if flag not in flags:
         flags.append(flag)
   cpp = out_dir / "solver_smoke.cpp"

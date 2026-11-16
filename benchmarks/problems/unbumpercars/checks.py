@@ -416,9 +416,9 @@ def check_exact_hess_matches_casadi_on_closed_loop_samples() -> None:
     p = np.concatenate([bar_x, u_des, weights.packed, physics, dt])
     hess_fn = cast(ConcreteFunction, scaly_filt.hess_fn)
     hess_inputs = (z, (bar_x, u_des, weights.packed, physics, dt), (np.array(1.0), lam))
-    scaly_values = np.asarray(hess_fn(*hess_inputs), dtype=np.float64).reshape(-1)
+    scaly_values = hess_fn(*hess_inputs)
     casadi_dense = np.asarray(casadi_filt.hess_fn(z, p, 1.0, lam), dtype=np.float64)
-    np.testing.assert_allclose(scaly_values, casadi_dense[scaly_filt.hess_rows, scaly_filt.hess_cols], rtol=1e-8)
+    np.testing.assert_allclose(scaly_values.data, casadi_dense[scaly_values.coords], rtol=1e-8)
     sim.step(safe)
 
 
