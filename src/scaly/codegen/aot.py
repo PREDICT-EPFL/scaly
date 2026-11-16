@@ -10,7 +10,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from scaly.codegen.external import LibraryBuild, export_libraries, libraries_of, prepare_library
+from scaly.codegen.external import LibraryBuild, export_libraries, libraries_of, link_flags, prepare_library
 from scaly.function.extern import CLibrary
 from scaly.codegen.toolchain import find_c_compiler, BuildRecipe, CPU_LEVELS, CDialect, CpuLevel, LaneCount, VectorLibm
 from scaly.codegen.abi import (
@@ -123,7 +123,7 @@ class CModule:
   @cached_property
   def link_flags(self) -> tuple[str, ...]:
     """Resolved external-library and math linker flags for the current toolchain."""
-    return (*self.recipe.link_flags, *(flag for build in self._library_builds for flag in build.link_flags))
+    return (*self.recipe.link_flags, *link_flags(self._library_builds))
 
 
 class RenderObserver(Protocol):

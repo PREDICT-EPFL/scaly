@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from .abi import c_ident
-from .external import LibraryBuild, compile_library, libraries_of, prepare_library
+from .external import LibraryBuild, compile_library, libraries_of, link_flags, prepare_library
 from .aot import _RENDER_OBSERVERS, CModule, render_c_module
 from .solver import solver_stats_symbols, solver_functions
 from ..ir.layout import DenseLayout, SparseLayout
@@ -389,10 +389,10 @@ def _index_key(fun: ConcreteFunction, compiler: Compiler) -> str | None:
   recipe = _host_recipe(compiler.command)
   try:
     libraries = tuple(prepare_library(library, compiler.command) for library in libraries_of(fun))
-    link_flags = (*recipe.link_flags, *(flag for library in libraries for flag in library.link_flags))
+    flags = (*recipe.link_flags, *link_flags(libraries))
   except (OSError, subprocess.CalledProcessError):
     return None  # rendering says what is missing
-  command = _compile_command(compiler.command, recipe, link_flags, "module.c", "module" + shared_lib_ext(), external=bool(libraries))
+  command = _compile_command(compiler.command, recipe, flags, "module.c", "module" + shared_lib_ext(), external=bool(libraries))
   libc = platform.libc_ver() if recipe.vector_libm == "glibc" else ()
   toolchain = _toolchain(fun, compiler, libraries)
   return _hash_parts(_JIT_CACHE_VERSION, _scaly_version(), source, graph, repr(recipe), toolchain, *libc, *command)
