@@ -236,8 +236,9 @@ def solve_triangular(T: Any, b: Any, *, lower: bool, trans: bool = False, unit_d
   """Solve ``T x = b``, or ``T^T x = b`` with ``trans``, for a triangular ``T``.
 
   ``T`` is a float64 square matrix, or a stack of them over leading axes. ``lower`` has no
-  default, since SciPy's default reads the upper triangle. Only the triangle that ``lower`` names is read, and its diagonal only when ``unit_diagonal`` is false. With
-  ``unit_diagonal`` the diagonal is taken as ones. ``b`` is one right-hand side, shaped
+  default, since SciPy's default reads the upper triangle. Only the triangle that ``lower``
+  names is read, and its diagonal only when ``unit_diagonal`` is false. With ``unit_diagonal``
+  the diagonal is taken as ones. ``b`` is one right-hand side, shaped
   ``(*batch, n)``, or several as the columns of ``(*batch, n, k)``, and ``x`` has its shape.
   A zero diagonal entry gives infinities or NaN in ``x``.
 
