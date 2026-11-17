@@ -74,9 +74,13 @@ class LibraryBuild:
   flags: tuple[str, ...]
   links: tuple[LinkedLibrary, ...]
 
-  @property
-  def link_flags(self) -> tuple[str, ...]:
-    return tuple(flag for link in self.links for flag in link.flags)
+
+def link_flags(builds: tuple[LibraryBuild, ...]) -> tuple[str, ...]:
+  """The builds' linker flags, each kept once at its last position, which still follows everything that needs it.
+
+  zig's Mach-O linker loads a library once per mention, and dyld refuses a module that loads one twice."""
+  flags = [flag for build in builds for link in build.links for flag in link.flags]
+  return tuple(reversed(dict.fromkeys(reversed(flags))))
 
 
 def prepare_library(library: CLibrary, compiler: tuple[str, ...]) -> LibraryBuild:

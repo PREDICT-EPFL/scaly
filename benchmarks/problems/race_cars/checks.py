@@ -160,8 +160,8 @@ def check_default_constants() -> None:
   """Regression pin on the full-size Formula Student defaults; any constant edit changes these."""
   horizon = 1
   solver = _race_car_nlp(EpisodeConfig(horizon=horizon))
-  fn, sparsity = as_concrete(solver.function).descriptor.jac, as_concrete(solver.function).descriptor.jac_sparsity
-  assert isinstance(fn, ConcreteFunction) and sparsity is not None
+  fn = as_concrete(solver.function).descriptor.jac
+  assert isinstance(fn, ConcreteFunction)
   rng = np.random.default_rng(0)
   zv = rng.normal(size=NZ * (horizon + 1))
   pv = np.zeros(n_param(horizon))
@@ -176,8 +176,7 @@ def check_default_constants() -> None:
       [0.0, 0.0, 0.0, 0.6984639883035602, 0.0008885917405503103, 0.0021584335486474196, 0.0, 0.0, 0.0, -1.0],
     ]
   )
-  actual = np.zeros(sparsity.shape)
-  actual[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = np.asarray(fn(zv, pv)).reshape(-1)
+  actual = fn(zv, pv).toarray()
   reference = race_car_constraint_jac_dense_reference(horizon, zv, pv)
   np.testing.assert_allclose(actual, reference, rtol=1e-12, atol=1e-12)
   np.testing.assert_allclose(actual[: expected.shape[0]], expected, rtol=1e-12, atol=1e-12)
@@ -214,12 +213,8 @@ def check_mapped_cost_matches_casadi() -> None:
     expected = reference(zv, pv)
     np.testing.assert_allclose(descriptor.base(zv, pv)[0], np.asarray(expected[0]).reshape(-1), rtol=1e-12, atol=1e-12)
     np.testing.assert_allclose(descriptor.grad(zv, pv), np.asarray(expected[1]).reshape(-1), rtol=1e-12, atol=1e-12)
-    sparsity = descriptor.hess_sparsity
-    assert descriptor.hess is not None and sparsity is not None
-    actual = np.zeros(sparsity.shape)
-    actual[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = np.asarray(
-      descriptor.hess(zv, pv, (np.array(1.0), np.zeros(NX * (horizon + 1) + 2 * horizon)))
-    ).reshape(-1)
+    assert descriptor.hess is not None
+    actual = descriptor.hess(zv, pv, (np.array(1.0), np.zeros(NX * (horizon + 1) + 2 * horizon))).toarray()
     actual += np.tril(actual, -1).T
     np.testing.assert_allclose(actual, np.asarray(expected[2]), rtol=1e-12, atol=1e-12)
 

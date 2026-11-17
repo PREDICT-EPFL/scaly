@@ -812,8 +812,7 @@ class ScalyDTCBFSafetyFilter:
     self.hess_fn = descriptor.hess
     hess_sp = descriptor.hess_sparsity
     assert self.jac_sparsity is not None and hess_sp is not None
-    self.hess_rows = np.asarray(hess_sp.rows, dtype=np.int32)
-    self.hess_cols = np.asarray(hess_sp.cols, dtype=np.int32)
+    self.hess_nnz = hess_sp.nnz
     self._build_ms = (time.perf_counter() - t0) * 1000.0
     self._warm_compile()
 
@@ -936,7 +935,7 @@ class ScalyDTCBFSafetyFilter:
           "build_ms": self._build_ms,
           "compile_ms": dict(self._compile_ms),
           "jac_nnz": int(self.jac_sparsity.nnz),
-          "hess_nnz": int(self.hess_rows.size),
+          "hess_nnz": int(self.hess_nnz),
           "native_status": stats.native_status,
           "raw_success": raw_success,
           "retried_with_l1": len(attempt_stats) > 1,

@@ -186,6 +186,9 @@ def test_two_solver_wrappers_in_one_translation_unit() -> None:
   tv = np.array([1.0, -2.0])
   # qp_a: x = -c / diag(P) = [-0.5, 0.5]; qp_b: x = [-t1, t0] = [2, 1].
   np.testing.assert_allclose(host(tv), [1.5, 1.5], atol=1e-7)
+  # zig's Mach-O linker loads a library once per mention, and dyld rejects the duplicate
+  flags = sc.codegen.render_c_module(host).link_flags
+  assert len(flags) == len(set(flags)), flags
 
 
 @pytest.mark.solver("sqp")
