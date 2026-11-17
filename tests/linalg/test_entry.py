@@ -29,7 +29,7 @@ def test_solve_and_its_gradient_over_a_stage_axis() -> None:
     sc.arg("K", (3, N, N)), sc.arg("b", (3, N, 2)), outputs=sc.group(sc.arg("x", (3, N, 2)), sc.arg("status", status_type), sc.arg("c", ()))
   )
   def solve(K, b):
-    x, status = linalg.solve(K, b)
+    x, status = linalg.solve(K, b, assume="pos")
     return x, status, 0.5 * sc.sumsqr(x)
 
   x, status, _ = solve(k, b)
@@ -49,7 +49,7 @@ def test_solve_derivatives_match_the_unrolled_reference() -> None:
 
   @sc.function(sc.arg("p", size), outputs=outputs)
   def solve(p):
-    x = linalg.solve(p[: N * N].reshape((N, N)), p[N * N :])[0]
+    x = linalg.solve(p[: N * N].reshape((N, N)), p[N * N :], assume="pos")[0]
     return x, _cost(x)
 
   @sc.function(sc.arg("p", size), outputs=outputs)
@@ -67,7 +67,7 @@ def test_a_value_and_its_gradient_share_one_factorization() -> None:
 
   @sc.function(sc.arg("K", (N, N)), sc.arg("b", N))
   def value_and_gradient(K, b):
-    x = linalg.solve(K, b)[0]
+    x = linalg.solve(K, b, assume="pos")[0]
     value = _cost(x)
     return value, *sc.vjp((value,), (K, b), (sc.const(1.0),))
 
@@ -98,6 +98,10 @@ def test_solve_checks_its_arguments() -> None:
   with pytest.raises(ValueError, match="assume must be one of"):
     linalg.solve(k, b, assume="sym")
   with pytest.raises(ValueError, match="right-hand side has shape"):
-    linalg.solve(k, sc.sym("c", N + 1))
+    linalg.solve(k, sc.sym("c", N + 1), assume="pos")
   with pytest.raises(TypeError, match="dense matrix"):
-    linalg.solve(sc.sparsify(sc.sym("S", (N, N)) * sc.const(np.eye(N))), b)
+    linalg.solve(sc.sparsify(sc.sym("S", (N, N)) * sc.const(np.eye(N))), b, assume="pos")
+  with pytest.raises(ValueError, match="right-hand side has shape"):
+    linalg.solve(k, sc.sym("s", ()), assume="pos")
+  with pytest.raises(TypeError, match="float64 matrix"):
+    linalg.solve(sc.sym("F", (N, N), dtype=sc.dtypes.float32), b, assume="pos")

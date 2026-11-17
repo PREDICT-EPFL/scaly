@@ -174,7 +174,7 @@ def test_reverse_over_reverse_matches_forward_over_reverse(routine) -> None:
   @sc.function(sc.arg("p", N * N + N), outputs=sc.arg("c", ()))
   def cost(p):
     a = p[: N * N].reshape((N, N))
-    x = linalg.solve_triangular(a, p[N * N :]) if routine == "triangular" else linalg.cholesky(a)[0].reshape((N * N,))
+    x = linalg.solve_triangular(a, p[N * N :], lower=True) if routine == "triangular" else linalg.cholesky(a)[0].reshape((N * N,))
     return _cost(x)
 
   gradient = sc.gradient(cost, "c", "p")
@@ -191,7 +191,7 @@ def test_reverse_over_reverse_matches_forward_over_reverse(routine) -> None:
 def test_the_primal_loops_update_their_carries_in_place() -> None:
   @sc.function(sc.arg("K", (N, N)), sc.arg("b", N), outputs=sc.arg("x", N))
   def solve(K, b):
-    return linalg.solve(K, b)[0]
+    return linalg.solve(K, b, assume="pos")[0]
 
   procedures = set(re.findall(r"(\w+?)_\d+x\d+\w*?_inplace\w*_raw\(", render_c_source(solve)))
   assert procedures == {"cholesky_column", "solve_triangular_lnn_row", "solve_triangular_ltn_row"}
