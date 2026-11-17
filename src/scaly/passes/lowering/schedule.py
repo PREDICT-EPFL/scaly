@@ -22,6 +22,7 @@ def emit_reduction(
   kind: str = "add",
   batch_axes: int = 0,
   identity: ProgramNode | None = None,
+  delinearize: bool = False,
 ) -> None:
   """Use four scalar output lanes for unit-stride reductions, otherwise put reduction axes first.
 
@@ -51,7 +52,7 @@ def emit_reduction(
   carried = any(r.attrs.get("carried") for r in outputs)
   if strided and not loaded and not carried:
     ctx.emit(outputs, [p.store(target, identity)])
-    ctx.emit([*outputs[:batch_axes], *reductions, *outputs[batch_axes:]], [p.store(target, combine(p.load(target), value))])
+    ctx.emit([*outputs[:batch_axes], *reductions, *outputs[batch_axes:]], [p.store(target, combine(p.load(target), value))], delinearize=delinearize)
     return
 
   def emit(outer: Sequence[ProgramNode], coordinates: Sequence[ProgramNode] = ()) -> None:
@@ -60,9 +61,10 @@ def emit_reduction(
     accumulators = [accumulator() for _ in values]
     updates = [p.assign(name, combine(acc, term)) for (name, acc, _), term in zip(accumulators, values, strict=True)]
     # An empty reduction must not remove its identity or final store.
-    loops = ctx.nest_body(reductions, updates)
+    ranges, updates = ctx.delinearize(reductions, updates, outer=outer) if delinearize else (reductions, updates)
+    loops = ctx.nest_body(ranges, updates)
     stores = [p.store(dst, acc) for dst, (_, acc, _) in zip(targets, accumulators, strict=True)]
-    ctx.emit(outer, [*(initial for _, _, initial in accumulators), *loops, *stores])
+    ctx.emit(outer, [*(initial for _, _, initial in accumulators), *loops, *stores], delinearize=delinearize)
 
   count = trip_count(outputs[-1]) if outputs else 1
   if count is not None and count >= 4 and not loaded and not carried:

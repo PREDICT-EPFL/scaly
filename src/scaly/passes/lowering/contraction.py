@@ -34,7 +34,13 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
   b_coords = [*batch_coords(b), k, coords[-1]] if len(b.shape) > 1 else [k]
   target = p.view(out, [_flat(node.shape, coords)])
   emit_reduction(
-    ctx, outputs, reductions, target, p.mul(ctx.read(a, a_coords), ctx.read(b, b_coords)), batch_axes=sum(dim != 1 for dim in node.shape[:batch_rank])
+    ctx,
+    outputs,
+    reductions,
+    target,
+    p.mul(ctx.read(a, a_coords), ctx.read(b, b_coords)),
+    batch_axes=sum(dim != 1 for dim in node.shape[:batch_rank]),
+    delinearize=node.id in ctx.permutes,
   )
 
 

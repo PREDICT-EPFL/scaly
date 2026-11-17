@@ -104,11 +104,12 @@ def test_single_consumer_chain_is_one_loop() -> None:
 
 
 @needs_cc
-def test_value_read_by_two_consumers_is_stored_once() -> None:
+def test_value_read_by_two_agreeing_consumers_is_computed_once() -> None:
   fn = _function("shared", ((16,),), lambda x: x.sin().exp() + x.sin().cos())
   proc = _lowered(fn)
   assert _work(proc, ProgramOp.SIN) == 16
-  assert len(_privates(proc)) == 1
+  assert not _privates(proc)
+  assert sum(s.op == ProgramOp.FOR for s in proc.args) == 1
   _check(fn, ((16,),), lambda x: np.exp(np.sin(x)) + np.cos(np.sin(x)))
 
 
@@ -146,20 +147,100 @@ def test_a_libm_call_is_not_duplicated_by_two_reads(expensive: bool) -> None:
   proc = _lowered(fn)
   if expensive:
     assert _work(proc, ProgramOp.SIN) == 8
-    assert len(_privates(proc)) == 1
+    assert not _privates(proc)
   else:
     assert not _privates(proc)
   _check(fn, ((8,),), (lambda x: np.sin(x) ** 2) if expensive else (lambda x: (3 * x) ** 2))
 
 
-def test_reused_selection_stores_only_the_selected_exp_values() -> None:
+@needs_cc
+@pytest.mark.parametrize("agreement", ["same", "coordinates", "domain"])
+def test_shared_producer_merges_only_agreeing_consumer_loops(agreement: str) -> None:
+  @sc.function(sc.arg("x", (4, 4)), outputs=sc.group(sc.arg("a"), sc.arg("b"), sc.arg("c")), name="agreement_" + agreement)
+  def fn(x):
+    shared = x.sin()
+    other = shared if agreement == "same" else shared.T if agreement == "coordinates" else shared[:2]
+    return shared.exp(), shared.cos(), other * 3.0
+
+  proc = _lowered(fn)
+  assert _work(proc, ProgramOp.SIN) == 16
+  if agreement == "same":
+    assert not _privates(proc)
+    assert sum(s.op == ProgramOp.FOR for s in proc.args) == 1
+  else:
+    assert len(_privates(proc)) == 1
+    assert sum(s.op == ProgramOp.FOR for s in proc.args) > 1
+  x = np.random.default_rng(69).uniform(-1, 1, (4, 4))
+  shared = np.sin(x)
+  other = shared if agreement == "same" else shared.T if agreement == "coordinates" else shared[:2]
+  for actual, expected in zip(fn(x), (np.exp(shared), np.cos(shared), other * 3.0), strict=True):
+    np.testing.assert_allclose(np.asarray(actual), expected, rtol=1e-13, atol=1e-14)
+
+
+@needs_cc
+def test_agreement_does_not_merge_consumers_across_a_buffer_dependency() -> None:
+  @sc.function(sc.arg("x", 8), name="agreement_boundary")
+  def boundary(x):
+    return x.cos().block()
+
+  @sc.function(sc.arg("x", 8), outputs=sc.group(sc.arg("a"), sc.arg("b")), name="agreement_dependency")
+  def fn(x):
+    shared = x.sin()
+    a = shared.exp()
+    return a, shared + boundary(a)
+
+  proc = _lowered(fn)
+  assert _work(proc, ProgramOp.SIN) == 8
+  assert len(_privates(proc)) == 2
+  x = np.linspace(-1, 1, 8)
+  a, b = fn(x)
+  np.testing.assert_allclose(np.asarray(a), np.exp(np.sin(x)), rtol=1e-13)
+  np.testing.assert_allclose(np.asarray(b), np.sin(x) + np.cos(np.exp(np.sin(x))), rtol=1e-13)
+
+
+@needs_cc
+def test_agreement_through_shared_gather_computes_only_selected_entries() -> None:
+  @sc.function(sc.arg("x", (3, 4)), outputs=sc.group(sc.arg("a"), sc.arg("b")), name="agreement_gather")
+  def fn(x):
+    selected = sc.gather(x.sin().T, [0, 5, 7, 11])
+    return selected.exp(), selected.cos()
+
+  proc = _lowered(fn)
+  assert not _privates(proc)
+  assert _work(proc, ProgramOp.SIN) == 4
+  assert sum(s.op == ProgramOp.FOR for s in proc.args) == 1
+  x = np.arange(12.0).reshape(3, 4) / 12
+  selected = np.sin(x).T.reshape(12)[[0, 5, 7, 11]]
+  a, b = fn(x)
+  np.testing.assert_allclose(np.asarray(a), np.exp(selected), rtol=1e-13)
+  np.testing.assert_allclose(np.asarray(b), np.cos(selected), rtol=1e-13)
+
+
+@needs_cc
+def test_agreement_between_two_groups_keeps_the_schedule_acyclic() -> None:
+  @sc.function(sc.arg("x", 8), outputs=sc.group(*(sc.arg(name) for name in ("a", "b", "c", "d"))), name="agreement_groups")
+  def fn(x):
+    p, q = x.sin(), x.cos()
+    a, d = p.exp(), q.exp()
+    return a, d + p, a + q, d
+
+  proc = _lowered(fn)
+  assert _work(proc, ProgramOp.SIN) == _work(proc, ProgramOp.COS) == 8
+  x = np.linspace(-1, 1, 8)
+  p, q = np.sin(x), np.cos(x)
+  a, d = np.exp(p), np.exp(q)
+  for actual, expected in zip(fn(x), (a, d + p, a + q, d), strict=True):
+    np.testing.assert_allclose(np.asarray(actual), expected, rtol=1e-13)
+
+
+def test_reused_selection_evaluates_exp_once_at_each_selected_entry() -> None:
   def body(x):
     picked = sc.gather(x.exp(), [3, 7])
     return picked * picked
 
   proc = _lowered(_function("reused_exp_selection", ((1000,),), body))
   assert _work(proc, ProgramOp.EXP) == 2
-  assert [buf.attrs["shape"] for buf in _privates(proc)] == [(2,)]
+  assert not _privates(proc)
 
 
 def test_reused_selection_of_an_input_needs_no_buffer() -> None:
@@ -275,6 +356,32 @@ def test_reduction_evaluates_its_operand_in_the_reduction_loop() -> None:
   assert not _privates(proc)
   assert _work(proc, ProgramOp.SIN) == 30
   _check(fn, ((5, 6),), lambda x: np.sin(x).sum(axis=1))
+
+
+@needs_cc
+@pytest.mark.parametrize("reader", ["reduce", "matmul", "concat"])
+def test_non_elementwise_readers_split_transpose_index_divisions(reader: str) -> None:
+  def body(x, y):
+    moved = x.sin().reshape((2, 6)).T.reshape((12,))
+    if reader == "reduce":
+      return moved.sum()
+    if reader == "matmul":
+      return moved.reshape((3, 4)) @ y
+    return sc.concat((moved, y))
+
+  def reference(x, y):
+    moved = np.sin(x).reshape(2, 6).T.reshape(12)
+    if reader == "reduce":
+      return moved.sum()
+    if reader == "matmul":
+      return moved.reshape(3, 4) @ y
+    return np.concatenate((moved, y))
+
+  fn = _function("non_elementwise_" + reader, ((3, 4), (4,)), body)
+  proc = _lowered(fn)
+  assert not [n for n in walk_program(proc) if n.op in (ProgramOp.DIV, ProgramOp.MOD)]
+  assert _work(proc, ProgramOp.SIN) == 12
+  _check(fn, ((3, 4), (4,)), reference)
 
 
 @needs_cc

@@ -40,7 +40,7 @@
 #define wide_SZ_RES 2
 #define wide_SZ_IW 0
 #define wide_SZ_W 0
-#define wide_FRAME_BYTES 5056
+#define wide_FRAME_BYTES 4736
 
 // The pointer ABI for wide.
 #ifdef __cplusplus
