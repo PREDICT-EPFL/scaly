@@ -208,7 +208,8 @@ def _strict_lower(n: int) -> np.ndarray:
 
 def _diagonal(M: Expr) -> Expr:
   """The diagonal of each matrix of ``M``, a vector over its last axis."""
-  return (M * Expr.const(np.eye(M.shape[-1]))).sum(-1)
+  n = M.shape[-1]
+  return gather(M.reshape((*M.shape[:-2], n * n)), _index(np.arange(n) * (n + 1)), axis=len(M.shape) - 2)
 
 
 @function(arg("s", ()), arg("k", _INDEX), arg("LD"), arg("v"), arg("i", _INDEX), name="ldl_dot")
