@@ -22,7 +22,7 @@ artifacts = ["src/scaly_fatrop/lib/*", "src/scaly_fatrop/include/**/*", "src/sca
 
 [tool.hatch.build.targets.sdist]
 include = ["/src/", "/hatch_build.py", "/native_build.py"]
-exclude = ["/src/*/lib/", "/src/*/include/", "/src/*/licenses/", "/src/*/native-inputs.sha256"]
+exclude = ["/src/*/lib/", "/src/*/include/", "/src/*/licenses/", "/src/*/native-inputs.sha256", "/src/*.libs/"]
 
 [tool.hatch.build.targets.sdist.force-include]
 "../solver_build.py" = "solver_build.py"
