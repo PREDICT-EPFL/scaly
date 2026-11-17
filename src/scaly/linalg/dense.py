@@ -198,44 +198,49 @@ _positive = custom_derivative(_positive_body, fwd=_positive_fwd, bwd=_positive_b
 
 
 def _unusable(pivot: Expr, diagonal: Expr) -> Expr:
-  """A pivot of either sign that is not greater in magnitude than eps times its diagonal entry, or is NaN."""
-  return ~(pivot.abs() > float(np.finfo(np.float64).eps) * diagonal.abs())
+  """A pivot of either sign not greater in magnitude than eps times its diagonal entry, or infinite, or NaN."""
+  return ~(pivot.abs() > float(np.finfo(np.float64).eps) * diagonal.abs()) | ~pivot.isfinite()
 
 
 def _strict_lower(n: int) -> np.ndarray:
   return np.tril(np.ones((n, n)), -1)
 
 
-@function(arg("s", ()), arg("k", _INDEX), arg("L"), arg("v"), arg("i", _INDEX), name="ldl_dot")
-def _ldl_dot(s: Expr, k: Expr, L: Expr, v: Expr, i: Expr) -> Expr:
-  return s + gather(L, i * L.shape[0] + k) * gather(v, k)
+def _diagonal(M: Expr) -> Expr:
+  """The diagonal of each matrix of ``M``, a vector over its last axis."""
+  return (M * Expr.const(np.eye(M.shape[-1]))).sum(-1)
 
 
-@function(arg("t", _INDEX), arg("L"), arg("v"), arg("A"), arg("j", _INDEX), name="ldl_entry")
-def _ldl_entry(t: Expr, L: Expr, v: Expr, A: Expr, j: Expr) -> tuple[Expr]:
-  n = L.shape[0]
+@function(arg("s", ()), arg("k", _INDEX), arg("LD"), arg("v"), arg("i", _INDEX), name="ldl_dot")
+def _ldl_dot(s: Expr, k: Expr, LD: Expr, v: Expr, i: Expr) -> Expr:
+  return s + gather(LD, i * LD.shape[0] + k) * gather(v, k)
+
+
+@function(arg("t", _INDEX), arg("LD"), arg("v"), arg("A"), arg("j", _INDEX), name="ldl_entry")
+def _ldl_entry(t: Expr, LD: Expr, v: Expr, A: Expr, j: Expr) -> tuple[Expr]:
+  n = LD.shape[0]
   i = j + t
-  s, _ = scan(_ldl_dot, Expr.const(0.0), (broadcast(L), broadcast(v), broadcast(i)), length=n, trip=j, index=True)
+  s, _ = scan(_ldl_dot, Expr.const(0.0), (broadcast(LD), broadcast(v), broadcast(i)), length=n, trip=j, index=True)
   return (gather(A, i * n + j) - s,)
 
 
-@function(arg("L"), arg("d"), arg("status", _INDEX), arg("j", _INDEX), arg("A"), name="ldl_column")
-def _ldl_column(L: Expr, d: Expr, status: Expr, j: Expr, A: Expr) -> tuple[Expr, Expr, Expr]:
-  """Column ``j`` of ``L`` and pivot ``d_j``, with ``v = d * L[j, :]`` shared by every row's dot product."""
-  n = L.shape[0]
+@function(arg("LD"), arg("status", _INDEX), arg("j", _INDEX), arg("A"), name="ldl_column")
+def _ldl_column(LD: Expr, status: Expr, j: Expr, A: Expr) -> tuple[Expr, Expr]:
+  """Column ``j`` of ``L`` below the diagonal and the pivot ``d_j`` on it, with ``v = d * L[j, :]`` shared by every row's dot product."""
+  n = LD.shape[0]
   rows = _index(np.arange(n))
-  v = d * gather(L, j * n + rows)
-  _, (c,) = scan(_ldl_entry, (), (broadcast(L), broadcast(v), broadcast(A), broadcast(j)), length=n, trip=n - j, index=True)
+  v = gather(LD, rows * (n + 1)) * gather(LD, j * n + rows)
+  _, (c,) = scan(_ldl_entry, (), (broadcast(LD), broadcast(v), broadcast(A), broadcast(j)), length=n, trip=n - j, index=True)
   pivot = c[0]
-  column = where(rows > j, gather(c, rows - j, mode="fill") / pivot, where(equal(rows, j), Expr.const(1.0), Expr.const(0.0)))
+  column = where(rows > j, gather(c, rows - j, mode="fill") / pivot, where(equal(rows, j), pivot, Expr.const(0.0)))
   status = where(_unusable(pivot, gather(A, j * n + j)) & equal(status, 0), j + 1, status)
-  return scatter(L, rows * n + j, column, combine="set"), scatter(d, j, pivot, combine="set"), status
+  return scatter(LD, rows * n + j, column, combine="set"), status
 
 
-def _ldl_parts(A: Expr) -> tuple[Expr, Expr, Expr]:
-  n = A.shape[0]
-  (L, d, status), _ = scan(_ldl_column, (zeros_like(A), Expr.const(np.zeros(n)), _index(0)), (broadcast(A),), length=n, index=True)
-  return L, d, status
+def _ldl_parts(A: Expr) -> tuple[Expr, Expr]:
+  """``L`` below the diagonal and ``d`` on it, packed in one matrix so that a forward derivative runs one rule."""
+  (LD, status), _ = scan(_ldl_column, (zeros_like(A), _index(0)), (broadcast(A),), length=A.shape[0], index=True)
+  return LD, status
 
 
 def _symmetric_tangent(dA: Expr) -> Expr:
@@ -245,20 +250,24 @@ def _symmetric_tangent(dA: Expr) -> Expr:
   return low + low.T + _masked(dA, np.eye(n))
 
 
-@function(arg("A"), arg("dA"), outputs=group(arg("L"), arg("d"), arg("status", _INDEX)), name="ldl_jvp")
-def _ldl_jvp(A: Expr, dA: Expr) -> tuple[Expr, Expr, Expr]:
+_LDL_OUTPUTS = group(arg("LD"), arg("status", _INDEX))
+
+
+@function(arg("A"), arg("dA"), outputs=_LDL_OUTPUTS, name="ldl_jvp")
+def _ldl_jvp(A: Expr, dA: Expr) -> tuple[Expr, Expr]:
   """With ``F = L^-1 dA L^-T``: ``dd = diag(F)`` and ``dL = L X``, ``X`` the strict lower triangle of ``F`` over ``d`` by column.
 
   A forward rule receives no residuals, so it factors ``A`` again rather than differentiate the loops.
   """
   n = A.shape[0]
-  L, d, _ = _ldl_parts(A)
+  LD, _ = _ldl_parts(A)
   unit = _triangular(True, False, True)
-  F = unit(L, unit(L, _symmetric_tangent(dA)).T).T
-  return L @ (_masked(F, _strict_lower(n)) / d.reshape((1, n))), (F * Expr.const(np.eye(n))).sum(1), _index(0)
+  F = unit(LD, unit(LD, _symmetric_tangent(dA)).T).T
+  L = _masked(LD, _strict_lower(n)) + Expr.const(np.eye(n))
+  return L @ (_masked(F, _strict_lower(n)) / _diagonal(LD).reshape((1, n))) + _masked(F, np.eye(n)), _index(0)
 
 
-_ldl = custom_derivative(function(arg("A"), outputs=group(arg("L"), arg("d"), arg("status", _INDEX)), name="ldl")(_ldl_parts), jvp=_ldl_jvp)
+_ldl = custom_derivative(function(arg("A"), outputs=_LDL_OUTPUTS, name="ldl")(_ldl_parts), jvp=_ldl_jvp)
 
 
 @function(arg("s", ()), arg("m", _INDEX), arg("M"), arg("c"), arg("i", _INDEX), name="lu_dot")
@@ -299,43 +308,48 @@ def _lu(n: int) -> Function:
 
   @function(arg("A"), arg("dA"), outputs=outputs, name="lu_jvp")
   def jvp(A: Expr, dA: Expr) -> tuple[Expr, Expr, Expr, Expr]:
-    """With ``F = L^-1 P dA U^-1``: ``dL = L tril(F, -1)`` and ``dU = triu(F) U``, packed as the factor is.
+    """With ``G = L^-1 P dA`` and ``S = tril(G U^-1, -1)``: ``dL = L S`` and ``dU = triu(G - S U)``, packed as the factor is.
+
+    ``dU`` is ``triu(G U^-1) U`` without forming ``G U^-1``, which overflows when a pivot is tiny.
 
     A forward rule receives no residuals, so it factors ``A`` again rather than differentiate the loops.
     """
     M, piv, perm, _ = parts(A)
     strict = _strict_lower(n)
-    F = _triangular(False, True, False)(M, _triangular(True, False, True)(M, gather(dA, perm, axis=0)).T).T
+    G = _triangular(True, False, True)(M, gather(dA, perm, axis=0))
+    S = _masked(_triangular(False, True, False)(M, G.T).T, strict)
     L, U = _masked(M, strict) + Expr.const(np.eye(n)), _masked(M, 1.0 - strict)
-    dL, dU = L @ _masked(F, strict), _masked(F, 1.0 - strict) @ U
-    return _masked(dL, strict) + _masked(dU, 1.0 - strict), zeros_like(piv), zeros_like(perm), _index(0)
+    return _masked(L @ S, strict) + _masked(G - S @ U, 1.0 - strict), zeros_like(piv), zeros_like(perm), _index(0)
 
   return custom_derivative(function(arg("A"), outputs=outputs, name="lu")(parts), jvp=jvp)
 
 
-def _symmetric_parts(K: Expr, B: Expr) -> tuple[Expr, Expr, Expr, Expr]:
-  L, d, status = _ldl(K)
-  n = K.shape[0]
-  X = _triangular(True, True, True)(L, _triangular(True, False, True)(L, B) / d.reshape((n, 1)))
-  return X, status, L, d
+def _ldl_solve(LD: Expr, B: Expr) -> Expr:
+  unit = _triangular(True, False, True)
+  return _triangular(True, True, True)(LD, unit(LD, B) / _diagonal(LD).reshape((LD.shape[0], 1)))
 
 
-@function(arg("K"), arg("B"), outputs=group(_SOLVE_OUTPUTS, group(arg("L"), arg("d"), arg("X_"))), name="solve_sym_fwd")
-def _symmetric_fwd(K: Expr, B: Expr) -> tuple[tuple[Expr, Expr], tuple[Expr, Expr, Expr]]:
-  X, status, L, d = _symmetric_parts(K, B)
-  return (X, status), (L, d, X)
+def _symmetric_parts(K: Expr, B: Expr) -> tuple[Expr, Expr, Expr]:
+  LD, status = _ldl(K)
+  return _ldl_solve(LD, B), status, LD
 
 
-@function(group(arg("L"), arg("d"), arg("X")), group(arg("X_bar"), arg("status_bar", _INDEX)), name="solve_sym_bwd")
-def _symmetric_bwd(residuals: tuple[Expr, Expr, Expr], weights: tuple[Expr, Expr]) -> tuple[Expr, Expr]:
-  (L, d, X), X_bar = residuals, weights[0]
-  B_bar = _triangular(True, True, True)(L, _triangular(True, False, True)(L, X_bar) / d.reshape((d.shape[0], 1)))
+@function(arg("K"), arg("B"), outputs=group(_SOLVE_OUTPUTS, group(arg("LD"), arg("X_"))), name="solve_sym_fwd")
+def _symmetric_fwd(K: Expr, B: Expr) -> tuple[tuple[Expr, Expr], tuple[Expr, Expr]]:
+  X, status, LD = _symmetric_parts(K, B)
+  return (X, status), (LD, X)
+
+
+@function(group(arg("LD"), arg("X")), group(arg("X_bar"), arg("status_bar", _INDEX)), name="solve_sym_bwd")
+def _symmetric_bwd(residuals: tuple[Expr, Expr], weights: tuple[Expr, Expr]) -> tuple[Expr, Expr]:
+  (LD, X), X_bar = residuals, weights[0]
+  B_bar = _ldl_solve(LD, X_bar)
   return _lower_cotangent(-(B_bar @ X.T)), B_bar
 
 
 @function(arg("K"), arg("B"), outputs=_SOLVE_OUTPUTS, name="solve_sym")
 def _symmetric_body(K: Expr, B: Expr) -> tuple[Expr, Expr]:
-  X, status, _, _ = _symmetric_parts(K, B)
+  X, status, _ = _symmetric_parts(K, B)
   return X, status
 
 
@@ -456,17 +470,21 @@ def ldl(A: Any) -> tuple[Expr, Expr, Expr]:
   a stack of them over leading axes. ``L`` is unit lower triangular, with ones on the diagonal and
   zeros above it, and ``d`` holds the diagonal of ``D``. Without pivoting the factorization exists
   for quasi-definite matrices, such as ``[[P, B^T], [B, -R]]`` with ``P`` and ``R`` positive definite,
-  and its pivots may have either sign.
+  and its pivots may have either sign. Another symmetric matrix can give small pivots that pass
+  the status check and factors with no accurate digits.
 
   ``status`` follows `cholesky`, with a pivot unusable when its magnitude is not greater than
-  machine epsilon times the magnitude of the diagonal entry of ``A`` it came from.
+  machine epsilon times the magnitude of the diagonal entry of ``A`` it came from, or when it is
+  infinite.
 
   The factors are meant to be read, not differentiated: differentiate `solve` instead. They have
-  a forward rule, which factors ``A`` once more, and no reverse rule, so a gradient through them
-  differentiates the loops of the factorization.
+  a forward rule, which factors ``A`` once more for every direction, and no reverse rule, so a
+  gradient through them differentiates the loops of the factorization.
   """
   A = as_expr(A)
-  return _mapped(_ldl, _square("ldl", A), A)
+  LD, status = _mapped(_ldl, _square("ldl", A), A)
+  n = A.shape[-1]
+  return _masked(LD, _strict_lower(n)) + Expr.const(np.eye(n)), _diagonal(LD), status
 
 
 def lu_factor(A: Any) -> tuple[Expr, Expr, Expr]:
@@ -479,12 +497,12 @@ def lu_factor(A: Any) -> tuple[Expr, Expr, Expr]:
   a float64 square matrix, or a stack of them over leading axes.
 
   ``status`` follows `cholesky`, with a pivot unusable when its magnitude is not greater than
-  machine epsilon times the magnitude of the entry of ``A`` it came from. A singular matrix has an
-  unusable pivot.
+  machine epsilon times the magnitude of the entry of ``A`` it came from, or when it is infinite.
+  A status of 0 does not show that ``A`` is nonsingular.
 
   The factors are meant to be read, not differentiated: differentiate `solve` instead. They have
-  a forward rule, which factors ``A`` once more, and no reverse rule, so a gradient through them
-  differentiates the loops of the factorization.
+  a forward rule, which factors ``A`` once more for every direction, and no reverse rule, so a
+  gradient through them differentiates the loops of the factorization.
   """
   A = as_expr(A)
   batch = _square("lu_factor", A)

@@ -37,7 +37,7 @@ of shape `(n, k)` whose columns are separate right-hand sides, and `x` has the s
 `solve` and the other routines on this page are Python functions, not `Function`s. They are
 called inside a function body on expressions and add calls of the library functions to its graph.
 
-## Symmetric indefinite and general matrices
+## Quasi-definite and general matrices
 
 `assume` names the class of `K` and with it the factorization:
 
@@ -51,7 +51,7 @@ A quasi-definite matrix has the form \(\begin{bmatrix}H & A^T\\ A & -R\end{bmatr
 and \(R\) positive definite, as in the regularized optimality conditions of an equality
 constrained quadratic program. It is indefinite, so `"pos"` fails on it, but every symmetric reordering
 of its rows and columns has an \(L D L^T\) factorization with a diagonal \(D\), so it needs no pivoting.
-Half of its pivots are negative:
+It has as many negative pivots as \(R\) has rows:
 
 ```python
 @sc.function(sc.arg("H", (2, 2)), sc.arg("A", (1, 2)), sc.arg("g", 2), sc.arg("c", 1),
@@ -80,9 +80,15 @@ print(x, status)
 # [-0.5  1. ] 0
 ```
 
+!!! warning "`\"sym\"` does not pivot"
+    Without pivoting, a symmetric matrix that is not quasi-definite can give a pivot that is small
+    but usable, and a solution with no accurate digits and a status of 0. For
+    \(K = \begin{bmatrix}10^{-20} & 1\\ 1 & 0\end{bmatrix}\) and \(b = (1, 2)\), `"sym"` returns
+    \((0, 1)\) instead of \((2, 1)\). Such a matrix takes `"gen"`.
+
 ## Differences from NumPy and SciPy
 
-The names follow SciPy's, but three differences could give a wrong result in code ported from
+The names follow SciPy's, but four differences could give a wrong result in code ported from
 NumPy or SciPy without raising an error. Two of the arguments have no default to prevent that:
 
 - `np.linalg.solve` and `scipy.linalg.solve` take a general matrix by default. `linalg.solve`
@@ -90,13 +96,15 @@ NumPy or SciPy without raising an error. Two of the arguments have no default to
   not symmetric gives the solution for its symmetric completion, as the next section shows.
 - `scipy.linalg.solve_triangular` reads the upper triangle by default. `linalg.solve_triangular`
   needs `lower=True` or `lower=False`.
-- `scipy.linalg.ldl` pivots and returns `(lu, d, perm)` with `d` a block diagonal matrix.
-  `linalg.ldl` does not pivot and returns `(L, d, status)` with `d` the vector of pivots.
+- `scipy.linalg.solve(..., assume_a="sym")` pivots and accepts any symmetric matrix that is not
+  singular. `linalg.solve(..., assume="sym")` does not pivot and is meant for quasi-definite
+  matrices, as the warning below explains.
 - `solve` and the factorizations return a status alongside their result instead of raising on a
   singular or indefinite matrix.
 
 `lu_factor` returns the same `lu` and `piv` as `scipy.linalg.lu_factor`, followed by a status.
-All of them take float64 matrices and right-hand sides, and raise `TypeError` for float32 or sparse
+`scipy.linalg.ldl` pivots and returns `(lu, d, perm)` with `d` a block diagonal matrix, while
+`linalg.ldl` returns `(L, d, status)` with `d` the vector of pivots. All of them take float64 matrices and right-hand sides, and raise `TypeError` for float32 or sparse
 ones.
 
 ## Only the lower triangle is read
@@ -148,8 +156,11 @@ its factorization, so a solver built on it can reject a step, add regularization
 
 The pivots of `ldl` and `lu_factor` may have either sign, so they compare magnitudes: a pivot is
 unusable when its magnitude is not greater than machine epsilon times the magnitude of the entry
-of `K` it came from. For `lu_factor` that entry is the one in the row the pivot search chose. A
-singular matrix gives an unusable pivot in either factorization.
+of `K` it came from, or when it is infinite. For `lu_factor` that entry is the one in the row the
+pivot search chose.
+
+A status of 0 does not show that `K` is nonsingular or well conditioned. Rounding can leave the
+last pivot of a singular matrix slightly away from zero, above the threshold.
 
 ## Factors and triangular solves
 
@@ -232,8 +243,9 @@ and halves the diagonal. For \(L D L^T\), with \(F = L^{-1}\, dK\, L^{-T}\), the
 the diagonal of \(F\) and \(dL = L X\), where \(X\) is the strict lower triangle of \(F\) with each
 column divided by its pivot. For LU, with \(F = L^{-1} P\, dK\, U^{-1}\), \(dL\) is \(L\) times the
 strict lower triangle of \(F\) and \(dU\) is the upper triangle of \(F\) times \(U\), the row
-exchanges staying fixed. Each rule factors `K` once more, so a forward derivative and a Hessian with respect
-to `K` cost an extra factorization. Second derivatives, such as those of `sc.hessian`, hold with
+exchanges staying fixed. Each rule factors `K` once more for every direction, so a forward
+derivative and a Hessian with respect to `K` cost one factorization per entry of `K` they
+differentiate in, and generate correspondingly more code. Second derivatives, such as those of `sc.hessian`, hold with
 `K` and `b` varying together, and a gradient may itself be differentiated in reverse mode.
 
 `cholesky` and `solve_triangular` follow the same rules. The reverse derivative of a triangular
@@ -255,3 +267,5 @@ two rows of the matrix at the pivot's run-time position. The
 factor and the solution are updated in place. The loops themselves have the same size at every
 order of the matrix, and only constant tables grow with it, while the work grows with the cube of
 the order for a factorization and with its square for each right-hand side of a substitution.
+This holds for a solution and its gradient, not for forward derivatives in `K`, as the section on
+derivatives explains.

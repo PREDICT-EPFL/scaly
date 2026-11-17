@@ -86,9 +86,12 @@ def test_lu_factor_matches_scipy_over_a_stack() -> None:
     ("ldl", [[4.0, 2.0], [2.0, 1.0]], 2),  # a zero pivot
     ("ldl", [[1.0, 1.0 - EPS / 2], [1.0 - EPS / 2, 1.0]], 2),  # the pivot 1 - fl((1 - eps/2)^2) is exactly eps
     ("ldl", [[2.0, 1.0], [1.0, -3.0]], 0),  # quasi-definite: a negative pivot is usable
+    ("ldl", [[-1.0, 0.0], [1.0 - EPS / 2, -1.0]], 2),  # the same eps pivot, negative, against a negative diagonal
+    ("ldl", [[1e-160, 0.0], [1e160, -1.0]], 2),  # a pivot that overflows to -inf
     ("lu", [[0.0, 1.0], [1.0, 0.0]], 0),  # a zero diagonal that a row swap moves away
     ("lu", [[1.0, 1.0], [1.0, 1.0 + EPS]], 2),  # the pivot fl(1 + eps) - 1 is eps times its entry, rounded down
     ("lu", [[1.0, 1.0], [1.0, 1.0 + 2 * EPS]], 0),
+    ("lu", [[1.0, 1.0 + 2 * EPS], [8.0, 8.0]], 0),  # the pivot 2 eps is compared with the entry of the chosen row, 1 + 2 eps
     ("lu", [[1.0, 2.0, 3.0], [2.0, 4.0, 6.0], [0.0, 1.0, 1.0]], 3),  # singular: rank 2
   ],
 )
@@ -101,6 +104,66 @@ def test_factorizations_report_the_first_unusable_pivot(routine, a, status) -> N
     return linalg.ldl(A)[2] if routine == "ldl" else linalg.lu_factor(A)[2]
 
   assert factor(a) == status
+
+
+def _unrolled_elimination(k: sc.Expr) -> sc.Expr:
+  """Gaussian elimination without pivoting, entry by entry: the multipliers below the diagonal and ``U`` on and above it."""
+  n = k.shape[0]
+  a = [[k[i, j] for j in range(n)] for i in range(n)]
+  for p in range(n):
+    for i in range(p + 1, n):
+      a[i][p] = a[i][p] / a[p][p]
+      a[i] = [a[i][j] - a[i][p] * a[p][j] if j > p else a[i][j] for j in range(n)]
+  return sc.stack([sc.stack(row) for row in a])
+
+
+def _symmetric_from_lower(m: sc.Expr) -> sc.Expr:
+  low = m * sc.const(np.tril(np.ones((N, N)), -1))
+  return low + low.T + m * sc.const(np.eye(N))
+
+
+def _row_permutation(k: np.ndarray) -> np.ndarray:
+  """The rows partial pivoting picks for ``k``, as a matrix, constant near ``k``."""
+  return np.eye(N)[np.argsort(scipy.linalg.lu(k, p_indices=True)[0])]
+
+
+@pytest.mark.parametrize("routine", ["ldl", "lu"])
+def test_factor_derivatives_match_the_unrolled_reference(routine) -> None:
+  """The forward rules, and the factorization loops in reverse. ``ldl``'s ``L`` and ``d`` are compared packed, ``d`` on the diagonal."""
+  rng = np.random.default_rng(15)
+  a = _quasi_definite(rng) if routine == "ldl" else _needs_swaps(rng)
+  permute = _row_permutation(a) if routine == "lu" else np.eye(N)
+  outputs = sc.group(sc.arg("F", (N, N)), sc.arg("c", ()))
+
+  @sc.function(sc.arg("p", N * N), outputs=outputs)
+  def factor(p):
+    if routine == "ldl":
+      low, d, _ = linalg.ldl(p.reshape((N, N)))
+      f = low * sc.const(np.tril(np.ones((N, N)), -1)) + sc.const(np.eye(N)) * d.reshape((1, N))
+    else:
+      f = linalg.lu_factor(p.reshape((N, N)))[0]
+    return f, _cost(f.reshape((N * N,)))
+
+  @sc.function(sc.arg("p", N * N), outputs=outputs)
+  def reference(p):
+    m = p.reshape((N, N))
+    if routine == "ldl":
+      f = _unrolled_elimination(_symmetric_from_lower(m)) * sc.const(np.tril(np.ones((N, N))))
+    else:
+      f = _unrolled_elimination(sc.const(permute) @ m)
+    return f, _cost(f.reshape((N * N,)))
+
+  _check_derivatives(factor, reference, a.reshape(-1), "F")
+
+
+def test_the_lu_forward_rule_survives_a_tiny_pivot() -> None:
+  """``dU`` is formed without dividing by the pivot and multiplying back, which overflows here."""
+
+  @sc.function(sc.arg("A", (1, 1)), outputs=sc.arg("lu", (1, 1)))
+  def factor(A):
+    return linalg.lu_factor(A)[0]
+
+  np.testing.assert_array_equal(sc.jacobian(factor, "lu", "A")(np.array([[1e-310]])), [[1.0]])
 
 
 # --- solves ----------------------------------------------------------------------------------
@@ -159,7 +222,7 @@ def test_solve_derivatives_match_the_unrolled_reference(assume) -> None:
   eliminates without pivoting on the rows LU chose, which are constant near the point."""
   rng = np.random.default_rng(13)
   k = _quasi_definite(rng) if assume == "sym" else _needs_swaps(rng)
-  permute = np.eye(N)[np.argsort(scipy.linalg.lu(k, p_indices=True)[0])] if assume == "gen" else np.eye(N)
+  permute = _row_permutation(k) if assume == "gen" else np.eye(N)
   outputs = sc.group(sc.arg("x", N), sc.arg("c", ()))
   size = N * N + N
 
@@ -172,8 +235,7 @@ def test_solve_derivatives_match_the_unrolled_reference(assume) -> None:
   def reference(p):
     m = p[: N * N].reshape((N, N))
     if assume == "sym":
-      low = m * sc.const(np.tril(np.ones((N, N)), -1))
-      m = low + low.T + m * sc.const(np.eye(N))
+      m = _symmetric_from_lower(m)
     x = _unrolled_solve(sc.const(permute) @ m, sc.const(permute) @ p[N * N :])
     return x, _cost(x)
 
@@ -188,13 +250,15 @@ def test_reverse_over_reverse_matches_forward_over_reverse(assume) -> None:
 
   gradient = sc.gradient(cost, "c", "p")
 
+  rng = np.random.default_rng(14)
+  weights = rng.normal(size=N * N + N)
+
   @sc.function(sc.arg("p", N * N + N), outputs=sc.arg("g", N * N + N))
   def twice(p):
-    return sc.gradient(gradient(p).sum(), p)
+    return sc.gradient((gradient(p) * sc.const(weights)).sum(), p)
 
-  rng = np.random.default_rng(14)
   p = np.concatenate([(_quasi_definite if assume == "sym" else _needs_swaps)(rng).reshape(-1), rng.normal(size=N)])
-  np.testing.assert_allclose(twice(p), sc.hessian(cost, "c", "p")(p) @ np.ones(N * N + N), rtol=1e-10, atol=1e-12)
+  np.testing.assert_allclose(twice(p), sc.hessian(cost, "c", "p")(p) @ weights, rtol=1e-10, atol=1e-12)
 
 
 @pytest.mark.parametrize(("assume", "factor"), [("sym", "ldl"), ("gen", "lu")])
