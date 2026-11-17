@@ -98,7 +98,7 @@ NumPy or SciPy without raising an error. Two of the arguments have no default to
   needs `lower=True` or `lower=False`.
 - `scipy.linalg.solve(..., assume_a="sym")` pivots and accepts any symmetric matrix that is not
   singular. `linalg.solve(..., assume="sym")` does not pivot and is meant for quasi-definite
-  matrices, as the warning below explains.
+  matrices, as the warning above explains.
 - `solve` and the factorizations return a status alongside their result instead of raising on a
   singular or indefinite matrix.
 

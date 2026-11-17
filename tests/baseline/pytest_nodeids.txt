@@ -4069,6 +4069,7 @@ tests/linalg/test_ldl_lu.py::test_factorizations_report_the_first_unusable_pivot
 tests/linalg/test_ldl_lu.py::test_factorizations_report_the_first_unusable_pivot[lu-a7-0]
 tests/linalg/test_ldl_lu.py::test_factorizations_report_the_first_unusable_pivot[lu-a8-0]
 tests/linalg/test_ldl_lu.py::test_factorizations_report_the_first_unusable_pivot[lu-a9-3]
+tests/linalg/test_ldl_lu.py::test_ldl_keeps_a_unit_diagonal_after_an_infinite_pivot
 tests/linalg/test_ldl_lu.py::test_ldl_matches_scipy_over_a_stack
 tests/linalg/test_ldl_lu.py::test_lu_factor_matches_scipy_over_a_stack
 tests/linalg/test_ldl_lu.py::test_reverse_over_reverse_matches_forward_over_reverse[gen]

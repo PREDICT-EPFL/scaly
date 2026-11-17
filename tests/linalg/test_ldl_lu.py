@@ -106,6 +106,14 @@ def test_factorizations_report_the_first_unusable_pivot(routine, a, status) -> N
   assert factor(a) == status
 
 
+def test_ldl_keeps_a_unit_diagonal_after_an_infinite_pivot() -> None:
+  @sc.function(sc.arg("A", (2, 2)), outputs=sc.arg("L", (2, 2)))
+  def factor(A):
+    return linalg.ldl(A)[0]
+
+  np.testing.assert_array_equal(np.diag(factor(np.array([[np.inf, 0.0], [1.0, 1.0]]))), [1.0, 1.0])
+
+
 def _unrolled_elimination(k: sc.Expr) -> sc.Expr:
   """Gaussian elimination without pivoting, entry by entry: the multipliers below the diagonal and ``U`` on and above it."""
   n = k.shape[0]

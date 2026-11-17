@@ -485,7 +485,7 @@ def ldl(A: Any) -> tuple[Expr, Expr, Expr]:
   A = as_expr(A)
   LD, status = _mapped(_ldl, _square("ldl", A), A)
   n = A.shape[-1]
-  return _masked(LD, _strict_lower(n)) + Expr.const(np.eye(n)), _diagonal(LD), status
+  return where(Expr.const(_strict_lower(n) > 0), LD, Expr.const(np.eye(n))), _diagonal(LD), status
 
 
 def lu_factor(A: Any) -> tuple[Expr, Expr, Expr]:
