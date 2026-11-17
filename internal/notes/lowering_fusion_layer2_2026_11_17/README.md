@@ -133,3 +133,12 @@ Ruff checks, the documentation build and the private-name check. The final four
 workspace/source gates passed in a focused two-worker run. Logs are
 `benchmarks/results/layer2/pre-merge-final.log` and
 `benchmarks/results/layer2/final-workspace-gates.log`.
+
+Opus 5.5 at high effort approved the code and every changed snapshot line. Its
+independent 88-test run and additional compiled NumPy checks passed, including
+coordinate remaps, broadcasts, dependent consumers, scatter versions and invariant
+hoisting in a carried loop body. The return-value docstring now names all three
+results, and the temporary implementation plan is removed before the PR is ready.
+Optional planner maintenance is tracked in [#472](https://github.com/PREDICT-EPFL/scaly/issues/472):
+avoid planning-only index tables and skip group dependency work for rejected nodes.
+Neither note affects generated code or correctness.

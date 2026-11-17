@@ -123,8 +123,8 @@ def plan_fusion(
   support_of: Callable[[Expr], Support],
   reads_at: Callable[[Expr, ProgramNode], Sequence[tuple[Expr, ProgramNode]]],
 ) -> tuple[frozenset[int], dict[int, tuple[Expr, ...]], dict[int, tuple[Expr, ...]]]:
-  """The nodes lowering evaluates at their consumers' coordinates rather than storing, and the sums
-  of scatters, by the id of the sum each one writes.
+  """The deferred node ids, scatter sums keyed by their output id, and consumer loop groups keyed
+  by each member id.
 
   A movement op or a constant is an index remap, deferred unless it is an output or a consumer needs
   it whole. A strided slice, a transpose or a gather is also stored when one read visits entries
