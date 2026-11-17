@@ -29,7 +29,7 @@ artifacts = [
 # Anchored, and the build outputs excluded by name: hatchling matches `src/` at any depth and
 # reads the repository `.gitignore` relative to this directory, where its plugin rules never match.
 include = ["/src/", "/hatch_build.py", "/native_build.py", "/licenses/"]
-exclude = ["/src/*/lib/", "/src/*/include/", "/src/*/licenses/", "/src/*/native-inputs.sha256"]
+exclude = ["/src/*/lib/", "/src/*/include/", "/src/*/licenses/", "/src/*/native-inputs.sha256", "/src/*.libs/"]
 
 [tool.hatch.build.targets.sdist.force-include]
 "../solver_build.py" = "solver_build.py"

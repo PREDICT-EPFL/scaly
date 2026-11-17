@@ -223,6 +223,11 @@ def _install_build(hook: "BuildHook", root: Path, package_dir: Path, entry: Path
     for name in _OUTPUTS:
       shutil.rmtree(package_dir / name, ignore_errors=True)
       shutil.copytree(entry / name, package_dir / name, symlinks=True)
+    # A released wheel's libraries find what auditwheel relocated through `$ORIGIN/../../<package>.libs`.
+    libs = package_dir.with_name(f"{package_dir.name}.libs")
+    shutil.rmtree(libs, ignore_errors=True)
+    if (entry / "wheel-libs").is_dir():
+      shutil.copytree(entry / "wheel-libs", libs, symlinks=True)
     stamp.write_text(key)
   hook.app.display_info(f"Installed the build {entry} into {package_dir}")
   _prune_cache(cache)
@@ -255,7 +260,9 @@ class BuildHook(BuildHookInterface):
     if (entry / "wheel-libs").is_dir():
       build_data["force_include"][str(entry / "wheel-libs")] = "scaly_piqp.libs"
     stamp = root / ".build_key"
-    if mode != "source" and stamp.exists() and stamp.read_text() == key and all((package_dir / name).is_dir() for name in _OUTPUTS):
+    installed = all((package_dir / name).is_dir() for name in _OUTPUTS)
+    installed &= (entry / "wheel-libs").is_dir() == package_dir.with_name(f"{package_dir.name}.libs").is_dir()
+    if mode != "source" and stamp.exists() and stamp.read_text() == key and installed:
       self.app.display_info(f"PIQP C interface already built at {lib_dir}")
       return
 
@@ -273,7 +280,7 @@ class BuildHook(BuildHookInterface):
     root = Path(self.root)
     package_dir = root / "src" / "scaly_piqp"
     (root / ".build_key").unlink(missing_ok=True)
-    for path in (package_dir / "lib", package_dir / "include", package_dir / "licenses"):
+    for path in (package_dir / "lib", package_dir / "include", package_dir / "licenses", root / "src" / "scaly_piqp.libs"):
       if path.exists():
         self.app.display_info(f"Removing {path}")
         shutil.rmtree(path)

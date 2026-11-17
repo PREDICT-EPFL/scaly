@@ -122,6 +122,14 @@ def test_build_wheel_from_local_release(tmp_path, monkeypatch, solver):
     root = next(extracted.iterdir())
     result = subprocess.run([sys.executable, "-m", "hatchling", "build", "-t", "wheel"], cwd=root, env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
+    # An editable install loads the libraries from src/, so the repaired ones must sit beside the package there
+    # and come back when a checkout whose build is otherwise current lost them.
+    libs = root / "src" / f"{package}.libs"
+    assert (libs / "runtime.so").read_bytes() == b"repaired runtime"
+    shutil.rmtree(libs)
+    again = subprocess.run([sys.executable, "-m", "hatchling", "build", "-t", "wheel"], cwd=root, env=env, capture_output=True, text=True)
+    assert again.returncode == 0, again.stdout + again.stderr
+    assert (libs / "runtime.so").read_bytes() == b"repaired runtime"
   finally:
     server.shutdown()
     thread.join()
