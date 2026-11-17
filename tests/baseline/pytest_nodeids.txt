@@ -4036,6 +4036,25 @@ tests/ir/test_verifier.py::test_vmap_windows_must_fit_inside_their_outer[4-0-3-F
 tests/ir/test_verifier.py::test_vmap_windows_must_fit_inside_their_outer[4-1-2-False]
 tests/ir/test_verifier.py::test_vmap_windows_must_fit_inside_their_outer[4-6--2-False]
 tests/ir/test_verifier.py::test_vmap_windows_must_fit_inside_their_outer[4-6-0-True]
+tests/linalg/test_dense.py::test_cholesky_derivatives_match_the_unrolled_reference
+tests/linalg/test_dense.py::test_cholesky_matches_numpy_and_reads_the_lower_triangle
+tests/linalg/test_dense.py::test_cholesky_reports_the_first_unusable_pivot[a0-2]
+tests/linalg/test_dense.py::test_cholesky_reports_the_first_unusable_pivot[a1-2]
+tests/linalg/test_dense.py::test_cholesky_reports_the_first_unusable_pivot[a2-0]
+tests/linalg/test_dense.py::test_cholesky_reports_the_first_unusable_pivot[a3-2]
+tests/linalg/test_dense.py::test_factorizations_map_over_leading_stage_axes
+tests/linalg/test_dense.py::test_reverse_over_reverse_matches_forward_over_reverse[cholesky]
+tests/linalg/test_dense.py::test_reverse_over_reverse_matches_forward_over_reverse[triangular]
+tests/linalg/test_dense.py::test_the_primal_loops_update_their_carries_in_place
+tests/linalg/test_dense.py::test_triangular_solve_derivatives_match_the_unrolled_reference[False-True-True]
+tests/linalg/test_dense.py::test_triangular_solve_derivatives_match_the_unrolled_reference[True-False-False]
+tests/linalg/test_dense.py::test_triangular_solve_matches_scipy[False-True-True-rhs1]
+tests/linalg/test_dense.py::test_triangular_solve_matches_scipy[True-False-False-rhs0]
+tests/linalg/test_dense.py::test_triangular_solve_matches_scipy[True-True-False-rhs2]
+tests/linalg/test_entry.py::test_a_value_and_its_gradient_share_one_factorization
+tests/linalg/test_entry.py::test_solve_and_its_gradient_over_a_stage_axis
+tests/linalg/test_entry.py::test_solve_checks_its_arguments
+tests/linalg/test_entry.py::test_solve_derivatives_match_the_unrolled_reference
 tests/passes/lowering/test_batched_matmul.py::test_numpy[shapes0]
 tests/passes/lowering/test_batched_matmul.py::test_numpy[shapes10]
 tests/passes/lowering/test_batched_matmul.py::test_numpy[shapes11]
@@ -5166,6 +5185,7 @@ tests/test_determinism.py::test_the_check_finds_a_counter[from itertools import 
 tests/test_determinism.py::test_the_check_finds_a_counter[from itertools import count\n_ids = count()\n]
 tests/test_determinism.py::test_the_check_finds_a_counter[import itertools as it\n_ids = it.count()\n]
 tests/test_determinism.py::test_the_check_finds_a_counter[import itertools\n_ids = itertools.count()\n]
+tests/test_docs_prose.py::test_guide_examples_run[docs/guide/linalg.md]
 tests/test_docs_prose.py::test_guide_examples_run[docs/guide/sparse_matrices.md]
 tests/test_docs_prose.py::test_published_prose[README.md]
 tests/test_docs_prose.py::test_published_prose[docs/benchmarks/closed_loop.md]
@@ -5180,6 +5200,7 @@ tests/test_docs_prose.py::test_published_prose[docs/guide/env_vars.md]
 tests/test_docs_prose.py::test_published_prose[docs/guide/functions.md]
 tests/test_docs_prose.py::test_published_prose[docs/guide/getting_started.md]
 tests/test_docs_prose.py::test_published_prose[docs/guide/installation.md]
+tests/test_docs_prose.py::test_published_prose[docs/guide/linalg.md]
 tests/test_docs_prose.py::test_published_prose[docs/guide/ocp.md]
 tests/test_docs_prose.py::test_published_prose[docs/guide/solver_backends.md]
 tests/test_docs_prose.py::test_published_prose[docs/guide/solvers.md]
@@ -5255,6 +5276,9 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.ir.support]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.ir.text]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.ir.types]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.ir]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.linalg.dense]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.linalg.entry]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.linalg]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.affine]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.arith]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.expr]
