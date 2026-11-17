@@ -267,7 +267,8 @@ def cholesky(A: Any) -> tuple[Expr, Expr]:
 
   ``L`` is differentiable in ``A``. The derivative of an entry below the diagonal is the sum of
   the derivatives with respect to the two mirrored entries it stands for. The reverse derivative
-  reuses ``L``, and the forward derivative factors ``A`` once more.
+  reuses ``L``. The forward derivative cannot reach ``L`` and factors ``A`` again for each seed
+  direction.
   """
   A = as_expr(A)
   return _mapped(_cholesky, _square("cholesky", A), A)
