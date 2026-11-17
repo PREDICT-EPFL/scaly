@@ -1,0 +1,23 @@
+== 1. a call's support follows its arguments (#221) ==
+callee alone: every entry of 12 entries may be nonzero
+called with a tangent of 4 nonzero entries: support [0, 4, 5, 11]
+specialisations cached on the callee: 1, the product inside it has 4 entries
+
+== 2. a selected zero tangent stays zero (#167) ==
+top level: d(tangent)/dx has 0 entries before simplification and 0 after
+through a callee: d(tangent)/dx has 0 entries before simplification and 0 after
+values with run-time seeds [2, -3] at p = 0.7: [ 1.4 -2.1] (NumPy [ 1.4 -2.1])
+
+== 3. a sparse derivative is a sparse leaf in a declared layout (#48) ==
+sparse_jacobian layout=csc: output type (8, 10) nnz 24, result csc_array, max |values - SciPy csc.data| 3.9e-11
+sparse_jacobian layout=csr: output type (8, 10) nnz 24, result csr_array, max |values - SciPy csr.data| 3.9e-11
+sparse_hessian lower, csr: nnz 19 of 100, max |values - finite differences| 3.2e-10
+header tables: NDIM, NNZ, STORAGE_SIZE, col_ptr, row_ind, shape
+output_sparsities on the Function: False
+expression form: an Expr of shape (2, 3) with pattern nnz 3
+a 10^5 x 10^5 leaf with 2 stored entries, differentiated by itself: sparse derivative logical size 100000000000000000000 exceeds int64; see #447
+
+== 4. the chain M=9 Hessian stage, 40 stages, default budgets (#225, #214, #427) ==
+Hessian (1965, 1965), 32643 stored entries, 42 colors
+operations per stage 58541 over 40 stages (253,786 before #225, target about 60,000)
+generated C 2320659 bytes, generation 25.0 s, cc -O2 101.0 s (la015, shared: observations, not timings)

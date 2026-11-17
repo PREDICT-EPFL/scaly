@@ -1,0 +1,37 @@
+== 1. an RK4 rollout with its gradient, written with scan ==
+    N   value against NumPy   C bytes of value + both gradients   generation
+   20   3.6e-15                18025 bytes, 30 loops              0.10 s
+  200   1.7e-13                18057 bytes, 30 loops              0.10 s
+ 2000   1.2e-11                18119 bytes, 30 loops              0.12 s
+N = 20, d cost / d z0: max |scan - unrolled| 4.4e-16, max |scan - finite differences| 5.6e-09
+N = 20, d cost / d us: max |scan - unrolled| 5.6e-17, max |scan - finite differences| 6.3e-09
+N = 20, forward mode against reverse mode: 2.8e-14
+
+== 2. a Newton iteration inside while_loop ==
+a = 1: root 1.000000000000 after 0 steps (condition false at entry); error 0.0e+00
+a = 5: root 1.709975946677 after 6 steps (early exit); error 2.2e-16
+a = 1e+09: root 1000.000000000000 after 37 steps (early exit, far start); error 3.4e-13
+a = 5 with max_iter = 3: 1.722002 after 3 steps (the bound is reached and nothing is raised)
+d root / d a: 0.1139983964 (exact 0.1139983964)
+second derivative, forward over reverse: -0.0151997862 (exact -0.0151997862, finite difference of the gradient -0.0151997862)
+
+== 3. run-time indices, and a carry updated in place ==
+take(x, [5, 9, 0], fill -1) = [ 6. -1.  1.]   dynamic_slice(x, 4, 4) = [5. 6. 0. 0.]
+segment_sum = [ 4.  5. 12.  0.], np.add.at gives [ 4.  5. 12.  0.]
+50 steps, each adding one to two entries, chosen at run time, of a carry of 100000 entries: max error 0.0e+00
+reused carry (in_place=(0,), also the default): workspace 800000 bytes, 0 loops over all 100000 entries in the C
+reuse switched off for comparison:              workspace 1600000 bytes, 0 loops over all 100000 entries in the C
+the same step written with index_add (fill mode), in_place=(0,): LoweringError: cannot prove in_place carry 'carry' of 'bump_fill'
+without in_place=, index_add:                   workspace 2400064 bytes, 2 loops over all 100000 entries in the C
+
+== 4. a conditional call runs one branch ==
+negative branch, x=4
+value at -4: 2.0
+negative branch, x=4
+gradient at -4: -0.25
+
+== 5. a clipped rollout: select masks across iterations ==
+d y / d x: reverse scan [0.      0.00012]
+           finite: True; max |reverse scan - unrolled| 0.0e+00; max |forward scan - unrolled| 2.7e-20
+d y / d us: reverse scan [0.      0.      0.06634 0.      0.14263 0.      0.      2.     ]
+           finite: True; max |reverse scan - unrolled| 0.0e+00; max |forward scan - unrolled| 0.0e+00
