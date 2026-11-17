@@ -61,7 +61,7 @@ def _substitution(lower: bool, trans: bool, unit: bool) -> Function:
 
   @function(arg("T"), arg("B"), outputs=arg("X"), name=name)
   def solve(T: Expr, B: Expr) -> Expr:
-    X, _ = scan(row, zeros_like(B), (broadcast(T), broadcast(B)), length=T.shape[0], index=True, reverse=not forward, in_place=(0,))
+    X, _ = scan(row, zeros_like(B), (broadcast(T), broadcast(B)), length=T.shape[0], index=True, reverse=not forward)
     return X
 
   return solve
@@ -120,7 +120,7 @@ def _cholesky_column(L: Expr, status: Expr, j: Expr, A: Expr) -> tuple[Expr, Exp
 
 def _cholesky_parts(A: Expr) -> tuple[Expr, Expr]:
   n = A.shape[0]
-  (L, status), _ = scan(_cholesky_column, (zeros_like(A), _index(0)), (broadcast(A),), length=n, index=True, in_place=(0,))
+  (L, status), _ = scan(_cholesky_column, (zeros_like(A), _index(0)), (broadcast(A),), length=n, index=True)
   return L, status
 
 
