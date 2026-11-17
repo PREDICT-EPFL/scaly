@@ -1,7 +1,8 @@
 # Linear algebra
 
-`scaly.linalg` solves dense linear systems inside a function: triangular solves, the Cholesky
-factorization and `solve` for symmetric positive definite matrices. They build calls of Scaly
+`scaly.linalg` solves dense linear systems inside a function: triangular solves, the Cholesky,
+\(L D L^T\) and LU factorizations, and `solve` for positive definite, symmetric quasi-definite and
+general matrices. They build calls of Scaly
 functions written with [loops](control_flow.md), so the generated C contains the factorization
 itself and calls no BLAS or LAPACK library. Their results are differentiable.
 
@@ -33,8 +34,51 @@ print(x, status)
 \(K = L L^T\) and solves the two triangular systems. `b` is a vector of shape `(n,)` or a matrix
 of shape `(n, k)` whose columns are separate right-hand sides, and `x` has the same shape as `b`.
 
-`solve`, `cholesky` and `solve_triangular` are Python functions, not `Function`s. They are
+`solve` and the other routines on this page are Python functions, not `Function`s. They are
 called inside a function body on expressions and add calls of the library functions to its graph.
+
+## Symmetric indefinite and general matrices
+
+`assume` names the class of `K` and with it the factorization:
+
+| `assume` | Class of `K` | Factorization | Triangle read |
+|---|---|---|---|
+| `"pos"` | symmetric positive definite | \(K = L L^T\), `cholesky` | lower |
+| `"sym"` | symmetric quasi-definite | \(K = L D L^T\) without pivoting, `ldl` | lower |
+| `"gen"` | general | \(P K = L U\) with partial pivoting, `lu_factor` | all |
+
+A quasi-definite matrix has the form \(\begin{bmatrix}H & A^T\\ A & -R\end{bmatrix}\) with \(H\)
+and \(R\) positive definite, as in the regularized optimality conditions of an equality
+constrained quadratic program. It is indefinite, so `"pos"` fails on it, but every symmetric reordering
+of its rows and columns has an \(L D L^T\) factorization with a diagonal \(D\), so it needs no pivoting.
+Half of its pivots are negative:
+
+```python
+@sc.function(sc.arg("H", (2, 2)), sc.arg("A", (1, 2)), sc.arg("g", 2), sc.arg("c", 1),
+             outputs=sc.group(sc.arg("z", 3), sc.arg("status", status_type)))
+def kkt_step(H: sc.Expr, A: sc.Expr, g: sc.Expr, c: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    K = sc.concat([sc.concat([H, A.T], axis=1),
+                   sc.concat([A, -0.5 * sc.const(np.eye(1))], axis=1)])
+    return linalg.solve(K, sc.concat([-g, -c]), assume="sym")
+
+z, status = kkt_step(np.diag([2.0, 1.0]), np.array([[1.0, 1.0]]), np.array([1.0, 0.0]), np.array([-1.0]))
+print(z, status)
+# [-0.125  0.75  -0.75 ] 0
+```
+
+A matrix without such structure takes `assume="gen"`. Its LU factorization exchanges rows to take,
+in each column, the pivot of largest magnitude, so a zero on the diagonal does no harm:
+
+```python
+@sc.function(sc.arg("K", (2, 2)), sc.arg("b", 2),
+             outputs=sc.group(sc.arg("x", 2), sc.arg("status", status_type)))
+def general(K: sc.Expr, b: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    return linalg.solve(K, b, assume="gen")
+
+x, status = general(np.array([[0.0, 1.0], [2.0, 3.0]]), np.array([1.0, 2.0]))
+print(x, status)
+# [-0.5  1. ] 0
+```
 
 ## Differences from NumPy and SciPy
 
@@ -42,21 +86,23 @@ The names follow SciPy's, but three differences could give a wrong result in cod
 NumPy or SciPy without raising an error. Two of the arguments have no default to prevent that:
 
 - `np.linalg.solve` and `scipy.linalg.solve` take a general matrix by default. `linalg.solve`
-  needs the class of the matrix stated with `assume`, and `"pos"` is the only class it accepts.
-  A matrix that is not symmetric gives the solution for its symmetric completion, as the next
-  section shows.
+  needs the class of the matrix stated with `assume`. With `"pos"` or `"sym"`, a matrix that is
+  not symmetric gives the solution for its symmetric completion, as the next section shows.
 - `scipy.linalg.solve_triangular` reads the upper triangle by default. `linalg.solve_triangular`
   needs `lower=True` or `lower=False`.
-- `solve` and `cholesky` return a status alongside their result instead of raising on a singular
-  or indefinite matrix.
+- `scipy.linalg.ldl` pivots and returns `(lu, d, perm)` with `d` a block diagonal matrix.
+  `linalg.ldl` does not pivot and returns `(L, d, status)` with `d` the vector of pivots.
+- `solve` and the factorizations return a status alongside their result instead of raising on a
+  singular or indefinite matrix.
 
-All three take float64 matrices and right-hand sides, and raise `TypeError` for float32 or sparse
+`lu_factor` returns the same `lu` and `piv` as `scipy.linalg.lu_factor`, followed by a status.
+All of them take float64 matrices and right-hand sides, and raise `TypeError` for float32 or sparse
 ones.
 
 ## Only the lower triangle is read
 
-A symmetric matrix stores each off-diagonal value twice. `solve` and `cholesky` read only the
-lower triangle, including the diagonal, and never look at the entries above it. An entry below
+A symmetric matrix stores each off-diagonal value twice. `cholesky`, `ldl`, and `solve` with
+`"pos"` or `"sym"` read only the lower triangle, including the diagonal, and never look at the entries above it. An entry below
 the diagonal stands for itself and its mirror above. Whatever the upper triangle holds, the result
 is that of the symmetric matrix with the same lower triangle:
 
@@ -76,9 +122,9 @@ fixes the derivative with respect to `K`, as [below](#derivatives) explains.
 ## The status of a factorization
 
 Elimination divides by pivots, the diagonal values left after the earlier columns have been
-eliminated. For a positive definite matrix every pivot is positive. A pivot is unusable when it
-is not greater than machine epsilon times the diagonal entry of `K` it came from. That includes
-zero, negative and NaN pivots, and pivots so small relative to their diagonal entry that the
+eliminated. For a positive definite matrix every pivot is positive, and a Cholesky pivot is
+unusable when it is not greater than machine epsilon times the diagonal entry of `K` it came from.
+That includes zero, negative and NaN pivots, and pivots so small relative to their diagonal entry that the
 cancellation behind them has left no accurate digits.
 
 The status is 0 when every pivot is usable. Otherwise it is the position of the first unusable
@@ -100,6 +146,11 @@ print(pivot_status(np.ones((3, 3))))           # 2
 The last matrix is singular: its second pivot is \(1 - 1 = 0\). `solve` returns the status of
 its factorization, so a solver built on it can reject a step, add regularization or stop.
 
+The pivots of `ldl` and `lu_factor` may have either sign, so they compare magnitudes: a pivot is
+unusable when its magnitude is not greater than machine epsilon times the magnitude of the entry
+of `K` it came from. For `lu_factor` that entry is the one in the row the pivot search chose. A
+singular matrix gives an unusable pivot in either factorization.
+
 ## Factors and triangular solves
 
 `cholesky(A)` returns `(L, status)`, with `L` lower triangular and zero above the diagonal.
@@ -107,6 +158,12 @@ its factorization, so a solver built on it can reject a step, add regularization
 `lower=False` reads the upper triangle instead. `trans=True` solves \(T^T x = b\), and
 `unit_diagonal=True` takes the diagonal as ones without reading it. Like `solve`, it accepts one
 or several right-hand sides.
+
+`ldl(A)` returns `(L, d, status)`, with `L` unit lower triangular, ones on its diagonal and zeros
+above it, and `d` the vector of pivots, so that \(A = L\, \mathrm{diag}(d)\, L^T\).
+`lu_factor(A)` returns `(lu, piv, status)`. The matrix `lu` holds \(U\) on and above its diagonal
+and the entries of the unit lower triangular \(L\) below it, and the int64 vector `piv` says
+that row `k` was exchanged with row `piv[k]` at step `k`.
 
 A factor computed once serves any number of solves. Two triangular solves with the factor give
 \(A^{-1} b\):
@@ -151,9 +208,10 @@ the implicit derivative of \(K x = b\):
 \]
 
 It reuses the factor of the solve instead of factoring `K` again or differentiating the steps of
-the factorization. A function that returns a value and its gradient factors `K` once.
+the factorization. A function that returns a value and its gradient factors `K` once. With
+`"gen"`, \(\bar b = K^{-T} \bar x\), solved with the transposed factors.
 
-Because only the lower triangle is read, an entry below the diagonal receives the derivatives of
+With `"pos"` and `"sym"`, only the lower triangle is read, so an entry below the diagonal receives the derivatives of
 both entries it stands for, \(\bar K_{ij} + \bar K_{ji}\), and the entries above the diagonal
 receive zero:
 
@@ -168,14 +226,21 @@ print(sc.gradient(cost, "cost", "K")(np.array([[4.0, 0.0], [1.0, 3.0]]), np.arra
 #  [-0.14049587 -0.17355372]]
 ```
 
-Forward mode differentiates the substitutions step by step. For the factor it uses the closed
-form \(dL = L\, \Phi(L^{-1}\, dK\, L^{-T})\), where \(\Phi\) keeps the lower triangle and halves
-the diagonal. That rule factors `K` once more, so a forward derivative and a Hessian with respect
+Forward mode differentiates the substitutions step by step. For the factor it uses a closed form.
+For Cholesky it is \(dL = L\, \Phi(L^{-1}\, dK\, L^{-T})\), where \(\Phi\) keeps the lower triangle
+and halves the diagonal. For \(L D L^T\), with \(F = L^{-1}\, dK\, L^{-T}\), the pivots change by
+the diagonal of \(F\) and \(dL = L X\), where \(X\) is the strict lower triangle of \(F\) with each
+column divided by its pivot. For LU, with \(F = L^{-1} P\, dK\, U^{-1}\), \(dL\) is \(L\) times the
+strict lower triangle of \(F\) and \(dU\) is the upper triangle of \(F\) times \(U\), the row
+exchanges staying fixed. Each rule factors `K` once more, so a forward derivative and a Hessian with respect
 to `K` cost an extra factorization. Second derivatives, such as those of `sc.hessian`, hold with
 `K` and `b` varying together, and a gradient may itself be differentiated in reverse mode.
 
 `cholesky` and `solve_triangular` follow the same rules. The reverse derivative of a triangular
 solve is one more triangular solve with the transposed matrix, and that of `cholesky` takes two.
+`ldl` and `lu_factor` have only the forward rule. A gradient through their factors differentiates
+the loops of the factorization, which costs far more than the reverse rule of `solve`, so a
+derivative should go through `solve`.
 
 !!! warning "A failed factorization has no meaningful derivative"
     The derivative is computed from the factor whatever the status. When the status is nonzero,
@@ -184,7 +249,9 @@ solve is one more triangular solve with the transposed matrix, and that of `chol
 ## Generated code
 
 Each factorization and substitution is a `scan` over the columns or rows of the matrix, with
-inner loops whose trip counts depend on the step, so the loops cover only one triangle. The
+inner loops whose trip counts depend on the step, so the loops cover only one triangle. The LU
+factorization computes each column from the earlier ones, searches it for the pivot and exchanges
+two rows of the matrix at the pivot's run-time position. The
 factor and the solution are updated in place. The loops themselves have the same size at every
 order of the matrix, and only constant tables grow with it, while the work grows with the cube of
 the order for a factorization and with its square for each right-hand side of a substitution.
