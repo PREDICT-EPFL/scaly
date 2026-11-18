@@ -335,7 +335,7 @@ inputs, and reject empty reduction domains during construction.
 extremum's index as `int64`. A NaN takes precedence over finite entries.
 With `axis=None`, indices address the flattened logical array.
 `sc.norm_inf(x)` is the maximum absolute entry, and `sc.norm_1(x)` sums
-absolute entries. Both norms propagate NaN.
+absolute entries. Both norms reduce over every entry and propagate NaN.
 
 For example, row maxima can retain an axis for broadcasting while their
 indices remain a vector:

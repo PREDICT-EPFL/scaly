@@ -417,7 +417,7 @@ print(sc.sparse_jacobian(root)(p).nnz)       # 9
 
 ## Non-smooth conventions
 
-`minimum`, `maximum`, `min` and `max` split derivatives equally
+`sc.minimum`, `sc.maximum`, `sc.min` and `sc.max` split derivatives equally
 among tied extrema. `abs` has slope `sign(x)`, with slope zero at zero.
 `floor` and `ceil` have zero derivative everywhere. These conventions apply
 in forward and reverse mode. A branch that is not chosen contributes zero
@@ -451,7 +451,7 @@ or mapped function. A solve independent of the differentiated input does not
 block its derivative. See [solver sensitivities](solvers.md#nesting-a-solver-in-a-graph)
 for the limits of dependency analysis.
 
-Derivatives of `min` and `max` on sparse inputs currently
+Derivatives of `sc.min` and `sc.max` on sparse inputs currently
 materialize masks and tie counts over the full logical shape. Their temporary
 storage can therefore grow with the dense size, even for diagonal inputs.
 

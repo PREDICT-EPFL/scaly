@@ -1419,7 +1419,7 @@ def max(x: Any, axis: int | tuple[int, ...] | None = None, *, keepdims: bool = F
 
 
 def min(x: Any, axis: int | tuple[int, ...] | None = None, *, keepdims: bool = False) -> Expr:
-  """Minimum over axes, with the same shape, NaN and derivative rules as ``max``."""
+  """Minimum over axes, with the same shape, NaN and derivative rules as ``sc.max``."""
   return _extreme(x, "min", axis, keepdims)
 
 
