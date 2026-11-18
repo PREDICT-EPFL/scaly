@@ -55,6 +55,8 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.ad.sparsity": 2,
   "scaly.solvers.stats": 2,
   "scaly.solvers.stages": 2,
+  # Import layer 2, not linalg's 5: the symbolic analysis reads only a pattern and sits below ``Function``.
+  "scaly.linalg.symbolic": 2,
   "scaly.function": 3,
   "scaly.function.model": 3,
   "scaly.function.concrete": 3,
