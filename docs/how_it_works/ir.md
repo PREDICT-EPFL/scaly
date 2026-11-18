@@ -125,7 +125,7 @@ Arity is the number of operands.
 | Shape           | `reshape`, `transpose`                        | 1        | Size-preserving reshape, axis permutation |
 | Indexing        | `slice`, `gather`, `scatter`                  | 1, 2 or 3 | Gather and scatter take int64 index operands |
 | Assembly        | `stack`, `concat`                             | Variable | Along one axis                            |
-| Linear algebra  | `matmul`                                      | 2 or 4   | NumPy's rules, leading axes broadcast; a sparse adjoint's product adds a Boolean mask per operand |
+| Linear algebra  | `matmul`                                      | 2 or 4   | NumPy's rules, leading axes broadcast, and a derivative's sampled sparse product adds a Boolean mask per operand |
 | Function calls  | `call`, `loop`                                | Variable | An ordinary call or a loop              |
 
 `dot`, `sumsqr`, `norm_1`, `norm_2`, `norm_inf`, `argmin`, `argmax`, `mean`,
