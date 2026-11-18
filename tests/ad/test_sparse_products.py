@@ -496,8 +496,8 @@ def test_sampled_product_tangent_guards_each_inactive_multiply(left):
 
 def test_conditioned_sampled_product_derivatives_skip_conditioned_terms():
   full = CanonicalPattern((2, 2), (0, 0, 1, 1), (0, 1, 0, 1))
-  # x[0, 1] is conditioned off, and row 1 of y is, so every term reading x[1, 1] is too.
-  kx, ky = np.array([[True, False], [True, True]]), np.array([[True, True], [False, False]])
+  # Row 0 of y is conditioned off, so every term reading x[:, 0] is; x[0, 1] is conditioned off alone.
+  kx, ky = np.array([[True, False], [True, True]]), np.array([[False, False], [True, True]])
   weights = np.array([[1.0, 2.0], [3.0, 4.0]])
 
   def product(w):
@@ -512,7 +512,7 @@ def test_conditioned_sampled_product_derivatives_skip_conditioned_terms():
   def tangent(w):
     return jvp_many((sc.values(product(w)) * sc.const(weights.ravel())).sum(), w, sc.const(np.eye(8)))
 
-  w = np.array([1.0, 0.0, 4.0, 0.0, 5.0, 6.0, 7.0, 8.0])
+  w = np.array([1.0, 0.0, 0.0, 4.0, 5.0, 6.0, 7.0, 8.0])
   x, y = np.sqrt(w[:4]).reshape(2, 2), w[4:].reshape(2, 2)
   dx = np.where(kx, weights @ np.where(ky, y, 0).T, 0)
   with np.errstate(divide="ignore", invalid="ignore"):
