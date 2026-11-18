@@ -96,9 +96,10 @@ def _constant_fold(e: Expr) -> Expr:
   if any(v is None for v in vals):
     return e
   args = [v for v in vals if v is not None]
-  if e.op == ExprOp.CAST and e.args[0].type.dtype.is_floating and e.type.dtype.is_integer:
+  if e.args[0].type.dtype.is_floating and e.type.dtype.is_integer:
+    value = args[0].flat[:1] if _uniform_value(args[0]) is not None else args[0]
     limit = 1 << (e.type.dtype.bits - 1)
-    if not np.all(np.isfinite(args[0]) & (args[0] >= -limit) & (args[0] < limit)):
+    if not np.all(np.isfinite(value) & (value >= -limit) & (value < limit)):
       return e
   try:
     with np.errstate(divide="raise", invalid="raise", over="raise"):
