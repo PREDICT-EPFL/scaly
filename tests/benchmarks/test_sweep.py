@@ -829,7 +829,7 @@ def test_dispatch_workspace_counts_promoted_lane_scratch():
 
   @sc.function(sc.arg("z", 60), outputs=sc.arg("y", 45), name="metric_lane_map")
   def mapped(z: sc.Expr) -> sc.Expr:
-    return sc.vmap(stage, 5)(z).vec()
+    return sc.vmap(stage, 5)(z).ravel()
 
   assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped, lanes=1).program) == (5, 21, 81)
   assert _dispatch_metrics(mapped.instantiate(), render_c_module(mapped, lanes=2).program) == (5, 42, 81)

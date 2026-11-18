@@ -118,9 +118,9 @@ expression graph for inspection and export.
 
 ::: scaly.ir.expr.sumsqr
 
-::: scaly.ir.expr.reduce_max
+::: scaly.ir.expr.max
 
-::: scaly.ir.expr.reduce_min
+::: scaly.ir.expr.min
 
 ::: scaly.ir.expr.argmax
 
@@ -142,7 +142,7 @@ expression graph for inspection and export.
 
 ::: scaly.ir.expr.split
 
-::: scaly.ir.expr.vec
+::: scaly.ir.expr.ravel
 
 ::: scaly.ir.expr.gather
     options:

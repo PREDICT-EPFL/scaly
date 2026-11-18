@@ -182,7 +182,7 @@ def test_reverse_mode_carries_the_mask_into_a_function_call(mapped: bool) -> Non
 
   @sc.function(sc.arg("x", size), outputs=sc.group(*(sc.arg(k) for k in ("g", "j", "h", "rr"))), name="sd_masked_call")
   def derivatives(x: sc.Expr) -> tuple[sc.Expr, ...]:
-    roots = sc.vmap(_root, 2)(x.reshape((2, 2))).vec() if mapped else _root(x)
+    roots = sc.vmap(_root, 2)(x.reshape((2, 2))).ravel() if mapped else _root(x)
     chosen = sc.where(x > 0.0, roots, 0.0)
     grad = sc.gradient(chosen.sum(), x)
     return grad, sc.jacobian(chosen, x), sc.hessian(chosen.sum(), x), sc.gradient(grad.sum(), x)
@@ -200,7 +200,7 @@ def test_reverse_mode_carries_the_mask_into_a_function_call(mapped: bool) -> Non
 def test_called_mask_uses_the_condition_when_the_cotangent_is_zero(mapped: bool) -> None:
   @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("g"), sc.arg("h")), name="sd_zero_cot_call")
   def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
-    roots = sc.vmap(_root, 1)(x.reshape((1, 2))).vec() if mapped else _root(x)
+    roots = sc.vmap(_root, 1)(x.reshape((1, 2))).ravel() if mapped else _root(x)
     cost = sc.where(x > 0.0, (roots - 2.0) ** 2, 0.0).sum()
     return sc.gradient(cost, x), sc.hessian(cost, x)
 
@@ -217,7 +217,7 @@ def test_nested_calls_keep_the_callers_condition_with_shared_formal_symbols(mapp
 
   @sc.function(sc.arg("u", 4 if mapped else 2), outputs=sc.group(sc.arg("g"), sc.arg("j")), name="sd_nested_calls")
   def derivatives(u: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
-    roots = sc.vmap(shifted, 2)(u.reshape((2, 2))).vec() if mapped else shifted(u)
+    roots = sc.vmap(shifted, 2)(u.reshape((2, 2))).ravel() if mapped else shifted(u)
     chosen = sc.where(u < 5.0, sc.where(u > 0.0, roots, 0.0), 0.0)
     return sc.gradient(chosen.sum(), u), sc.jacobian(chosen, u)
 
@@ -236,7 +236,7 @@ def test_mapped_adjoint_cache_separates_masked_and_unmasked_calls_and_reuses_con
 
   @sc.function(sc.arg("x", 4), outputs=sc.group(*(sc.arg(k) for k in ("plain", "positive", "large"))), name="sd_cached_masks")
   def derivatives(x: sc.Expr) -> tuple[sc.Expr, ...]:
-    roots = sc.vmap(root, 2)(x.reshape((2, 2))).vec()
+    roots = sc.vmap(root, 2)(x.reshape((2, 2))).ravel()
     return tuple(sc.gradient(cost, x) for cost in (roots.sum(), sc.where(x > 0.0, roots, 0.0).sum(), sc.where(x > 4.0, roots, 0.0).sum()))
 
   plain, positive, large = (np.asarray(v) for v in derivatives(np.array([0.0, 4.0, 0.0, 4.0])))
@@ -256,7 +256,7 @@ def test_called_mask_survives_a_mapped_call_before_a_singular_partial() -> None:
 
   @sc.function(sc.arg("u", 4), outputs=sc.arg("r"), name="sd_mapped_roots")
   def roots(u: sc.Expr) -> sc.Expr:
-    return sc.vmap(twice, 2)(u.sqrt().reshape((2, 2))).vec()
+    return sc.vmap(twice, 2)(u.sqrt().reshape((2, 2))).ravel()
 
   @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("g"), sc.arg("j")), name="sd_called_mapped_roots")
   def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
@@ -302,7 +302,7 @@ def test_two_mapped_calls_merge_their_masks_before_a_singular_partial() -> None:
   @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("g"), sc.arg("j")), name="sd_merged_maps")
   def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     roots = x.sqrt().reshape((2, 2))
-    chosen = sc.where(x > 0.0, sc.vmap(twice, 2)(roots).vec(), 0.0) + sc.where(x > 4.0, sc.vmap(thrice, 2)(roots).vec(), 0.0)
+    chosen = sc.where(x > 0.0, sc.vmap(twice, 2)(roots).ravel(), 0.0) + sc.where(x > 4.0, sc.vmap(thrice, 2)(roots).ravel(), 0.0)
     return sc.gradient(chosen.sum(), x), sc.jacobian(chosen, x)
 
   grad, jac = (np.asarray(v) for v in derivatives(np.array([0.0, 4.0, -1.0, 9.0])))
@@ -323,7 +323,7 @@ def test_called_masks_use_stored_coordinates_for_sparse_outputs(mapped: bool) ->
   @sc.function(sc.arg("x", size), outputs=sc.group(sc.arg("g"), sc.arg("j")), name="sd_sparse_mask")
   def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     sparse = sc.pack(x.reshape((2, 2)), pattern) if mapped else sc.pack(x, pattern)
-    chosen = sc.where(x > 0.0, sc.values(sc.vmap(stage, 2)(sparse) if mapped else stage(sparse)).vec(), 0.0)
+    chosen = sc.where(x > 0.0, sc.values(sc.vmap(stage, 2)(sparse) if mapped else stage(sparse)).ravel(), 0.0)
     return sc.gradient(chosen.sum(), x), sc.jacobian(chosen, x)
 
   point = np.array([0.0, 4.0, -1.0, 9.0]) if mapped else np.array([0.0, 4.0])
@@ -349,7 +349,7 @@ def test_called_masks_keep_sparse_adjoint_activity_before_singular_inputs(mapped
   def derivatives(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     roots = x.sqrt()
     sparse = sc.pack(roots.reshape((2, 2)), pattern) if mapped else sc.pack(roots, pattern)
-    chosen = sc.where(x > 0.0, sc.values(sc.vmap(stage, 2)(sparse) if mapped else stage(sparse)).vec(), 0.0)
+    chosen = sc.where(x > 0.0, sc.values(sc.vmap(stage, 2)(sparse) if mapped else stage(sparse)).ravel(), 0.0)
     return sc.gradient(chosen.sum(), x), sc.jacobian(chosen, x)
 
   point = np.array([0.0, 4.0, -1.0, 9.0]) if mapped else np.array([0.0, 4.0])

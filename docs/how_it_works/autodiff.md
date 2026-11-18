@@ -194,7 +194,7 @@ def stage(x: sc.Expr, p: sc.Expr) -> sc.Expr:
 
 @sc.function(sc.arg("w", N + 1), outputs=sc.arg("cost"))
 def total(w: sc.Expr) -> sc.Expr:
-    return sc.vmap(stage, N)(w[:N].reshape((N, 1)), sc.broadcast(w[N:])).vec().sum()
+    return sc.vmap(stage, N)(w[:N].reshape((N, 1)), sc.broadcast(w[N:])).ravel().sum()
 
 hess = sc.sparse_hessian(total, "cost", "w")
 pattern = hess.sparsity()
@@ -308,7 +308,7 @@ def link(zz: sc.Expr, p: sc.Expr) -> sc.Expr:
 
 @sc.function(sc.arg("z", N + 1), sc.arg("p", 1), outputs=sc.arg("cost"))
 def chain(z: sc.Expr, p: sc.Expr) -> sc.Expr:
-    return sc.vmap(link, N)(sc.window(z, 0, 1), sc.broadcast(p)).vec().sum()
+    return sc.vmap(link, N)(sc.window(z, 0, 1), sc.broadcast(p)).ravel().sum()
 ```
 
 The windows over `z` overlap:

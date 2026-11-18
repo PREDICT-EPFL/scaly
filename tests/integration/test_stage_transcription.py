@@ -108,7 +108,7 @@ def bicycle_eq_function_vmap(horizon: int) -> sc.Function[tuple[tuple[sc.Expr, s
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = inputs
     initial = stage_initial((z[:NZ], p[:NX]))
-    mapped = sc.vmap(stage_interstage, horizon)((sc.window(z, 0, NZ), sc.window(z, NZ, NZ), sc.window(p, NX * (horizon + 1), 0))).vec()
+    mapped = sc.vmap(stage_interstage, horizon)((sc.window(z, 0, NZ), sc.window(z, NZ, NZ), sc.window(p, NX * (horizon + 1), 0))).ravel()
     return sc.concat([initial, mapped])
 
   return fn

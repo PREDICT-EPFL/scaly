@@ -327,8 +327,9 @@ print(center_rows(np.arange(6.0).reshape(2, 3)))
 #  [-1.  0.  1.]]
 ```
 
-`sc.reduce_max(x, axis=..., keepdims=...)` and `sc.reduce_min` use the same
-axis conventions. They propagate NaN, include structural zeros in sparse
+`sc.max(x, axis=..., keepdims=...)` and `sc.min` use the same
+axis conventions, as do the methods `x.max()` and `x.min()`.
+They propagate NaN, include structural zeros in sparse
 inputs, and reject empty reduction domains during construction.
 `sc.argmax` and `sc.argmin` accept one axis or `None` and return the first
 extremum's index as `int64`. A NaN takes precedence over finite entries.
@@ -345,7 +346,7 @@ indices remain a vector:
     outputs=sc.group(sc.arg("peaks"), sc.arg("indices", sc.TensorType((2,), sc.dtypes.int64))),
 )
 def row_extrema(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
-    return sc.reduce_max(x, axis=1, keepdims=True), sc.argmax(x, axis=1)
+    return sc.max(x, axis=1, keepdims=True), sc.argmax(x, axis=1)
 
 peaks, indices = row_extrema(np.arange(6.0).reshape(2, 3))
 print(peaks.shape)  # (2, 1)
@@ -566,7 +567,7 @@ argument first.
 
 Each output gains a leading axis of length five. The result here has shape
 `(5,)`, and a callee returning a vector of length two would give `(5, 2)`.
-`.vec()` flattens such a result back into one vector when the surrounding
+`.ravel()` flattens such a result back into one vector when the surrounding
 calculation needs one. A callee with several outputs returns a tuple of mapped
 arrays. A mapped callable also accepts numerical arrays directly.
 

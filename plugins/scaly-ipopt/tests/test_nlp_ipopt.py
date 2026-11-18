@@ -279,7 +279,7 @@ def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pyte
   def build(mapped: bool):
     x = sc.sym("x", 4)
     if mapped:
-      h_eq = sc.vmap(piece, 2)(x).vec()
+      h_eq = sc.vmap(piece, 2)(x).ravel()
     else:
       h_eq = sc.concat([piece(x[2 * it : 2 * (it + 1)]) for it in range(2)])
     return build_nlp(
@@ -305,7 +305,7 @@ def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pyte
   def hess_dense(mapped: bool, xv: np.ndarray, lam: np.ndarray) -> np.ndarray:
     @sc.function(sc.arg("x", 4), outputs=sc.group(sc.arg("f"), sc.arg("g")), name=f"nlp_hess_base_{int(mapped)}")
     def base(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
-      h_eq = sc.vmap(piece, 2)(x).vec() if mapped else sc.concat([piece(x[2 * it : 2 * (it + 1)]) for it in range(2)])
+      h_eq = sc.vmap(piece, 2)(x).ravel() if mapped else sc.concat([piece(x[2 * it : 2 * (it + 1)]) for it in range(2)])
       return ((x - target) ** 2).sum(), h_eq
 
     shf = sc.sparse_lagrangian_hessian(base, "x")

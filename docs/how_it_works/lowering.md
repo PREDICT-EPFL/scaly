@@ -94,7 +94,7 @@ def stage(x):
 
 @sc.function(sc.arg("xs", 15), outputs=sc.arg("ys"))
 def horizon(xs):
-    return sc.vmap(stage, 5)(xs.reshape((5, 3))).vec()
+    return sc.vmap(stage, 5)(xs.reshape((5, 3))).ravel()
 ```
 
 ```
@@ -203,7 +203,7 @@ def stage(x: sc.Expr, w: sc.Expr):
 
 @sc.function(sc.arg("xs", 15), sc.arg("w", 9), outputs=sc.arg("ys"))
 def horizon(xs: sc.Expr, w: sc.Expr):
-    return sc.vmap(stage, 5)(xs.reshape((5, 3)), sc.broadcast(w)).vec()
+    return sc.vmap(stage, 5)(xs.reshape((5, 3)), sc.broadcast(w)).ravel()
 ```
 
 `sc.broadcast(w)` passes the same nine values to all five calls. Lowered, the loop calls `@stage` five times, and `@stage` evaluates
@@ -240,7 +240,7 @@ def stage(x):
 
 @sc.function(sc.arg("xs", 15), outputs=sc.arg("firsts"))
 def firsts(xs):
-    return sc.vmap(stage, 5)(xs.reshape((5, 3))).vec()[::3]
+    return sc.vmap(stage, 5)(xs.reshape((5, 3))).ravel()[::3]
 ```
 
 ```

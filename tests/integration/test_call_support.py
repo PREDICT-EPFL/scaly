@@ -40,7 +40,7 @@ def _chain_stage():
       sc.window(positions, 3, 3),
       sc.window(positions, 6, 3),
       *(sc.broadcast(value) for value in (mass, spring_d, rest_len, gravity)),
-    ).vec()
+    ).ravel()
     return sc.concat([x[24:], u, acceleration])
 
   @sc.function(
@@ -80,7 +80,7 @@ def _seed_image(expr: Expr, wrt: Expr, seeds: np.ndarray) -> np.ndarray:
 
 def test_chain_M9_hessian_seed_axis_support_matches_independent_jacobian_images() -> None:
   z, p, lam = sc.sym("chain_z", 141), sc.sym("chain_p", 50, diff=False), sc.sym("chain_lam", 135, diff=False)
-  mapped = sc.vmap(_chain_stage(), 2)(sc.window(z, 0, 48), sc.window(z, 48, 48), sc.window(p, 45, 0)).vec()
+  mapped = sc.vmap(_chain_stage(), 2)(sc.window(z, 0, 48), sc.window(z, 48, 48), sc.window(p, 45, 0)).ravel()
   hessian = _sparse_hessian(lam @ sc.concat([z[:45] - p[:45], mapped]), z)
   colors = star_coloring(hessian.sparsity)
   assert hessian.coloring_width == 42

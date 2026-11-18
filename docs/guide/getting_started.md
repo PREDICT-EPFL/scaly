@@ -317,7 +317,7 @@ def defect(x: sc.Expr, u: sc.Expr, xnext: sc.Expr) -> sc.Expr:
 def multiple_shooting(w: sc.Expr, x0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     states = w[: 2 * (N + 1)].reshape((N + 1, 2))
     controls = w[2 * (N + 1) :]
-    defects = sc.vmap(defect, N)(states[:-1], controls.reshape((N, 1)), states[1:]).vec()
+    defects = sc.vmap(defect, N)(states[:-1], controls.reshape((N, 1)), states[1:]).ravel()
     return sc.ProblemSpec(
         minimize=sc.sumsqr(states[:-1]) + 0.1 * sc.sumsqr(controls)
                  + 10.0 * sc.sumsqr(states[-1]),

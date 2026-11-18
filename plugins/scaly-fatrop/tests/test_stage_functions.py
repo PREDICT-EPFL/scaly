@@ -89,7 +89,7 @@ def test_nested_stage_solver_preserves_workspace_and_parameters():
   @sc.function(sc.arg("initial", 2), sc.arg("gain", ()), sc.arg("ref", (4, 2)))
   def outer(initial, gain, ref):
     z, x_N = solve((initial, gain, ref), x0=tuple(sc.const(v) for v in ocp.pack(0.0, 0.0, 1.0, stage_form=True)))[0]
-    return sc.concat([z.vec(), x_N])
+    return sc.concat([z.ravel(), x_N])
 
   z, x_N = solve(params, x0=ocp.pack(0.0, 0.0, 1.0, stage_form=True))[0]
   np.testing.assert_allclose(outer(*params), np.concatenate([z.ravel(), x_N]), atol=1e-9)

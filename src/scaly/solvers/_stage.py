@@ -80,7 +80,7 @@ def stage_oracles(problem: Problem[Any, Any, Any, Any]) -> StageOracles:
   initial_block = concat([hessian(initial_lag, initial_x), gradient(initial_lag, initial_x).reshape((1, nx))], axis=0)
   initial_hess = build("initial_hess", (initial_x, params[0], lam), (initial_block,), ("hess",))
 
-  grad = concat([vmap(stage_grad, N)(*mapped).vec(), terminal_grad(*last)])
+  grad = concat([vmap(stage_grad, N)(*mapped).ravel(), terminal_grad(*last)])
   jac = vmap(stage_jac, N)(*mapped)
   stage_lam = concat([lam[ni : problem.n_eq].reshape((N, nx)), lam[problem.n_eq : problem.n_eq + N * np_].reshape((N, np_))], axis=1)
   blocks = vmap(stage_hess, N)(*mapped, broadcast(scale), stage_lam)

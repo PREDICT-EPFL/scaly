@@ -21,7 +21,7 @@ def defect(z: sc.Expr, znext: sc.Expr) -> sc.Expr:
 
 @sc.function(sc.arg("zs", 2 * N), outputs=sc.arg("ds"))
 def shooting(zs: sc.Expr) -> sc.Expr:
-  return sc.vmap(defect, N - 1)(sc.window(zs, 0, 2), sc.window(zs, 2, 2)).vec()
+  return sc.vmap(defect, N - 1)(sc.window(zs, 0, 2), sc.window(zs, 2, 2)).ravel()
 
 
 @sc.function(sc.arg("zs", 2 * N), outputs=sc.arg("cost"))

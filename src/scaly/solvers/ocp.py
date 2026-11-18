@@ -305,13 +305,13 @@ class DiscreteOCP:
     def body(variables: tuple[Expr, ...], parameters: Any) -> ProblemSpec[Any]:
       z, x_last, *shared = variables
       initial_state, *values = parameters if isinstance(parameters, tuple) else (parameters,)
-      flat = concat([z.vec(), x_last])
+      flat = concat([z.ravel(), x_last])
       mapped = [window(flat, 0, nz), window(flat, nxa, nz), *(broadcast(value) for value in shared)]
       last = [x_last, *shared]
       for param, value in zip(params, values, strict=True):
         mapped.append(value[:N] if param in self.stage_params else broadcast(value))
         last.append(value[N] if param in self.stage_params else value)
-      next_states = concat([z[1:, :nxa].vec(), x_last]) if N > 1 else x_last
+      next_states = concat([z[1:, :nxa].ravel(), x_last]) if N > 1 else x_last
       cost = Expr.const(0.0)
       if functions.cost is not None:
         cost = cost + vmap(functions.cost, N)(*mapped).sum()
@@ -319,12 +319,12 @@ class DiscreteOCP:
         cost = cost + functions.terminal_cost(*last)
       ineq = []
       if functions.path is not None:
-        ineq.append(constraint(functions.path, self._path, vmap(functions.path, N)(*mapped).vec(), N))
+        ineq.append(constraint(functions.path, self._path, vmap(functions.path, N)(*mapped).ravel(), N))
       if functions.terminal is not None:
         ineq.append(constraint(functions.terminal, self._terminal, functions.terminal(*last), 1))
       return ProblemSpec(
         minimize=cost,
-        eq=(functions.initial(flat[:nxa], initial_state), vmap(functions.dynamics, N)(*mapped).vec() - next_states),
+        eq=(functions.initial(flat[:nxa], initial_state), vmap(functions.dynamics, N)(*mapped).ravel() - next_states),
         ineq=tuple(ineq),
         lb=bounds(0, -np.inf),
         ub=bounds(1, np.inf),

@@ -594,6 +594,29 @@ def test_print_rejects_a_format_it_cannot_render(fmt, values, error, message) ->
     sc.print(fmt, *values)
 
 
+def test_numpy_extrema_and_ravel_names() -> None:
+  data = np.arange(24.0).reshape((2, 3, 4)) - 12
+  for keepdims in (False, True):
+
+    @sc.function(
+      sc.arg("x", data.shape), outputs=sc.group(*(sc.arg(name) for name in ("max", "min", "method_max", "method_min", "flat", "method_flat")))
+    )
+    def f(x):
+      return (
+        sc.max(x, axis=(0, 2), keepdims=keepdims),
+        sc.min(x, axis=(0, 2), keepdims=keepdims),
+        x.max(axis=(0, 2), keepdims=keepdims),
+        x.min(axis=(0, 2), keepdims=keepdims),
+        sc.ravel(x.T),
+        x.T.ravel(),
+      )
+
+    high, low = np.max(data, axis=(0, 2), keepdims=keepdims), np.min(data, axis=(0, 2), keepdims=keepdims)
+    flat = np.ravel(data.T)
+    for actual, expected in zip(f(data), (high, low, high, low, flat, flat), strict=True):
+      np.testing.assert_array_equal(actual, expected)
+
+
 def test_reduction_axes_are_normalized_and_interned() -> None:
   x = sc.sym("axis_x", (2, 3, 4))
   assert x.sum((2, 0)) is x.sum((-1, -3)) is x.sum((0, 2))

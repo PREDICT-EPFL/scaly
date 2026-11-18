@@ -287,7 +287,7 @@ def test_sparse_mapped_arguments_and_outputs_use_logical_support_coordinates() -
   callee = ConcreteFunction._from_exprs("support_sparse_call", [x], [x.sin()], ["x"], ["y"])
   mask = np.array([[1, 0, 1], [0, 1, 0], [1, 0, 1], [0, 0, 0]])
   actual = sc.pack(_masked("support_sparse_stages", mask), pattern, shape=(4, 3, 3))
-  mapped = _mapped_call(callee, 4, [(sc.values(actual).vec(), 0, 3)])
+  mapped = _mapped_call(callee, 4, [(sc.values(actual).ravel(), 0, 3)])
   assert mapped.support == _entries(mask)
   assert callee(sc.pack(_masked("support_sparse_single", mask[0]), pattern)).support == frozenset({0, 8})
 
@@ -302,11 +302,11 @@ def test_randomized_support_soundness_against_numpy() -> None:
     body = [a + b, a - b, a * b, a / (b * b + 1), a.sin(), a.maximum(b), a.minimum(b), a.T @ b, a @ b.T]
     callee = ConcreteFunction._from_exprs(f"sound_calls_{case}", [a, b], body, ["a", "b"], [f"out_{i}" for i in range(len(body))])
     calls = callee(x, y)
-    maps = [_mapped_call(callee, 3, [(sc.concat([x.vec(), x.vec() * 0, x.vec()]), 0, 12), (y.vec(), 0, 0)], i) for i in range(len(body))]
+    maps = [_mapped_call(callee, 3, [(sc.concat([x.ravel(), x.ravel() * 0, x.ravel()]), 0, 12), (y.ravel(), 0, 0)], i) for i in range(len(body))]
     zero_x = [x * 0 + y, x * 0 - y, x * 0 * y, x * 0 / (y * y + 1), (x * 0).sin(), (x * 0).maximum(y), (x * 0).minimum(y), (x * 0).T @ y, x * 0 @ y.T]
     for inline, call, mapped, middle in zip(graphs, calls, maps, zero_x, strict=True):
       assert call.support == inline.support
-      expected_support = sc.concat([inline.vec(), middle.vec(), inline.vec()]).support
+      expected_support = sc.concat([inline.ravel(), middle.ravel(), inline.ravel()]).support
       assert mapped.support == expected_support
     for _ in range(5):
       a, b = [rng.normal(size=(3, 4)) * mask for mask in masks]

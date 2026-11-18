@@ -111,7 +111,7 @@ def _prunable_support(expr: Expr) -> Support:
 
 
 def jacobian_sparsity(expr: Expr, wrt: Expr) -> SparsityPattern:
-  """Estimate structural sparsity of ``d vec(expr) / d vec(wrt)``.
+  """Estimate structural sparsity of ``d ravel(expr) / d ravel(wrt)``.
 
   ``wrt`` must be an independent input from ``sc.sym`` or a Function declaration.
   This is purely symbolic: it tracks element dependencies through the graph without using

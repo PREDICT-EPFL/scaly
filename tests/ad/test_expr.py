@@ -16,7 +16,7 @@ import scaly as sc
 def test_structural_transpose_concat_vec_eval_and_ad() -> None:
   @sc.function(sc.arg("x", (2, 2)), outputs=sc.arg("y", 8))
   def f(x):
-    return sc.concat([x.T, x + 1.0], axis=1).vec()
+    return sc.concat([x.T, x + 1.0], axis=1).ravel()
 
   jf = sc.jacobian(f, "y", "x")
   xv = np.array([[1.0, 2.0], [3.0, 4.0]])

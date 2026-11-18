@@ -110,10 +110,10 @@ def _view_window(value: Expr, length: int, width: int, *, repeated: bool = False
   if stopped:
     base = stop_gradient(base)
   if all(node.op == ExprOp.RESHAPE for node in movements):
-    return base if len(base.shape) == 1 else base.vec(), 0, 0 if repeated else width
+    return base if len(base.shape) == 1 else base.ravel(), 0, 0 if repeated else width
   count = 1 if repeated else length
   if count == 0 or width == 0:
-    return value if len(value.shape) == 1 else value.vec(), 0, 0 if repeated else width
+    return value if len(value.shape) == 1 else value.ravel(), 0, 0 if repeated else width
   coords = list(np.unravel_index(np.arange(count * width), value.shape)) if value.shape else []
   for node in movements:
     src = node.args[0]
@@ -137,8 +137,8 @@ def _view_window(value: Expr, length: int, width: int, *, repeated: bool = False
     stride = 0 if repeated or count == 1 else int(rows[1, 0] - start)
     expected = start + np.arange(count)[:, None] * stride + np.arange(width)
     if stride >= 0 and np.array_equal(rows, expected):
-      return base if len(base.shape) == 1 else base.vec(), start, stride
-  return value if len(value.shape) == 1 else value.vec(), 0, 0 if repeated else width
+      return base if len(base.shape) == 1 else base.ravel(), start, stride
+  return value if len(value.shape) == 1 else value.ravel(), 0, 0 if repeated else width
 
 
 def _map_arguments(source: Function, length: int, name: str, args: tuple[Any, ...]) -> tuple[ConcreteFunction, list[Any], list[tuple[int, int]], Any]:
@@ -231,7 +231,7 @@ def _map_arguments(source: Function, length: int, name: str, args: tuple[Any, ..
       assert layout is not None and decl is not None
       if not np.array_equal(layout.permutation, np.arange(pattern.nnz)):
         slots = np.arange(width).reshape(decl.storage_shape)[..., layout.inverse_permutation].reshape(-1)
-        actual = actual.gather(start + np.arange(length)[:, None] * stride + slots).vec()
+        actual = actual.gather(start + np.arange(length)[:, None] * stride + slots).ravel()
         start, stride = 0, width
     actuals.append(actual)
     layouts.append((start, stride))
@@ -335,7 +335,11 @@ def vmap[SI, NI, SO, NO](callee: Function[SI, NI, SO, NO] | ConcreteFunction[SI,
     def body(*args):
       actuals = inputs.flatten_symbolic(args, "vmap inputs")
       specs = [
-        (values(actual).vec() if actual.type.pattern is not None else actual if len(actual.shape) == 1 else actual.vec(), 0, formal.type.storage_size)
+        (
+          values(actual).ravel() if actual.type.pattern is not None else actual if len(actual.shape) == 1 else actual.ravel(),
+          0,
+          formal.type.storage_size,
+        )
         for actual, formal in zip(actuals, concrete.inputs, strict=True)
       ]
       results = tuple(_mapped_output(concrete, length, specs, i) for i in range(len(concrete.outputs)))

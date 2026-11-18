@@ -288,15 +288,15 @@ def test_float32_structural_derivatives_stay_float32(case, mode):
     def body(value):
       return value * value
 
-    out = (body(x.vec()[:2]) if case == "call" else _mapped_call(body, 2, [(x.vec(), 0, 2 if case == "mapped" else 0)])).sum()
+    out = (body(x.ravel()[:2]) if case == "call" else _mapped_call(body, 2, [(x.ravel(), 0, 2 if case == "mapped" else 0)])).sum()
   else:
     out = {
       "sum": lambda: (x * x).sum(),
-      "dot": lambda: x.vec() @ y.vec(),
+      "dot": lambda: x.ravel() @ y.ravel(),
       "matvec": lambda: (x @ y[0]).sum(),
       "vecmat": lambda: (x[0] @ y).sum(),
       "matmat": lambda: (x @ y).sum(),
-      "self_dot": lambda: x.vec() @ x.vec(),
+      "self_dot": lambda: x.ravel() @ x.ravel(),
       "self_matmul": lambda: (x @ x).sum(),
       "unreached": lambda: (y * y).sum(),
     }[case]()

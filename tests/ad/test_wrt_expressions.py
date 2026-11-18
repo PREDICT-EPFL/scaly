@@ -155,7 +155,7 @@ def test_call_and_map(mapped: bool, slice_output: bool) -> None:
   )
   def fn(p: sc.Expr, c: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
     args = sc.concat([p, c[4:5]])
-    value = sc.vmap(_pair, 2)(args.reshape((2, 2))).vec() if mapped else sc.concat([_pair(args[:2]), _pair(args[2:])])
+    value = sc.vmap(_pair, 2)(args.reshape((2, 2))).ravel() if mapped else sc.concat([_pair(args[:2]), _pair(args[2:])])
     out = value[1:3] ** 3 + value[0] if slice_output else value
     pattern = sc.jacobian_sparsity(out, p)
     assert pattern.nnz == (5 if slice_output else 6)
@@ -208,7 +208,7 @@ def test_structured_map_of_an_input_slice(window: bool) -> None:
   @sc.function(sc.arg("c", 6), outputs=sc.group(sc.arg("jac", (4, 6)), sc.arg("sparse", (4, 6))))
   def fn(c: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     p = c[1:5]
-    value = sc.vmap(_pair, 2)(sc.window(p, 0, 2) if window else p.reshape((2, 2))).vec()
+    value = sc.vmap(_pair, 2)(sc.window(p, 0, 2) if window else p.reshape((2, 2))).ravel()
     return sc.jacobian(value, c), sc.to_dense(sc.sparse_jacobian(value, c))
 
   expected = np.zeros((4, 6))

@@ -261,7 +261,7 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
       target = indices[stored_indices(args[2].type)]
       slots = np.searchsorted(stored_indices(expr.type), target) if expr.type.pattern is not None else target
       full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.type.storage_size + slots[None, :]).reshape(-1)
-      stored = _scatter_zero(values(d[1]).vec(), full, (nseed * expr.type.storage_size,))
+      stored = _scatter_zero(values(d[1]).ravel(), full, (nseed * expr.type.storage_size,))
       scattered = _reshape_tangent(stored, expr, nseed)
       return scattered if d[0].support == frozenset() else d[0] + scattered
     full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.size + indices[None, :]).reshape(-1)

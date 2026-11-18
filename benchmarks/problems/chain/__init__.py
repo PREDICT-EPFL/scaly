@@ -102,7 +102,7 @@ def chain_ode_fn(n_masses: int) -> sc.Function:
       sc.broadcast(spring_d),
       sc.broadcast(rest_len),
       sc.broadcast(gravity),
-    ).vec()
+    ).ravel()
     return sc.concat([velocities, u, accel])
 
   return ode
@@ -155,7 +155,7 @@ def _eq_stage_fn(n_masses: int) -> sc.Function:
 
 def _chain_eq_expr(z: sc.Expr, p: sc.Expr, n_masses: int, horizon: int) -> sc.Expr:
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
-  mapped = sc.vmap(_eq_stage_fn(n_masses), horizon)(sc.window(z, 0, nz), sc.window(z, nz, nz), sc.window(p, nx, 0)).vec()
+  mapped = sc.vmap(_eq_stage_fn(n_masses), horizon)(sc.window(z, 0, nz), sc.window(z, nz, nz), sc.window(p, nx, 0)).ravel()
   return sc.concat([z[:nx] - p[:nx], mapped])
 
 

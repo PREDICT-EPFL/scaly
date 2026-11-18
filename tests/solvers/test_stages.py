@@ -118,7 +118,7 @@ def test_mapped_dynamics_match_an_unrolled_layout() -> None:
 
   @sc.problem(vars=sc.arg("z", 9))
   def mapped(z: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
-    return sc.ProblemSpec(minimize=sc.sumsqr(z), eq=(z[:2], sc.vmap(gap, 2)(sc.window(z, 0, 3), sc.window(z, 3, 3)).vec()))
+    return sc.ProblemSpec(minimize=sc.sumsqr(z), eq=(z[:2], sc.vmap(gap, 2)(sc.window(z, 0, 3), sc.window(z, 3, 3)).ravel()))
 
   descriptor = as_concrete(sc.solver(mapped, "ipopt").function).descriptor
   reference = as_concrete(sc.solver(_tracking(terminal_controls=1), "ipopt").function).descriptor.stage_layout

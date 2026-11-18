@@ -367,7 +367,7 @@ def test_float32_structural_operations_match_numpy(mode):
   def fn(x):
     a = sc.const(values) if mode == "folded" else sc.cast(x, "float32")
     moved = sc.concat([a.T.reshape(12)[::2], a.gather([0, 3, 7, 11])])
-    scattered = _scatter_zero(a.vec(), np.repeat(np.arange(6), 2), (6,))
+    scattered = _scatter_zero(a.ravel(), np.repeat(np.arange(6), 2), (6,))
     return tuple(sc.cast(v, "float64").with_lowering("scalar" if mode == "scalar" else "block") for v in (a @ a.T, moved, scattered, a.sum()))
 
   expected = [

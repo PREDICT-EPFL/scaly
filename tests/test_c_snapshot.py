@@ -53,7 +53,7 @@ def _shooting() -> sc.Function:
   @sc.function(sc.group(sc.arg("z", 4 * (N_STAGES + 1)), sc.arg("u", 2 * N_STAGES)), outputs=sc.arg("eq"), name="shooting")
   def shooting(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, u = inputs
-    return sc.vmap(_dynamics(), N_STAGES)((sc.window(z, 0, 4), u)).vec() - z[4:]
+    return sc.vmap(_dynamics(), N_STAGES)((sc.window(z, 0, 4), u)).ravel() - z[4:]
 
   return shooting
 

@@ -80,7 +80,7 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
     def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       z, p = inputs
       initial = eq_initial((z[:NZ], p[:NX]))
-      mapped = sc.vmap(eq_interstage, N)((sc.window(z, 0, NZ), sc.window(z, NZ, NZ), sc.window(p, NX, NX))).vec()
+      mapped = sc.vmap(eq_interstage, N)((sc.window(z, 0, NZ), sc.window(z, NZ, NZ), sc.window(p, NX, NX))).ravel()
       return sc.concat([initial, mapped])
 
     return fn
@@ -161,7 +161,7 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
     def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       z, p = inputs
       initial = eq_initial((z[:NZ], p[:NX]))
-      mapped = sc.vmap(eq_interstage, N)((sc.window(z, 0, NZ), sc.window(z, NZ, NZ), sc.window(p, NX, NX))).vec()
+      mapped = sc.vmap(eq_interstage, N)((sc.window(z, 0, NZ), sc.window(z, NZ, NZ), sc.window(p, NX, NX))).ravel()
       return sc.concat([initial, mapped])
 
     return fn
@@ -249,7 +249,7 @@ def _build_pairs_fn(mapped: bool) -> sc.Function[tuple[tuple[sc.Expr, sc.Expr]],
     u, p = inputs
     uu, slack = u[: NU * NB], u[NU * NB : NU * NB + 1]
     if mapped:
-      nxt = sc.vmap(pairs_step, NB)((sc.window(p, 0, NS), sc.window(uu, 0, NU))).vec()
+      nxt = sc.vmap(pairs_step, NB)((sc.window(p, 0, NS), sc.window(uu, 0, NU))).ravel()
       idx_i, idx_j = _pair_index_table([i for i, _ in PAIRS]), _pair_index_table([j for _, j in PAIRS])
       pair_rows = sc.vmap(pairs_barrier, len(PAIRS))(
         (
@@ -259,8 +259,8 @@ def _build_pairs_fn(mapped: bool) -> sc.Function[tuple[tuple[sc.Expr, sc.Expr]],
           sc.window(sc.gather(nxt, idx_j), 0, NS),
           sc.window(slack, 0, 0),
         )
-      ).vec()
-      body_rows = sc.vmap(pairs_wall, NB)((sc.window(p, 0, NS), sc.window(nxt, 0, NS), sc.window(slack, 0, 0))).vec()
+      ).ravel()
+      body_rows = sc.vmap(pairs_wall, NB)((sc.window(p, 0, NS), sc.window(nxt, 0, NS), sc.window(slack, 0, 0))).ravel()
       return sc.concat([pair_rows, body_rows])
     nxt = sc.concat([pairs_step((p[NS * k : NS * (k + 1)], uu[NU * k : NU * (k + 1)])) for k in range(NB)])
 
@@ -334,7 +334,7 @@ def test_matmul_inside_vmap_callee_differentiates() -> None:
 
   @sc.function(sc.arg("z", 3 * N), outputs=sc.arg("y"), name="vmap_dense")
   def fn(z: sc.Expr) -> sc.Expr:
-    return sc.vmap(layer, N)(sc.window(z, 0, 3)).vec()
+    return sc.vmap(layer, N)(sc.window(z, 0, 3)).ravel()
 
   zv = np.random.default_rng(3).normal(size=3 * N)
   expected = np.zeros((N, 3 * N))
@@ -361,7 +361,7 @@ def test_weighted_mapped_residual_cost_matches_unrolled_derivatives() -> None:
     def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
       x, p = inputs
       if name == "mapped":
-        r = sc.vmap(residual, n)((sc.window(x, 0, 2), sc.window(p, 0, 2), sc.window(p, 2 * n, 0))).vec()
+        r = sc.vmap(residual, n)((sc.window(x, 0, 2), sc.window(p, 0, 2), sc.window(p, 2 * n, 0))).ravel()
       else:
         r = sc.concat([residual((x[2 * i : 2 * i + 2], p[2 * i : 2 * i + 2], p[-1:])) for i in range(n)])
       return sc.dot(weights, r**2)

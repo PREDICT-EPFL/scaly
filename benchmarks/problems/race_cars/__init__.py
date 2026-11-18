@@ -142,7 +142,7 @@ def race_car_eq_function(horizon: int) -> sc.Function:
 
 def _race_car_eq_vmap_expr(z: sc.Expr, p: sc.Expr, horizon: int) -> sc.Expr:
   initial = eq_initial(z[:NZ], p[:NX])
-  mapped = sc.vmap(eq_interstage, horizon)(sc.window(z, 0, NZ), sc.window(z, NZ, NZ), sc.window(p, NX * (horizon + 1), 0)).vec()
+  mapped = sc.vmap(eq_interstage, horizon)(sc.window(z, 0, NZ), sc.window(z, NZ, NZ), sc.window(p, NX * (horizon + 1), 0)).ravel()
   return sc.concat([initial, mapped])
 
 

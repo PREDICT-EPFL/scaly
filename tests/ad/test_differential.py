@@ -187,7 +187,7 @@ def _cases() -> list[Case]:
         if any(shape[axis] == 0 for axis in axes):
           continue
         for keepdims in (False, True):
-          for kind, build, reference in [("max", sc.reduce_max, np.max), ("min", sc.reduce_min, np.min)]:
+          for kind, build, reference in [("max", sc.max, np.max), ("min", sc.min, np.min)]:
             cases.append(
               Case(
                 f"axis-{kind}-{shape}-{axes}-{keepdims}",
@@ -200,7 +200,7 @@ def _cases() -> list[Case]:
   for name, build, reference in [("norm-inf", sc.norm_inf, lambda x: np.max(np.abs(x))), ("norm-1", sc.norm_1, lambda x: np.sum(np.abs(x)))]:
     cases.append(Case(name, ExprOp.REDUCE, (np.array([-0.2, 0.5, -0.9]),), build, reference))
   for axis in (0, 1):
-    for kind, build, reference in [("max", sc.reduce_max, np.max), ("min", sc.reduce_min, np.min)]:
+    for kind, build, reference in [("max", sc.max, np.max), ("min", sc.min, np.min)]:
       cases.append(
         Case(
           f"sparse-{kind}-{axis}",
