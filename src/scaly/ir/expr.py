@@ -1327,6 +1327,11 @@ def matmul(x: Expr, y: Expr, *, sampled: CanonicalPattern | None = None, conditi
   The last two axes of each operand multiply as matrices and leading axes broadcast.
   A vector on the left acts as one row and a vector on the right as one column,
   and that axis is removed from the result.
+
+  ``sampled`` and ``conditions`` serve derivative rules. With two sparse matrices, ``sampled``
+  computes only the entries of the given pattern. ``conditions`` then gives either operand a
+  Boolean mask with its shape and pattern, and a term ``x[i, k] * y[k, j]`` is computed only where
+  both masks hold, so a skipped term adds nothing even when its other factor is infinite.
   """
   if not x.type.dtype.is_floating or not y.type.dtype.is_floating:
     raise TypeError(f"@ takes floating operands, got {x.type.dtype} and {y.type.dtype}; convert with sc.cast")
@@ -1339,7 +1344,6 @@ def matmul(x: Expr, y: Expr, *, sampled: CanonicalPattern | None = None, conditi
   attrs = {} if sampled is None else {"sampled": sampled}
   args: tuple[Expr, ...] = (x, y)
   if any(c is not None for c in conditions):
-    # A sampled product multiplies x[i, k] * y[k, j] only where both operands' conditions hold.
     if sampled is None:
       raise ValueError("MATMUL conditions require a sampled pattern")
     args += tuple(_always(arg) if c is None else c for arg, c in zip(args, conditions, strict=True))
