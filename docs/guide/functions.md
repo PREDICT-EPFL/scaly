@@ -330,9 +330,7 @@ axis conventions. They propagate NaN, include structural zeros in sparse
 inputs, and reject empty reduction domains during construction.
 `sc.argmax` and `sc.argmin` accept one axis or `None` and return the first
 extremum's index as `int64`. A NaN takes precedence over finite entries.
-With `axis=None`, indices address the flattened logical array. Function output
-leaves currently require `float64`, so cast the indices with
-`sc.cast(indices, "float64")` to return them numerically.
+With `axis=None`, indices address the flattened logical array.
 `sc.norm_inf(x)` is the maximum absolute entry, and `sc.norm_1(x)` sums
 absolute entries. Both norms propagate NaN.
 
@@ -340,14 +338,17 @@ For example, row maxima can retain an axis for broadcasting while their
 indices remain a vector:
 
 ```python
-@sc.function(sc.arg("x", (2, 3)), outputs=sc.group(sc.arg("peaks"), sc.arg("indices")))
+@sc.function(
+    sc.arg("x", (2, 3)),
+    outputs=sc.group(sc.arg("peaks"), sc.arg("indices", sc.TensorType((2,), sc.dtypes.int64))),
+)
 def row_extrema(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
-    return sc.reduce_max(x, axis=1, keepdims=True), sc.cast(sc.argmax(x, axis=1), "float64")
+    return sc.reduce_max(x, axis=1, keepdims=True), sc.argmax(x, axis=1)
 
 peaks, indices = row_extrema(np.arange(6.0).reshape(2, 3))
 print(peaks.shape)  # (2, 1)
 print(peaks.ravel())  # [2. 5.]
-print(indices)  # [2. 2.]
+print(indices)  # [2 2]
 ```
 
 `sc.diag(vector)` builds a diagonal matrix, and `sc.diag(matrix)` extracts
@@ -386,17 +387,20 @@ array. Its dimension is replaced by the shape of `indices`, as with
 returns zero for an out-of-range index, or the specified `fill_value`:
 
 ```python
-@sc.function(sc.arg("x", 4), sc.arg("positions", 3), outputs=sc.arg("selected"))
+@sc.function(
+    sc.arg("x", 4), sc.arg("positions", sc.TensorType((3,), sc.dtypes.int64)),
+    outputs=sc.arg("selected"),
+)
 def select_entries(x: sc.Expr, positions: sc.Expr) -> sc.Expr:
-    indices = sc.cast(positions, sc.dtypes.int64)
-    return sc.take(x, indices, fill_value=-1.0)
+    return sc.take(x, positions, fill_value=-1.0)
 
-print(select_entries(np.array([2.0, 3.0, 5.0, 7.0]), np.array([3.0, -1.0, 1.0])))
+print(select_entries(np.array([2.0, 3.0, 5.0, 7.0]), np.array([3, -1, 1])))
 # [ 7. -1.  3.]
 ```
 
-Numerical function inputs currently accept only float64 arrays, so the body
-casts the positions to int64 before using them as indices.
+The `positions` input is declared as `int64` and takes an integer array directly.
+[Float32 and integer functions](codegen.md#float32-and-integer-functions)
+describes the entry signature for functions that mix data types.
 
 `sc.dynamic_slice(x, start, size)` reads `size` consecutive entries along the
 last axis, starting at an int64 scalar expression. The size stays fixed between
