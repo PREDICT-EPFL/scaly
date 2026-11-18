@@ -209,6 +209,19 @@ def test_amd_leaves_the_hub_of_an_arrow_for_last() -> None:
   assert analyze(_pattern(_arrow(40, hub_first=True)), "natural").nnz_l == 40 * 39 // 2
 
 
+def test_amd_orders_dense_rows_last() -> None:
+  # a path with two rows far denser than 10 sqrt(n): AMD leaves them out of its graph and orders
+  # them last, so the path fills nothing and only the dense rows' columns fill
+  n = 400
+  mask = np.eye(n, dtype=bool) | np.eye(n, k=-1, dtype=bool)
+  mask[:, 7] = mask[7, :] = True
+  mask[::2, 123] = mask[123, ::2] = True
+  s = analyze(_pattern(np.tril(mask)), "amd")
+  assert s.perm[-2:] == (7, 123)
+  assert s.nnz_l <= 1.1 * _splu_strict_lower_fill(np.tril(mask))
+  np.testing.assert_array_equal(_dense_elimination(np.tril(mask), s.perm).sum(axis=0), s.col_counts)
+
+
 def test_natural_ordering_of_an_arrow_matches_davis_ldl_symbolic() -> None:
   # column 0 couples to every row, so eliminating it first fills the whole trailing block
   s = analyze(_pattern(_arrow(5, hub_first=True)), "natural")
