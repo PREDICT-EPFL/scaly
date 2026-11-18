@@ -15,7 +15,7 @@ from .plans import lower_sparse_product
 
 @lowers(ExprOp.MATMUL)
 def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
-  a, b = node.args
+  a, b = node.args[:2]
   if a.type.pattern is not None or b.type.pattern is not None:
     _lower_stored_matmul(ctx, node)
     return
@@ -83,7 +83,7 @@ def _lower_supported_matmul(ctx: LowerCtx, node: Expr) -> bool:
 
 
 def _lower_stored_matmul(ctx: LowerCtx, node: Expr) -> None:
-  a, b = node.args
+  a, b = node.args[:2]
   if a.type.pattern is not None and b.type.pattern is not None:
     lower_sparse_product(ctx, node)
     return

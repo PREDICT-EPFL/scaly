@@ -7,7 +7,7 @@ from scipy import sparse
 import scaly as sc
 from scaly.ir.program import ProgramOp, walk_program
 from scaly.ir.expr import matmul
-from scaly.ir.types import CanonicalPattern
+from scaly.ir.types import CanonicalPattern, dtypes
 from scaly.passes.lowering import lower_function
 
 
@@ -18,24 +18,6 @@ def _pattern(a):
 
 def _layout(pattern, layout):
   return sc.SparsityPattern(pattern.shape, pattern.rows[::-1], pattern.cols[::-1]) if layout == "coordinates" else layout
-
-
-def test_sampled_mask_guard_stops_at_structural_holes():
-  small = CanonicalPattern((2, 2), (0,), (0,))
-  full = CanonicalPattern((2, 2), (0, 0, 1, 1), (0, 1, 0, 1))
-  row = CanonicalPattern((1, 2), (0, 0), (0, 1))
-  col = CanonicalPattern((2, 1), (0, 1), (0, 0))
-
-  @sc.function(sc.arg("w", 4), sc.arg("v", 1), sc.arg("t", sc.TensorType(small.shape, pattern=small)), sc.arg("flag", ()), name="sampled_guard_holes")
-  def loss(w, v, t, flag):
-    source = sc.pack(sc.values(t), small)
-    unmasked = sc.pack(w[:2], col) @ sc.pack(source[0], row)
-    inner = sc.pack(sc.where(v > 0, v.sqrt(), 0.0), small)
-    wider = sc.where(flag > 0, inner, sc.pack(sc.const(np.zeros(full.nnz)), full))
-    masked = sc.pack(w, full) @ wider
-    return (sc.values(unmasked).sum() + sc.values(masked).sum()).block()
-
-  lower_function(sc.gradient(loss, wrt="w"))
 
 
 def _operands(case):
@@ -167,3 +149,40 @@ def test_explicit_sample_skips_absent_factors_but_evaluates_stored_zeros():
   )(lambda a, b: matmul(a, b, sampled=output).block())
   actual = fn(np.array([1.0, 0.0]), np.array([2.0, np.inf, np.inf]))
   np.testing.assert_array_equal(sparse.coo_array(actual).toarray(), [[2.0, 0.0], [np.nan, 0.0]])
+
+
+@pytest.mark.parametrize("lowering", ["block", "scalar"])
+def test_conditioned_sampled_product_reads_conditions_in_their_own_layout(lowering):
+  rng = np.random.default_rng(11)
+  x, y = (
+    sparse.coo_array(rng.normal(size=(4, 5)) * (rng.random((4, 5)) < 0.6)),
+    sparse.coo_array(rng.normal(size=(5, 3)) * (rng.random((5, 3)) < 0.6)),
+  )
+  px, py = _pattern(x), _pattern(y)
+  output = px.matmul(py)
+  kx, ky = rng.random(px.nnz) < 0.6, rng.random(py.nnz) < 0.6
+
+  def shuffled(pattern):
+    order = rng.permutation(pattern.nnz)
+    return sc.SparsityPattern(pattern.shape, tuple(np.asarray(pattern.rows)[order]), tuple(np.asarray(pattern.cols)[order]))
+
+  def leaf(name, pattern, dtype=dtypes.float64):
+    return sc.arg(name, sc.TensorType(pattern.shape, dtype=dtype, pattern=pattern), layout=shuffled(pattern))
+
+  fn = sc.function(
+    leaf("x", px),
+    leaf("y", py),
+    leaf("kx", px, dtypes.bool_),
+    leaf("ky", py, dtypes.bool_),
+    outputs=leaf("p", output),
+    name=f"conditioned_sampled_product_{lowering}",
+  )(lambda x, y, kx, ky: matmul(x, y, sampled=output, conditions=(kx, ky)).with_lowering(lowering))
+
+  def stored(pattern, data):
+    return sparse.coo_array((data, (pattern.rows, pattern.cols)), shape=pattern.shape)
+
+  # Conditioned-off entries hold inf and nan, so a misread condition shows in the result.
+  xv, yv = np.where(kx, x.data, np.inf), np.where(ky, y.data, np.nan)
+  expected = stored(px, np.where(kx, x.data, 0)).toarray() @ stored(py, np.where(ky, y.data, 0)).toarray()
+  actual = fn(stored(px, xv), stored(py, yv), stored(px, kx), stored(py, ky)).toarray()
+  np.testing.assert_allclose(actual[output.rows, output.cols], expected[output.rows, output.cols], atol=1e-12)

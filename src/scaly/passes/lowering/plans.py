@@ -7,9 +7,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ...ad.rules import _mask_of
 from ...ir import program as p
-from ...ir.expr import _index_values, Expr, ExprOp
+from ...ir.expr import _index_values, Expr, ExprOp, sampled_conditions
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.support import project_entries, slice_indices, transpose_entries, support_indices, _constant_condition
 from ...ir.types import CanonicalPattern, dtypes, stored_indices, stored_slots
@@ -128,7 +127,7 @@ class SampledProductPlan:
 
 
 def _lower_sampled_product(ctx: LowerCtx, node: Expr) -> None:
-  a, b = node.args
+  a, b = node.args[:2]
   assert a.type.pattern is not None and b.type.pattern is not None and node.type.pattern is not None
   out = ctx.alloc_tmp(node)
   if not node.type.storage_size:
@@ -157,8 +156,9 @@ def _lower_sampled_product(ctx: LowerCtx, node: Expr) -> None:
   acc_name = ctx.names.allocate(f"acc_{name}")
   acc = p.var(acc_name, node.type.dtype)
   value = p.mul(p.load(p.view(ctx.raw_buf_of(a), [pos])), ctx.read_stored(b, plan.right_slots, j))
-  value = _guard_sampled_term(ctx, a, pos, value)
-  value = _guard_sampled_term(ctx, b, ctx.index_at(ctx.physical_slots(b, plan.right_slots), j, shared=True), value)
+  ca, cb = sampled_conditions(node)
+  value = _guard_sampled_term(ctx, a, ca, pos, value)
+  value = _guard_sampled_term(ctx, b, cb, ctx.index_at(ctx.physical_slots(b, plan.right_slots), j, shared=True), value)
   dot = ctx.nest_body(right, ctx.nest_body(present, [p.assign(acc_name, p.add(acc, value))]))
   writes = ctx.physical_slots(node, np.arange(node.type.storage_size))
   body = [
@@ -169,46 +169,15 @@ def _lower_sampled_product(ctx: LowerCtx, node: Expr) -> None:
   ctx.emit(rows, [*fill, *ctx.nest_body(outputs, body), *clear])
 
 
-def _guard_sampled_term(ctx: LowerCtx, operand: Expr, slot: ProgramNode, term: ProgramNode) -> ProgramNode:
-  entries = stored_indices(operand.type)
-  logical = entries[np.argsort(ctx.physical_slots(operand, np.arange(len(entries))))]
-  # Guard the multiply itself: selecting a zero operand still evaluates 0 * inf.
-  current = operand
-  while True:
-    slots = stored_slots(current.type, logical)
-    valid = slots >= 0
-    if not np.any(valid):
-      break
-    logical[~valid] = -1
-    if current.op == ExprOp.PACK:
-      logical = slots
-    elif current.op == ExprOp.VALUES:
-      logical[valid] = stored_indices(current.args[0].type)[logical[valid]]
-    elif current.op == ExprOp.SLICE:
-      logical[valid] = slice_indices(current.args[0].shape, current.attrs["index"], logical[valid])
-    elif current.op == ExprOp.TRANSPOSE:
-      logical[valid] = transpose_entries(logical[valid], current.shape, tuple(map(int, np.argsort(current.attrs["axes"]))))
-    elif current.op != ExprOp.RESHAPE:
-      mask = _mask_of(current)
-      if mask is None:
-        break
-      condition, inner = mask
-      reads = np.full(len(logical), -1, dtype=np.int64)
-      reads[valid] = stored_slots(condition.type, project_entries(logical[valid], condition.shape, current.shape))
-      reads = ctx.physical_slots(condition, reads)
-      index = ctx.index_at(reads, slot, shared=True)
-      keep = p.load(p.view(ctx.raw_buf_of(condition), [index]))
-      if np.any(reads < 0):
-        present = ProgramNode(ProgramOp.LE, (p.const_int(0), index), dtype=dtypes.bool_)
-        keep = ProgramNode(ProgramOp.SELECT, (present, keep, constant(False, dtypes.bool_)), dtype=dtypes.bool_)
-      if not np.all(valid):
-        applies = ProgramNode(ProgramOp.NE, (ctx.index_at(valid.astype(np.int64), slot, shared=True), p.const_int(0)), dtype=dtypes.bool_)
-        keep = ProgramNode(ProgramOp.SELECT, (applies, keep, constant(True, dtypes.bool_)), dtype=dtypes.bool_)
-      term = ProgramNode(ProgramOp.SELECT, (keep, term, p.const_float(0, dtype=operand.type.dtype)), dtype=operand.type.dtype)
-      current = inner
-      continue
-    current = current.args[0]
-  return term
+def _guard_sampled_term(ctx: LowerCtx, operand: Expr, condition: Expr | None, slot: ProgramNode, term: ProgramNode) -> ProgramNode:
+  """Select ``term`` where ``condition`` holds at the operand's physical ``slot``. Guarding the
+  multiply itself keeps an unselected 0 * inf out of the dot."""
+  if condition is None:
+    return term
+  stored = np.argsort(ctx.physical_slots(operand, np.arange(operand.type.storage_size)))
+  index = ctx.index_at(ctx.physical_slots(condition, stored), slot, shared=True)
+  keep = p.load(p.view(ctx.raw_buf_of(condition), [index]))
+  return ProgramNode(ProgramOp.SELECT, (keep, term, p.const_float(0, dtype=term.dtype)), dtype=term.dtype)
 
 
 def map_regions(writes: np.ndarray, reads: Sequence[np.ndarray]) -> tuple[MapRegion, ...]:

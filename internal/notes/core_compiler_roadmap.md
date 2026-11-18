@@ -1145,6 +1145,10 @@ keeps the sample; reverse differentiation samples each operand's adjoint in turn
 and derivative relations use the requested coordinates. Lowering scatters one operand row's
 stored-slot indices into one dense scratch row, computes dots only for requested outputs, and
 clears the row. Absent factors take a zero-trip range; explicit stored zeros still multiply.
+A select mask on an operand reaches the product as an explicit Boolean condition per operand, with
+that operand's pattern, and lowering skips each multiply whose conditions fail. Differentiation
+builds the conditions; lowering never infers them from how an operand was produced, so a select a
+user wrote on a coefficient stays an ordinary value ([#442]).
 *Replaced in the compiler run, 2026-11-10: ordinary products followed by projection for sparse
 adjoints, because they build the full Boolean pattern and forward-over-reverse materializes it.*
 
@@ -1730,3 +1734,4 @@ writing the guide).
 [#495]: https://github.com/PREDICT-EPFL/scaly/issues/495
 [#496]: https://github.com/PREDICT-EPFL/scaly/issues/496
 [#497]: https://github.com/PREDICT-EPFL/scaly/issues/497
+[#442]: https://github.com/PREDICT-EPFL/scaly/issues/442

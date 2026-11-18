@@ -14,6 +14,7 @@ from ..ir.expr import (
   _uniform,
   gather,
   matmul,
+  sampled_conditions,
   pack,
   _scatter_zero,
   topo,
@@ -27,7 +28,7 @@ from ..ir.types import CanonicalPattern, stored_indices
 from .calls import _accumulate, _call_vjp, _cond_vjp, _loop_vjp
 from .rules import (
   ELEMENTWISE,
-  _mask_of,
+  operand_mask,
   _masked,
   _nonzero_mask,
   carry_mask,
@@ -188,7 +189,7 @@ def _local_vjp(expr: Expr, cot: Expr, active: tuple[int, ...] | None = None) -> 
     return _concat_vjp(cot, args, expr.attrs.get("axis", 0))
   if expr.op == ExprOp.MATMUL:
     if any(arg.type.pattern is not None for arg in args):
-      return _stored_matmul_vjp(args[0], args[1], cot, active)
+      return (*_stored_matmul_vjp(args[0], args[1], cot, active, sampled_conditions(expr)), *(None,) * (len(args) - 2))
     return _matmul_vjp(args[0], args[1], cot)
   if expr.op == ExprOp.CALL:
     return _call_vjp(expr, cot, active, pullback=vjp)
@@ -227,12 +228,15 @@ def _stored_movement_vjp(expr: Expr, cot: Expr) -> Expr:
   return pack(selected, pattern, shape=src.shape)
 
 
-def _stored_matmul_vjp(x: Expr, y: Expr, cot: Expr, active: tuple[int, ...] | None) -> tuple[Expr | None, ...]:
+def _stored_matmul_vjp(
+  x: Expr, y: Expr, cot: Expr, active: tuple[int, ...] | None, conditions: tuple[Expr | None, Expr | None]
+) -> tuple[Expr | None, ...]:
   if x.type.pattern is not None and y.type.pattern is not None:
     active = (0, 1) if active is None else active
+    cx, cy = conditions
     return (
-      _masked_sampled_matmul(cot, y.T, x.type.pattern, left=True) if 0 in active else None,
-      _masked_sampled_matmul(cot, x.T, y.type.pattern, left=False) if 1 in active else None,
+      _masked_sampled_matmul(cot, y.T, x.type.pattern, cx, None if cy is None else cy.T, left=True) if 0 in active else None,
+      _masked_sampled_matmul(cot, x.T, y.type.pattern, cy, None if cx is None else cx.T, left=False) if 1 in active else None,
     )
   left = x.type.pattern is not None
   src, dense = (x, y) if left else (y, x)
@@ -268,16 +272,20 @@ def _stored_matmul_vjp(x: Expr, y: Expr, cot: Expr, active: tuple[int, ...] | No
   return (sparse_cot, dense_cot) if left else (dense_cot, sparse_cot)
 
 
-def _masked_sampled_matmul(cot: Expr, coefficient: Expr, pattern: CanonicalPattern, *, left: bool) -> Expr:
+def _masked_sampled_matmul(cot: Expr, coefficient: Expr, pattern: CanonicalPattern, own: Expr | None, other: Expr | None, *, left: bool) -> Expr:
+  """The adjoint of one operand of a sampled product: ``own`` and ``other`` are the primal's
+  conditions on that operand and, transposed, on the coefficient."""
+  conditions = (operand_mask(cot), other)
+
   def product(c: Expr, factor: Expr) -> Expr:
-    return matmul(c, factor, sampled=pattern) if left else matmul(factor, c, sampled=pattern)
+    return matmul(c, factor, sampled=pattern, conditions=conditions) if left else matmul(factor, c, sampled=pattern, conditions=conditions[::-1])
 
   result = product(cot, coefficient)
-  if _mask_of(cot) is None:
-    return result
-  # Activity counts structural paths, independently of coefficient values or cancellation.
-  activity = product(_masked(cot, _ones_like), _ones_like(coefficient))
-  return where(_nonzero_mask(activity), result, zeros_like(result))
+  if any(c is not None for c in conditions):
+    # Activity counts structural paths, independently of coefficient values or cancellation.
+    activity = product(_masked(cot, _ones_like), _ones_like(coefficient))
+    result = where(_nonzero_mask(activity), result, zeros_like(result))
+  return result if own is None else where(own, result, zeros_like(result))
 
 
 def _ones_like(expr: Expr) -> Expr:

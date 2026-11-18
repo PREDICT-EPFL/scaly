@@ -434,7 +434,7 @@ def _combine_children(expr: Expr, wrt: Expr, memo: _JacContext, *, stack: bool) 
 
 
 def _matmul_mask(expr: Expr, wrt: Expr, memo: _JacContext) -> sparse.coo_array:
-  x, y = expr.args
+  x, y = expr.args[:2]
   xm, ym = _jac_mask(x, wrt, memo), _jac_mask(y, wrt, memo)
   if max(len(x.shape), len(y.shape)) > 2:
     batch = expr.shape[: len(expr.shape) - (len(x.shape) > 1) - (len(y.shape) > 1)]
