@@ -4082,6 +4082,9 @@ tests/passes/lowering/test_ctx.py::test_non_float64_callee_leaves_are_typed_para
 tests/passes/lowering/test_fusion.py::test_a_carried_range_is_never_merged_split_or_reordered
 tests/passes/lowering/test_fusion.py::test_a_libm_call_is_not_duplicated_by_two_reads[False]
 tests/passes/lowering/test_fusion.py::test_a_libm_call_is_not_duplicated_by_two_reads[True]
+tests/passes/lowering/test_fusion.py::test_agreement_between_two_groups_keeps_the_schedule_acyclic
+tests/passes/lowering/test_fusion.py::test_agreement_does_not_merge_consumers_across_a_buffer_dependency
+tests/passes/lowering/test_fusion.py::test_agreement_through_shared_gather_computes_only_selected_entries
 tests/passes/lowering/test_fusion.py::test_automatic_scalarization_preserves_known_zeros_with_infinity
 tests/passes/lowering/test_fusion.py::test_deferred_reads_keep_the_value_before_an_indexed_write[carry]
 tests/passes/lowering/test_fusion.py::test_deferred_reads_keep_the_value_before_an_indexed_write[private_alias]
@@ -4093,9 +4096,12 @@ tests/passes/lowering/test_fusion.py::test_matmul_operand_read_once_is_inlined
 tests/passes/lowering/test_fusion.py::test_movement_is_an_index_remap[contiguous_slice]
 tests/passes/lowering/test_fusion.py::test_movement_is_an_index_remap[gather_transpose]
 tests/passes/lowering/test_fusion.py::test_movement_is_an_index_remap[strided_slice]
+tests/passes/lowering/test_fusion.py::test_non_elementwise_readers_split_transpose_index_divisions[concat]
+tests/passes/lowering/test_fusion.py::test_non_elementwise_readers_split_transpose_index_divisions[matmul]
+tests/passes/lowering/test_fusion.py::test_non_elementwise_readers_split_transpose_index_divisions[reduce]
 tests/passes/lowering/test_fusion.py::test_reduction_evaluates_its_operand_in_the_reduction_loop
+tests/passes/lowering/test_fusion.py::test_reused_selection_evaluates_exp_once_at_each_selected_entry
 tests/passes/lowering/test_fusion.py::test_reused_selection_of_an_input_needs_no_buffer
-tests/passes/lowering/test_fusion.py::test_reused_selection_stores_only_the_selected_exp_values
 tests/passes/lowering/test_fusion.py::test_sampled_product_counts_its_select_condition_read
 tests/passes/lowering/test_fusion.py::test_scatter_of_a_mapped_transpose_reads_by_affine_indices
 tests/passes/lowering/test_fusion.py::test_shared_gather_from_earlier_carry_version[fill_control]
@@ -4103,8 +4109,11 @@ tests/passes/lowering/test_fusion.py::test_shared_gather_from_earlier_carry_vers
 tests/passes/lowering/test_fusion.py::test_shared_gather_from_earlier_carry_version[nested]
 tests/passes/lowering/test_fusion.py::test_shared_gather_from_earlier_carry_version[runtime]
 tests/passes/lowering/test_fusion.py::test_shared_gather_from_earlier_carry_version[static]
+tests/passes/lowering/test_fusion.py::test_shared_producer_merges_only_agreeing_consumer_loops[coordinates]
+tests/passes/lowering/test_fusion.py::test_shared_producer_merges_only_agreeing_consumer_loops[domain]
+tests/passes/lowering/test_fusion.py::test_shared_producer_merges_only_agreeing_consumer_loops[same]
 tests/passes/lowering/test_fusion.py::test_single_consumer_chain_is_one_loop
-tests/passes/lowering/test_fusion.py::test_value_read_by_two_consumers_is_stored_once
+tests/passes/lowering/test_fusion.py::test_value_read_by_two_agreeing_consumers_is_computed_once
 tests/passes/lowering/test_fusion.py::test_value_read_several_times_per_element_is_stored[broadcast]
 tests/passes/lowering/test_fusion.py::test_value_read_several_times_per_element_is_stored[matmul_operand]
 tests/passes/lowering/test_in_place.py::test_alias_created_before_update_is_read_after_it

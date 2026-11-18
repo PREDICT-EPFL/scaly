@@ -261,12 +261,12 @@ def _siblings() -> sc.Function:
   @sc.function(leaf("x", n, "float32"), outputs=sc.arg("y"), name="float_stage")
   def float_stage(x: sc.Expr) -> sc.Expr:
     a = x.cos().block()
-    return (a * a + a).block()
+    return (a * a + a[::-1]).block()
 
   @sc.function(leaf("i", n, "int64"), outputs=sc.arg("j"), name="int_stage")
   def int_stage(i: sc.Expr) -> sc.Expr:
     a = (i * 5).block()
-    return (a // 3 + a).block()
+    return (a // 3 + a[::-1]).block()
 
   @sc.function(sc.group(leaf("x", n, "float32"), leaf("i", n, "int64")), outputs=sc.group(sc.arg("y"), sc.arg("j")), name="typed_siblings")
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
@@ -281,11 +281,11 @@ def _siblings() -> sc.Function:
 def _siblings_reference(x: np.ndarray, i: np.ndarray) -> list[np.ndarray]:
   def float_stage(v):
     a = np.cos(v)
-    return a * a + a
+    return a * a + a[::-1]
 
   def int_stage(v):
     a = v * 5
-    return a // 3 + a
+    return a // 3 + a[::-1]
 
   y = float_stage(x)
   return [y + float_stage(y), int_stage(i + y.astype(np.int64))]

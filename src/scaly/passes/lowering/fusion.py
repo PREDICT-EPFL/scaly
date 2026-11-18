@@ -12,6 +12,8 @@ import numpy as np
 from ...ad.rules import ELEMENTWISE, _mask_of
 from ...function.concrete import ConcreteFunction
 from ...ir.expr import Expr, ExprOp, _index_values, topo
+from ...ir import program as p
+from ...ir.program import ProgramNode
 from ...ir.support import Support
 from ...ir.types import stored_indices
 
@@ -119,16 +121,18 @@ def plan_fusion(
   scalar: bool,
   seed_pairs: bool,
   support_of: Callable[[Expr], Support],
-) -> tuple[frozenset[int], dict[int, tuple[Expr, ...]]]:
-  """The nodes lowering evaluates at their consumers' coordinates rather than storing, and the sums
-  of scatters, by the id of the sum each one writes.
+  reads_at: Callable[[Expr, ProgramNode], Sequence[tuple[Expr, ProgramNode]]],
+) -> tuple[frozenset[int], dict[int, tuple[Expr, ...]], dict[int, tuple[Expr, ...]]]:
+  """The deferred node ids, scatter sums keyed by their output id, and consumer loop groups keyed
+  by each member id.
 
   A movement op or a constant is an index remap, deferred unless it is an output or a consumer needs
   it whole. A strided slice, a transpose or a gather is also stored when one read visits entries
   repeatedly, or when several reads would duplicate a libm call in the deferred chain beneath it.
   Several reads of a stored input stay index remaps. A dense elementwise node is deferred when one
   consumer reads each of its elements once, through any chain of deferred movement ops; one that holds a libm call is deferred only into a
-  single read, so the call is not duplicated. Everything else is stored: reductions, products,
+  single read, so the call is not duplicated. Agreeing reads can share a deferred value and merge
+  independent consumer loops over the same domain. Everything else is stored: reductions, products,
   scatters, concatenations, calls, outputs and sparse values. A read stays before a scatter that
   may overwrite its source.
 
@@ -286,4 +290,111 @@ def plan_fusion(
       deferred.add(node.id)
       if costly:
         expensive.add(node.id)
-  return frozenset(deferred), sums
+  groups = _merge_consumers(
+    nodes,
+    outputs,
+    deferred,
+    sums,
+    readers,
+    reads_at,
+    lambda node, consumer: hoistable(node.id, consumer) or crosses_write(node.id, consumer),
+    keep_zeros,
+  )
+  return frozenset(deferred), sums, groups
+
+
+def _merge_consumers(
+  nodes: Sequence[Expr],
+  outputs: frozenset[int],
+  deferred: set[int],
+  sums: dict[int, tuple[Expr, ...]],
+  readers: dict[int, list[tuple[Expr, int]]],
+  reads_at: Callable[[Expr, ProgramNode], Sequence[tuple[Expr, ProgramNode]]],
+  barrier: Callable[[Expr, int], bool],
+  keep_zeros: Callable[[Expr], bool],
+) -> dict[int, tuple[Expr, ...]]:
+  """Propagate consumer domains backwards and merge loops only where every read agrees."""
+  eligible = {
+    node.id
+    for node in nodes
+    if (node.op in ELEMENTWISE or node.op in MOVEMENT - {ExprOp.CONST})
+    and all(e.type.pattern is None for e in (node, *node.args))
+    and node.id not in sums
+    and not (node.op == ExprOp.GATHER and (node.args[1].value is None or node.attrs["mode"] == "fill"))
+    and not (node.op in ELEMENTWISE and keep_zeros(node))
+  }
+  roots = {node.id: node for node in nodes if node.id in eligible and node.id not in deferred}
+  bits = {root: 1 << k for k, root in enumerate(roots)}
+  upstream: dict[int, int] = {}
+  for node in nodes:
+    upstream[node.id] = bits.get(node.id, 0) | reduce(or_, (upstream[a.id] for a in node.args), 0)
+  positions = {node.id: k for k, node in enumerate(nodes)}
+  stops = [k for k, node in enumerate(nodes) if node.op in (ExprOp.SCATTER, ExprOp.PRINT, ExprOp.LOOP, ExprOp.COND, ExprOp.EXTERN)]
+  groups = {root: {root} for root in roots}
+  merged_dependencies: dict[int, tuple[int, int]] = {}
+  owners = {root: root for root in roots}
+  requests: dict[int, set[tuple[int, ProgramNode, int] | None]] = {}
+  index = p.var("fusion_index")
+  for node in reversed(nodes):
+    if not node.args:
+      continue
+    uses = requests.get(node.id, set())
+    known = [use for use in uses if use is not None]
+    members = set().union(*(groups[owners[root]] for root, _, _ in known))
+    masks = reduce(or_, (bits[root] for root in members), 0)
+    dependencies = reduce(or_, (upstream[root] ^ bits[root] for root in members), 0)
+    # Independent roots can become cyclic through two previously merged consumer groups.
+    while True:
+      previous = dependencies
+      for mask, ancestors in merged_dependencies.values():
+        if dependencies & mask:
+          dependencies |= ancestors
+      if dependencies == previous:
+        break
+    same = (
+      node.id in eligible
+      and (node.op in ELEMENTWISE or len(readers.get(node.id, ())) > 1)
+      and node.id not in outputs
+      and known
+      and len(known) == len(uses)
+      and all(at is known[0][1] and kind == _ONCE and roots[root].size == roots[known[0][0]].size for root, at, kind in known)
+      and not masks & dependencies
+      and not any(barrier(node, root) for root in members)
+      and not any(min(positions[root] for root in members) < stop < max(positions[root] for root in members) for stop in stops)
+    )
+    if same:
+      owner = owners[known[0][0]]
+      for root in members:
+        merged_dependencies.pop(owners[root], None)
+      for root in members:
+        owners[root] = owner
+      groups[owner] = members
+      if len(members) > 1:
+        merged_dependencies[owner] = masks, dependencies
+      deferred.add(node.id)
+      active = [(owner, known[0][1], _ONCE)]
+    elif node.id in deferred:
+      # A divergent deferred view stays a remap, but cannot justify further shared work upstream.
+      active = (
+        [known[0]]
+        if known
+        and len(known) == len(uses)
+        and all(owners[root] == owners[known[0][0]] and at is known[0][1] and kind == known[0][2] for root, at, kind in known)
+        else [None]
+      )
+    elif node.id in roots:
+      active = [(node.id, index, _ONCE)]
+    else:
+      active = [None]
+    kinds = {arg.id: kind for arg, kind in _reads(node)}
+    if any(use is None for use in active):
+      for arg, _ in _reads(node):
+        requests.setdefault(arg.id, set()).add(None)
+    for use in active:
+      if use is None:
+        continue
+      root, at, kind = use
+      for arg, source in reads_at(node, at):
+        requests.setdefault(arg.id, set()).add((root, source, max(kind, kinds[arg.id])))
+  merged = {owners[root]: tuple(roots[r] for r in roots if r in groups[owners[root]]) for root in roots if len(groups[owners[root]]) > 1}
+  return {node.id: group for group in merged.values() for node in group}

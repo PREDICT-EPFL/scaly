@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Literal
 from collections.abc import Callable, Iterable, Mapping, Sequence
 
@@ -28,6 +29,7 @@ from ...ad.rules import ELEMENTWISE
 from .fusion import ALIASES, _contiguous_slice_offset, plan_fusion
 from ..arith import fold_program
 from ..program.fold_arith import _fold_index as _fold_bounded
+from ..program.scheduling import ScalarNameAllocator, schedule_values
 from ..expr import cse_many, simplify
 
 _EXACT_STORES = (dtypes.float64, dtypes.float32, dtypes.int64, dtypes.bool_)
@@ -354,13 +356,19 @@ class LowerCtx:
       node.id: sources for chain in self.inout_carries.values() for node in chain if (sources := same_index_sources(self.fun, node))
     }
     deferred = set().union(*self.fused_scatter.values())
-    self.deferred, self.sums = plan_fusion(
+
+    def reads_at(node: Expr, at: ProgramNode) -> list[tuple[Expr, ProgramNode]]:
+      reads, _ = self._step((node, True, (at,)))
+      return [(arg, _fold_index(coords[0] if flat else _flat(arg.shape, coords))) for arg, flat, coords in reads]
+
+    self.deferred, self.sums, groups = plan_fusion(
       self.fun,
       self.invariant,
       roots=self._computed,
       scalar=self.scalarize,
       seed_pairs=self.seed_pairs,
       support_of=self.support_of,
+      reads_at=reads_at,
     )
     absorbed = {leaf.id for leaves in self.sums.values() for leaf in leaves}
     self.permutes = set()
@@ -376,7 +384,21 @@ class LowerCtx:
         operands = tuple(arg for arg in operands if arg is not node.args[0])
       needed.update(operands)
     needed.update(self._computed)
-    for node in topo(self._computed):
+    emitted: set[int] = set()
+    pending = [(node, False) for node in reversed(tuple(topo(self._computed)))]
+    while pending:
+      node, ready = pending.pop()
+      if node.id in emitted:
+        continue
+      group = groups.get(node.id, (node,))
+      if not ready:
+        pending.append((node, True))
+        pending.extend((arg, False) for member in reversed(group) for arg in reversed(member.args))
+        continue
+      emitted.update(member.id for member in group)
+      if len(group) > 1:
+        self._emit_group(group)
+        continue
       if node in deferred:
         continue
       if node.op == ExprOp.CONST and node not in needed:
@@ -392,6 +414,13 @@ class LowerCtx:
       rule(self, node)
 
   # --- helpers --------------------------------------------------------------
+
+  def _emit_group(self, nodes: Sequence[Expr]) -> None:
+    outputs = [self.alloc_tmp(node) for node in nodes]
+    ranges, (flat,) = self.nest((nodes[0].size,), f"i_{outputs[0].attrs['name']}")
+    declarations, values = schedule_values([self.compute_flat(node, flat) for node in nodes], ScalarNameAllocator(self.names))
+    stores = [p.store(p.view(out, [flat]), value) for out, value in zip(outputs, values, strict=True)]
+    self.emit(ranges, [*declarations, *stores], delinearize=any(node.id in self.permutes for node in nodes))
 
   def buf_of(self, expr: Expr) -> ProgramNode:
     source = self.raw_buf_of(expr)
@@ -418,7 +447,7 @@ class LowerCtx:
       return
     out = self.alloc_tmp(expr)
     ranges, (k,) = self.nest((expr.size,), f"i_{out.attrs['name']}")
-    self.emit(ranges, [p.store(p.view(out, [k]), self.compute_flat(expr, k))])
+    self.emit(ranges, [p.store(p.view(out, [k]), self.compute_flat(expr, k))], delinearize=expr.id in self.permutes)
 
   def physical_slots(self, expr: Expr, slots: np.ndarray) -> np.ndarray:
     order = self._orders.get(expr.id)
@@ -695,8 +724,8 @@ class LowerCtx:
     if op == ExprOp.GATHER or op in (ExprOp.TRANSPOSE, ExprOp.SLICE) and flat and position in self._indexed:
       table = _source_positions(expr)
       if (known := self._indexed.get(position)) is not None:
-        return [(src, True, (self.index_at(table[known[0]], known[1]),))], _only
-      return [(src, True, (self.index_at(table, position),))], _only
+        return [(src, True, (self.index_at(table[known[0]], known[1], shared=True),))], _only
+      return [(src, True, (self.index_at(table, position, shared=True),))], _only
     coords = _flat_coordinates(at[0], expr.shape) if flat else at
     if op == ExprOp.TRANSPOSE:
       axes = tuple(int(a) for a in expr.attrs["axes"])
@@ -721,7 +750,9 @@ class LowerCtx:
       ranges, body = self.delinearize(ranges, body)
     self.statements.extend(self.nest_body(ranges, body))
 
-  def delinearize(self, ranges: Sequence[ProgramNode], body: Sequence[ProgramNode]) -> tuple[list[ProgramNode], list[ProgramNode]]:
+  def delinearize(
+    self, ranges: Sequence[ProgramNode], body: Sequence[ProgramNode], *, outer: Sequence[ProgramNode] = ()
+  ) -> tuple[list[ProgramNode], list[ProgramNode]]:
     """Split each loop whose variable the body divides into one loop per digit the divisors mark, so
     a read through a transpose indexes by affine sums; ``nest_body`` merges back the digits every
     access walks contiguously.
@@ -731,7 +762,7 @@ class LowerCtx:
     times their block sizes, and the quotients and remainders fold away under the digits' bounds."""
     out: list[ProgramNode] = []
     body = list(body)
-    bounds = {r.attrs["name"]: (int(r.args[0].attrs["value"]), int(r.args[1].attrs["value"]) - 1) for r in ranges if trip_count(r)}
+    bounds = {r.attrs["name"]: (int(r.args[0].attrs["value"]), int(r.args[1].attrs["value"]) - 1) for r in (*outer, *ranges) if trip_count(r)}
     for rng in ranges:
       count, name = trip_count(rng), rng.attrs["name"]
       var = p.var(name)
@@ -743,6 +774,8 @@ class LowerCtx:
             blocks.add(c)
           elif x.op == ProgramOp.DIV and x.args[0] is var and x.args[1].op == ProgramOp.CONST_INT:
             blocks.add(int(x.args[1].attrs["value"]) * c)
+          elif c > 0 and (coefficients := _coefficients(x, frozenset(bounds))) is not None and coefficients.get(name):
+            blocks.add(c // math.gcd(abs(coefficients[name]), c))
       sizes = sorted(b for b in blocks if b is not None and 1 < b)
       edges = [1, *sizes]
       if (

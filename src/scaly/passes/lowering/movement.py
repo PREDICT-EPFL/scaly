@@ -36,7 +36,7 @@ def _lower_reshape(ctx: LowerCtx, node: Expr) -> None:
     return
   out = ctx.alloc_tmp(node)
   ranges, (k,) = ctx.nest((node.size,), f"i_{out.attrs['name']}")
-  ctx.emit(ranges, [p.store(p.view(out, [k]), ctx.read_flat(src, k))])
+  ctx.emit(ranges, [p.store(p.view(out, [k]), ctx.read_flat(src, k))], delinearize=node.id in ctx.permutes)
 
 
 @lowers(ExprOp.CONST)
@@ -86,7 +86,7 @@ def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
   # read the copy back stall (chain M=9 ran 1.4 times slower). Until lanes handle nests (#71).
   ranges, (k,) = ctx.nest((node.size,), f"i_{out.attrs['name']}")
   source = _slice_coords(index, src_shape, _flat_coordinates(k, node.shape))
-  ctx.emit(ranges, [p.store(p.view(out, [k]), ctx.read(src, source))])
+  ctx.emit(ranges, [p.store(p.view(out, [k]), ctx.read(src, source))], delinearize=node.id in ctx.permutes)
 
 
 @lowers(ExprOp.TRANSPOSE)
@@ -99,7 +99,7 @@ def _lower_transpose(ctx: LowerCtx, node: Expr) -> None:
   out = ctx.alloc_tmp(node)
   ranges, coords = ctx.nest(node.shape, f"i_{out.attrs['name']}")
   source = [coords[axes.index(dim)] for dim in range(len(axes))]
-  ctx.emit(ranges, [ctx.write(node, coords, ctx.read(src, source))])
+  ctx.emit(ranges, [ctx.write(node, coords, ctx.read(src, source))], delinearize=node.id in ctx.permutes)
 
 
 @lowers(ExprOp.STACK)
@@ -111,7 +111,7 @@ def _lower_stack(ctx: LowerCtx, node: Expr) -> None:
   out = ctx.alloc_tmp(node)
   for i, src in enumerate(node.args):
     ranges, coords = ctx.nest(src.shape, f"j_{out.attrs['name']}_{i}")
-    ctx.emit(ranges, [ctx.write(node, [*coords[:axis], p.const_int(i), *coords[axis:]], ctx.read(src, coords))])
+    ctx.emit(ranges, [ctx.write(node, [*coords[:axis], p.const_int(i), *coords[axis:]], ctx.read(src, coords))], delinearize=node.id in ctx.permutes)
 
 
 @lowers(ExprOp.CONCAT)
@@ -126,5 +126,5 @@ def _lower_concat(ctx: LowerCtx, node: Expr) -> None:
     ranges, coords = ctx.nest(src.shape, f"j_{out.attrs['name']}_{i}")
     shifted = list(coords)
     shifted[axis] = _shift(coords[axis], offset)
-    ctx.emit(ranges, [ctx.write(node, shifted, ctx.read(src, coords))])
+    ctx.emit(ranges, [ctx.write(node, shifted, ctx.read(src, coords))], delinearize=node.id in ctx.permutes)
     offset += int(src.shape[axis])

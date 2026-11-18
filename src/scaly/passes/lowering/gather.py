@@ -79,7 +79,7 @@ def _lower_gather(ctx: LowerCtx, node: Expr) -> None:
   idx = _index_values(node).reshape(-1)
   out = ctx.alloc_tmp(node)
   ranges, (k,) = ctx.nest((len(idx),), f"i_{out.attrs['name']}")
-  ctx.emit(ranges, [p.store(p.view(out, [k]), ctx.read_flat(src, ctx.index_at(idx, k)))])
+  ctx.emit(ranges, [p.store(p.view(out, [k]), ctx.read_flat(src, ctx.index_at(idx, k)))], delinearize=node.id in ctx.permutes)
 
 
 @lowers(ExprOp.SCATTER)
