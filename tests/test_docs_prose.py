@@ -1,10 +1,13 @@
-"""Check punctuation in published user prose, and run the examples of the guide pages listed in ``RUNNABLE``."""
+"""Check punctuation in published prose and execute selected guide examples."""
 
 import builtins
 from pathlib import Path
 import re
 
+import numpy as np
 import pytest
+
+import scaly as sc
 
 ROOT = Path(__file__).resolve().parents[1]
 PAGES = [
@@ -72,3 +75,26 @@ def test_guide_examples_run(path: Path, tmp_path: Path, monkeypatch: pytest.Monk
       continue
     with pytest.raises(getattr(builtins, error[1]), match=f"^{re.escape(error[2])}$"):
       exec(code, namespace)
+
+
+@pytest.mark.parametrize(
+  ("name", "expected_output", "input_dtypes", "output_dtypes"),
+  [
+    ("row_extrema", "(2, 1)\n[2. 5.]\n[2 2]\n", ("float64",), ("float64", "int64")),
+    ("select_entries", "[ 7. -1.  3.]\n", ("float64", "int64"), ("float64",)),
+  ],
+  ids=["row_extrema", "select_entries"],
+)
+def test_functions_guide_integer_leaves(
+  name: str, expected_output: str, input_dtypes: tuple[str, ...], output_dtypes: tuple[str, ...], capsys: pytest.CaptureFixture[str]
+) -> None:
+  source = (ROOT / "docs/guide/functions.md").read_text(encoding="utf-8")
+  code = next(code for code in re.findall(r"^```python\n(.*?)^```", source, re.MULTILINE | re.DOTALL) if f"def {name}(" in code)
+  namespace: dict[str, object] = {"np": np, "sc": sc}
+  exec(code, namespace)
+  assert capsys.readouterr().out == expected_output
+  function = namespace[name]
+  assert isinstance(function, sc.Function)
+  instance = function.instantiate()
+  assert tuple(expr.type.dtype.name for expr in instance.inputs) == input_dtypes
+  assert tuple(expr.type.dtype.name for expr in instance.outputs) == output_dtypes
