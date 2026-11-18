@@ -64,6 +64,7 @@ from .ir.expr import (
   where,
 )
 from .function import Function, group, arg, factory
+from . import linalg
 from .function.extern import CLibrary, extern
 from .ir.match import Pattern, PatternMatcher, rewrite
 from .passes.expr import cse, cse_many, simplify
@@ -155,6 +156,7 @@ __all__ = [
   "format_expr",
   "forward",
   "factory",
+  "linalg",
   "function",
   "gather",
   "pack",

@@ -15,6 +15,7 @@ the module where each object is defined. `sc.sym` and `sc.const` are the same me
 | [Building functions](functions.md) | Input and output declarations, the decorator, and derivatives of named functions |
 | [Differentiation](ad.md) | Derivatives of expressions and the lower-level sparsity algorithms |
 | [Code generation](codegen.md) | Writing C files, the generated calling convention, compilation, and caching |
+| [Linear algebra](linalg.md) | Dense triangular solves, Cholesky and `solve` |
 | [Solvers](solvers.md) | Optimization problems, solver selection, solve statistics, and plugin interfaces |
 | [Visualization](viz.md) | Recording what the compiler does to a function and browsing the recordings |
 

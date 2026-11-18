@@ -12,7 +12,7 @@ PAGES = [
   ROOT / "docs/index.md",
   *sorted(path for directory in ("guide", "how_it_works", "benchmarks") for path in (ROOT / "docs" / directory).rglob("*.md")),
 ]
-RUNNABLE = [ROOT / "docs/guide/sparse_matrices.md"]
+RUNNABLE = [ROOT / "docs/guide/linalg.md", ROOT / "docs/guide/sparse_matrices.md"]
 
 
 def prose_violations(source: str) -> list[tuple[int, str]]:

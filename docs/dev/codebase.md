@@ -105,6 +105,10 @@ src/scaly/
     _oracle.py           shared oracle-assembly helpers
     _stage.py            dense derivatives mapped over a builder's stage Functions
 
+  linalg/                linear algebra as library Functions over LOOP, with custom derivative rules
+    dense.py             triangular solves and Cholesky, their reverse rules, stacks over leading axes
+    entry.py             the solve entry point, choosing a factorization by matrix type and assume
+
   viz/
     graph.py             graph JSON, colors and labels; presentation, not compiler text
     recording.py         records a render by registering into codegen's observer hook
@@ -132,7 +136,7 @@ one, never a higher one.
 | 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/rules`, `ad/sparsity`, `solvers/{stats,stages}` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites, the elementwise table, structural sparsity, solver statistics and stage layouts. Nothing here knows what a `Function` is. |
 | 3 | `function/{model,concrete,tree,digest,extern}` | Function declarations, concrete graph instances, typed trees over import layer 1, external declarations, and the digest of a graph. |
 | 4 | `ad/{forward,reverse,calls,helpers,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the one builder that does too (`vmap`). |
-| 5 | `function/{factory,api}`, the rest of `solvers/` | The user-facing request layer: typed derivative specs, the decorator, the solver builders. |
+| 5 | `function/{factory,api}`, the rest of `solvers/`, `linalg/*` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, and the library Functions built with them. |
 | 6 | `passes/lowering/*`, `passes/program/*` | Lower whole Functions, including their solver callees, and optimize the program dialect. |
 | 7 | `codegen/*` | The backend: render, compile, load, dispatch. |
 | 8 | `viz/*` | Observes the backend. Nothing in the compiler depends on it. |
