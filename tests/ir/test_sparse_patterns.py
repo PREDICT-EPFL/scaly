@@ -50,9 +50,10 @@ def test_sampled_matmul_has_an_explicit_fixed_pattern_and_verifies_it():
   ):
     with pytest.raises(ValueError, match="sampled MATMUL"):
       matmul(x, y, sampled=requested)
-  conditioned = matmul(a, b, sampled=sample, conditions=(pack(Expr.const(np.ones(3, dtype=bool)), a.type.pattern), None))
+  diagonal = _pattern(np.eye(3, dtype=bool))
+  conditioned = matmul(a, b, sampled=sample, conditions=(pack(Expr.const(np.ones(3, dtype=bool)), diagonal), None))
   verify_expr(conditioned)
-  floating = pack(Expr.const(np.ones(3)), a.type.pattern)
+  floating = pack(Expr.const(np.ones(3)), diagonal)
   with pytest.raises(VerifyError, match="MATMUL conditions"):
     verify_expr(_forge(conditioned, args=(a, b, floating, conditioned.args[3])))
 
