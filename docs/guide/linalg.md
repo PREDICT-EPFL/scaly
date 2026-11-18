@@ -36,6 +36,14 @@ of shape `(n, k)` whose columns are separate right-hand sides, and `x` has the s
 `solve`, `cholesky` and `solve_triangular` are Python functions, not `Function`s. They are
 called inside a function body on expressions and add calls of the library functions to its graph.
 
+Because they are not `Function`s, they do not work everywhere a `Function` does. Called on NumPy
+arrays outside a function body, they return expressions holding the calculation, not numbers,
+so a numerical result needs an `@sc.function` around the call, as every example on this page has.
+They cannot be passed to `sc.gradient`, `sc.jacobian` or `sc.vmap` by name either, which raise
+`TypeError` for a Python function. Differentiate the `@sc.function` that calls them instead. A stack
+of matrices needs no `vmap`, since every routine maps over leading axes by itself, as
+[Stacks of matrices](#stacks-of-matrices) shows.
+
 ## Differences from NumPy and SciPy
 
 The names follow SciPy's, but three differences could give a wrong result in code ported from
