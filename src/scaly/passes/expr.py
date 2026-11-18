@@ -277,7 +277,7 @@ def _is_matrix_transpose(e: Expr) -> bool:
 
 
 def _matmul_of_transpose_and_vector(e: Expr) -> bool:
-  a, b = e.args
+  a, b = e.args[:2]
   return (len(b.shape) == 1 and _is_matrix_transpose(a)) or (len(a.shape) == 1 and _is_matrix_transpose(b))
 
 
@@ -288,7 +288,7 @@ def _matmul_transpose_fold(e: Expr) -> Expr:
 
 
 def _matmul_ones_vector(e: Expr) -> bool:
-  a, b = e.args
+  a, b = e.args[:2]
   return len(a.shape) == 1 and _is_one(a) or len(b.shape) == 1 and _is_one(b)
 
 

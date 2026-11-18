@@ -20,6 +20,7 @@ from ..ir.expr import (
   gather,
   matmul,
   pack,
+  sampled_conditions,
   scatter,
   stack,
   to_dense,
@@ -34,6 +35,7 @@ from .rules import (
   _mask_of,
   _masked,
   carry_masks,
+  operand_mask,
   move_mask,
   scatter_weights,
   reduction_partial,
@@ -144,12 +146,14 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
           args, d = args[:1], d[:1]
         elif expr.op == ExprOp.SCATTER:
           args, d = (args[0], args[2]), (d[0], d[2])
+        elif expr.op == ExprOp.MATMUL:
+          args, d = args[:2], d[:2]
         assert all(arg.type.dtype.is_floating for arg in args)
         d = [t if t is not None else _zero_tangent(arg, nseed) for arg, t in zip(args, d, strict=True)]
         if len(d) == 1:
           tangent = move_mask(d[0], lambda t: _pushforward_rule(expr, [t], nseed, callee))
         elif expr.op == ExprOp.MATMUL and any(_mask_of(t) is not None for t in d):
-          weights = matmul(*(_coefficient_activity(arg) for arg in args), sampled=expr.attrs.get("sampled"))
+          weights = matmul(*(_coefficient_activity(arg) for arg in args), sampled=expr.attrs.get("sampled"), conditions=sampled_conditions(expr))
           tangent = carry_masks(
             d,
             lambda seeds: _pushforward_rule(expr, seeds, nseed, callee),
@@ -181,6 +185,13 @@ def _pushforward(outputs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, c
           )
     tangents[expr.id] = None if tangent is not None and _prunable_support(tangent) == frozenset() else tangent
   return tuple(tangents[out.id] if tangents[out.id] is not None or not out.type.dtype.is_floating else _zero_tangent(out, nseed) for out in outputs)
+
+
+def _both(a: Expr | None, b: Expr | None) -> Expr | None:
+  if a is None or b is None:
+    return b if a is None else a
+  assert a.type.pattern is not None and a.type.pattern is b.type.pattern
+  return pack(values(a) & values(b), a.type.pattern, shape=a.shape)
 
 
 def _coefficient_activity(arg: Expr) -> Expr:
@@ -264,15 +275,18 @@ def _pushforward_rule(expr: Expr, d: Sequence[Expr], nseed: int, callee: str) ->
     if expr.attrs.get("sampled") is not None:
       terms = []
       sampled = expr.attrs.get("sampled")
+      cx, cy = sampled_conditions(expr)
       if not _is_zero_const(d[0]):
+        mask = operand_mask(d[0])
         terms.append(
-          stack(matmul(d[0][i], args[1], sampled=sampled) for i in range(nseed))
+          stack(matmul(d[0][i], args[1], sampled=sampled, conditions=(_both(cx, None if mask is None else mask[i]), cy)) for i in range(nseed))
           if args[0].type.pattern is not None
           else _jvp_many_matmul_left(args[0], args[1], d[0], nseed)
         )
       if not _is_zero_const(d[1]):
+        mask = operand_mask(d[1])
         terms.append(
-          stack(matmul(args[0], d[1][i], sampled=sampled) for i in range(nseed))
+          stack(matmul(args[0], d[1][i], sampled=sampled, conditions=(cx, _both(cy, None if mask is None else mask[i]))) for i in range(nseed))
           if args[1].type.pattern is not None
           else _jvp_many_matmul_right(args[0], args[1], d[1], nseed)
         )

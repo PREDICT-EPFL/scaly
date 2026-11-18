@@ -392,7 +392,7 @@ def accumulate(total: Expr, cot: Expr) -> Expr:
 # Activity comes from c, never from the numerical value of a tangent or cotangent.
 # Elementwise partials, movements, calls, maps and forward carried loops carry it. Reverse dense matrix products drop it;
 # COND, custom derivative rules, externs and solver calls have no flag protocol.
-# Sampled sparse-product adjoints reconstruct guards only from the producers they recognise.
+# Sampled sparse products take it as an explicit condition on each operand, guarding every multiply.
 # A sum with an unflagged active term has no flag; _accumulate skips proven-zero terms instead.
 def _mask_of(cot: Expr) -> tuple[Expr, Expr] | None:
   """The chosen condition and inner value of a select with a constant zero branch."""
@@ -432,6 +432,15 @@ def cotangent_mask(cot: Expr) -> Expr | None:
       condition = pack(_sample_stored(condition, output) & _sample_stored(mask[0], output), output.pattern, shape=output.shape)
     cot = mask[1]
   return condition
+
+
+def operand_mask(value: Expr) -> Expr | None:
+  """The select conditions enclosing ``value``, with its shape and pattern."""
+  condition = cotangent_mask(value)
+  if condition is None or (condition.shape == value.shape and condition.type.pattern is value.type.pattern):
+    return condition
+  sampled = _sample_stored(condition, value.type)
+  return sampled if value.type.pattern is None else pack(sampled, value.type.pattern, shape=value.shape)
 
 
 def activity(tangent: Expr) -> Expr:

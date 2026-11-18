@@ -9,7 +9,7 @@ from operator import or_
 
 import numpy as np
 
-from ...ad.rules import ELEMENTWISE, _mask_of
+from ...ad.rules import ELEMENTWISE
 from ...function.concrete import ConcreteFunction
 from ...ir.expr import Expr, ExprOp, _index_values, topo
 from ...ir import program as p
@@ -82,18 +82,7 @@ def _reads(node: Expr) -> list[tuple[Expr, int]]:
   from a buffer, as calls, prints and sparse plans do."""
   op = ExprOp(node.op)
   if node.type.pattern is not None or any(a.type.pattern is not None for a in node.args):
-    reads = [(a, _BUFFER) for a in node.args]
-    if op == ExprOp.MATMUL and node.attrs.get("sampled") is not None:
-      for current in node.args:
-        while True:
-          if current.op in (ExprOp.PACK, ExprOp.VALUES, ExprOp.SLICE, ExprOp.TRANSPOSE, ExprOp.RESHAPE):
-            current = current.args[0]
-          elif (mask := _mask_of(current)) is not None:
-            reads.append((mask[0], _BUFFER))
-            current = mask[1]
-          else:
-            break
-    return reads
+    return [(a, _BUFFER) for a in node.args]
   if op in ELEMENTWISE:
     return [(a, _ONCE if a.size == node.size else _MANY) for a in node.args]
   if op == ExprOp.MATMUL:

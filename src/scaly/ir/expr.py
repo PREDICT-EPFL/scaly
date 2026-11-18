@@ -273,7 +273,7 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.SCATTER: OpInfo(ExprOp.SCATTER, 3, support_rule="scatter"),
   ExprOp.STACK: OpInfo(ExprOp.STACK, None, support_rule="stack"),
   ExprOp.CONCAT: OpInfo(ExprOp.CONCAT, None, support_rule="concat"),
-  ExprOp.MATMUL: OpInfo(ExprOp.MATMUL, 2, pattern_rule="matmul"),
+  ExprOp.MATMUL: OpInfo(ExprOp.MATMUL, None, pattern_rule="matmul"),
   ExprOp.CALL: OpInfo(ExprOp.CALL, None, support_rule="call"),
   ExprOp.EXTERN: OpInfo(ExprOp.EXTERN, None),
   ExprOp.COND: OpInfo(ExprOp.COND, None, support_rule="cond"),
@@ -1321,7 +1321,7 @@ def _normalize_index(index: Any, shape: tuple[int, ...]) -> tuple[Any, ...]:
   )
 
 
-def matmul(x: Expr, y: Expr, *, sampled: CanonicalPattern | None = None) -> Expr:
+def matmul(x: Expr, y: Expr, *, sampled: CanonicalPattern | None = None, conditions: tuple[Expr | None, Expr | None] = (None, None)) -> Expr:
   """Matrix product with NumPy's ``matmul`` rules.
 
   The last two axes of each operand multiply as matrices and leading axes broadcast.
@@ -1337,13 +1337,34 @@ def matmul(x: Expr, y: Expr, *, sampled: CanonicalPattern | None = None) -> Expr
   shape = broadcast_shape(x.shape[:-2], y.shape[:-2])
   shape += (() if len(x.shape) == 1 else (x.shape[-2],)) + (() if len(y.shape) == 1 else (y.shape[-1],))
   attrs = {} if sampled is None else {"sampled": sampled}
+  args: tuple[Expr, ...] = (x, y)
+  if any(c is not None for c in conditions):
+    # A sampled product multiplies x[i, k] * y[k, j] only where both operands' conditions hold.
+    if sampled is None:
+      raise ValueError("MATMUL conditions require a sampled pattern")
+    args += tuple(_always(arg) if c is None else c for arg, c in zip(args, conditions, strict=True))
+    if any(c.type.dtype != dtypes.bool_ or c.shape != arg.shape or c.type.pattern is not arg.type.pattern for arg, c in zip(args, args[2:])):
+      raise ValueError("each MATMUL condition must be Boolean with its operand's shape and pattern")
   return Expr(
     ExprOp.MATMUL,
-    (x, y),
+    args,
     TensorType(shape, dtype=promote_dtype(x, y), diff=diff_any(x, y), pattern=stored_pattern(ExprOp.MATMUL, (x.type, y.type), shape, attrs)),
     attrs=attrs,
     lowering=common_lowering(x, y),
   )
+
+
+def _always(x: Expr) -> Expr:
+  assert x.type.pattern is not None
+  return pack(Expr.const(np.ones(x.type.storage_shape, dtype=bool), dtype=dtypes.bool_), x.type.pattern, shape=x.shape)
+
+
+def sampled_conditions(node: Expr) -> tuple[Expr | None, Expr | None]:
+  """The condition on each operand of a sampled ``MATMUL``, ``None`` where it always holds."""
+  if len(node.args) == 2:
+    return None, None
+  x, y = (None if c.op == ExprOp.PACK and c.args[0].op == ExprOp.CONST and np.all(c.args[0].value) else c for c in node.args[2:])
+  return x, y
 
 
 def _reduce(x: Expr, kind: str, axis: int | tuple[int, ...] | None = None) -> Expr:

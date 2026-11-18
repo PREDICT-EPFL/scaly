@@ -227,9 +227,9 @@ def _slice_index(expr: Expr) -> str | None:
 
 
 def _matmul_shape(expr: Expr) -> str | None:
-  if len(expr.args) != 2:
+  if len(expr.args) not in ((2,) if expr.attrs.get("sampled") is None else (2, 4)):
     return f"MATMUL has {len(expr.args)} args"
-  x, y = expr.args
+  x, y = expr.args[:2]
   if x.type.dtype != y.type.dtype:
     return f"MATMUL operands have mismatched dtypes: {x.type.dtype} vs {y.type.dtype}"
   if not x.shape or not y.shape or x.shape[-1] != y.shape[-2 if len(y.shape) > 1 else -1]:

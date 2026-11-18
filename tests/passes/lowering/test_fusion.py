@@ -251,14 +251,14 @@ def test_reused_selection_of_an_input_needs_no_buffer() -> None:
   assert not _privates(_lowered(_function("reused_input_selection", ((1000,),), body)))
 
 
-def test_sampled_product_counts_its_select_condition_read() -> None:
+def test_sampled_product_counts_its_condition_read() -> None:
   a = CanonicalPattern((3, 3), (0, 1, 1, 2), (0, 0, 2, 1))
   b = CanonicalPattern((3, 3), (0, 0, 1, 2), (0, 2, 1, 2))
   output = CanonicalPattern((3, 3), (0, 1, 2), (0, 2, 1))
 
   def body(v, w):
-    masked = sc.pack(sc.where(v.sin() > 0, v, 0.0), a)
-    return sc.values(sc.matmul(masked, sc.pack(w, b), sampled=output)).block()
+    condition = sc.pack(v.sin() > 0, a)
+    return sc.values(sc.matmul(sc.pack(v, a), sc.pack(w, b), sampled=output, conditions=(condition, None))).block()
 
   assert _work(_lowered(_function("sampled_condition", ((4,), (4,)), body)), ProgramOp.SIN) == 4
 
