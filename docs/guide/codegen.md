@@ -346,7 +346,8 @@ np.testing.assert_allclose(shifted_square(values), values**2 + 1.0)
 
 The C function must be deterministic and reentrant. It must read inputs without changing
 them, write every output, and retain no pointers or hidden state between calls. Differentiating
-through it requires [`sc.custom_derivative`](../api/ad.md) rules on a wrapping `Function`.
+through it requires [`sc.custom_derivative`](../api/functions.md#scaly.function.api.custom_derivative)
+rules on a wrapping `Function`.
 
 Exporting with `write_module` writes the library's sources and headers beside the generated C
 and records its build settings in `<name>.build.json`. A `CLibrary`'s `include_dirs` and

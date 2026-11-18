@@ -13,17 +13,23 @@ the workspace decision and every generated-C snapshot. Avoid `docs/guide/functio
 1. [x] Inspect the issue, parent, checkout, stacked prerequisites and documentation conventions.
 2. [x] Add the focused documentation example test, observe its failure, write the section and API
    entries, and demonstrate that a wrong C result fails the NumPy assertion.
-3. [ ] Run focused tests, render and inspect both API docstrings, and run the detached merge checks
+3. [x] Run focused tests, render and inspect both API docstrings, and run the detached merge checks
    through `~/.scaly-suite/run`. Stop if any C snapshot changes.
 4. [ ] Commit, push once and open a draft PR against the stack base. Get one Opus 5.5 high review
    for correctness and style, fix findings, and request only a delta check if needed.
 5. [ ] Remove this plan, update the PR and issue, report criterion evidence and CI state, and watch
    the PR. Never merge or queue it.
 
-GitHub Project REST access returned 404. Track status through issue comments without guessing
-Project identifiers. Scratch files and logs live under ignored `build/issue480/`.
+The Project is available through the REST `projectsV2` endpoint. Its issue item is marked
+In progress. Scratch files and logs live under ignored `build/issue480/`.
 
 Focused validation: 62 documentation and external-library tests passed. The new test first failed
 because its section was absent. Replacing the C square by `3*x` made all three NumPy comparisons
 fail, then the original C was restored. The docs-only Zensical build passed with no issues and
 contains both API anchors and docstrings. Existing docstrings need no edits.
+
+The detached merge hook passed, with 5,138 tests passed and 16 skipped, benchmark smoke, types,
+formatting, lint, docs and private-name check. Full collection passed with 5,466 node IDs after
+adding the one new documentation case to its baseline. The rendered API text and all added links
+were checked. A scratch export verified absolute include/library directory paths. C snapshots
+have no diff. Both lower PRs are still open at their original tips.
