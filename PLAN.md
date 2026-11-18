@@ -30,3 +30,10 @@ The test-node baseline has 5471 entries, including 11 new tests. Ruff and ty pas
 build passes. The README, guide example and representative examples pass. The detached full
 pre-merge run exited 0: 5143 tests passed, 16 skipped, benchmark smoke passed, docs built without
 issues, and the private-name check passed. Generated-C snapshots remain unchanged.
+
+The Opus review found two small fixes: correct the indexing docstring and reject symbolic pad
+constants with a helper-naming error. Both are fixed. One added invalid-input case failed before
+the guard and will verify the fix. The optional export assertion and guide wording are simplified.
+The signature's subok argument and direct flatten reshape are retained to follow NumPy and avoid
+coupling to the parallel vec rename. The existing identity slice is retained, with no workspace.
+Remaining: checks on these fixes, delta check, remove plan, final push, ready PR and tracker report.

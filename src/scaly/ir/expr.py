@@ -740,7 +740,7 @@ class Expr:
     return self.transpose()
 
   def __getitem__(self, index: Any) -> Expr:
-    """Select fixed integers and slices, with ``...`` and ``None`` to insert singleton axes."""
+    """Select with integers, slices and steps. ``...`` fills remaining axes and ``None`` inserts a singleton axis."""
     index = _normalize_index(index, self.shape)
     shape = tuple(np.broadcast_to(np.empty(()), self.shape)[index].shape)
     if any(item is None for item in index):
@@ -1438,14 +1438,14 @@ def pad(array: Any, pad_width: Any, mode: str = "constant", *, constant_values: 
   """Pad each axis with a scalar constant, converted to the input's dtype.
 
   ``pad_width`` is a nonnegative integer, a shared ``(before, after)`` pair, or
-  one such pair per axis. Only ``mode='constant'`` and a scalar ``constant_values``
+  one such pair per axis. Only ``mode='constant'`` and a numerical scalar ``constant_values``
   are supported. The default padding value is zero.
   """
   x = as_expr(array)
   if mode != "constant":
     raise ValueError("pad supports only mode='constant'")
-  if np.ndim(constant_values) != 0:
-    raise ValueError("pad constant_values must be a scalar")
+  if isinstance(constant_values, Expr) or np.ndim(constant_values) != 0:
+    raise ValueError("pad constant_values must be a numerical scalar")
   try:
     widths = np.asarray(pad_width)
   except ValueError as exc:

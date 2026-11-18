@@ -315,8 +315,9 @@ It accepts only `order="C"` and, like `reshape`, does not request a storage copy
 
 `x.squeeze(axis=None)` removes singleton axes. With an integer or tuple of
 axes, it removes only those axes and raises if any has extent other than one.
+`sc.squeeze(x, axis=None)` is also available.
 `sc.expand_dims(x, axis)` inserts singleton axes at the specified positions
-in the resulting shape. `sc.squeeze(x, axis=None)` is also available.
+in the resulting shape.
 Indexing supports integers, slices, steps, `...`, and `None` for a new axis:
 
 ```python
@@ -330,8 +331,7 @@ print(last_column(np.arange(6.0).reshape(2, 3)))
 ```
 
 `sc.broadcast_to(x, shape)` repeats entries along singleton axes and any new
-leading axes. It requires compatible shapes, as in NumPy. These shape helpers
-retain the input's dtype.
+leading axes. It requires compatible shapes, as in NumPy, and retains the input's dtype.
 
 `x.transpose(axes)` permutes axes, and `x.T` reverses their order.
 `x.swapaxes(axis1, axis2)` exchanges two axes, as does `sc.swapaxes`.

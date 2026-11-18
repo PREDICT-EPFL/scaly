@@ -113,6 +113,7 @@ def test_shape_helpers_invalid_inputs():
     ("pad", lambda: sc.pad(x, ((1, 2, 3),))),
     ("pad", lambda: sc.pad(x, 1, mode="reflect")),
     ("pad", lambda: sc.pad(x, 1, constant_values=(1, 2))),
+    ("pad.*numerical scalar", lambda: sc.pad(x, 1, constant_values=sc.sym("padding"))),
     ("swapaxes", lambda: x.swapaxes(0, 2)),
     ("moveaxis", lambda: sc.moveaxis(x, 0, -3)),
     ("moveaxis", lambda: sc.moveaxis(x, (0, 1), (1,))),
