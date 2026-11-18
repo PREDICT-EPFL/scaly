@@ -96,7 +96,7 @@ def test_a_value_and_its_gradient_share_one_factorization() -> None:
 def test_solve_checks_its_arguments() -> None:
   k, b = sc.sym("K", (N, N)), sc.sym("b", N)
   with pytest.raises(ValueError, match="assume must be one of"):
-    linalg.solve(k, b, assume="sym")
+    linalg.solve(k, b, assume="her")
   with pytest.raises(ValueError, match="right-hand side has shape"):
     linalg.solve(k, sc.sym("c", N + 1), assume="pos")
   with pytest.raises(TypeError, match="dense matrix"):

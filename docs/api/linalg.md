@@ -8,4 +8,8 @@ the derivatives with examples.
 
 ::: scaly.linalg.cholesky
 
+::: scaly.linalg.ldl
+
+::: scaly.linalg.lu_factor
+
 ::: scaly.linalg.solve_triangular

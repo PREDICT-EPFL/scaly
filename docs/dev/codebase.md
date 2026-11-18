@@ -106,7 +106,7 @@ src/scaly/
     _stage.py            dense derivatives mapped over a builder's stage Functions
 
   linalg/                linear algebra as library Functions over LOOP, with custom derivative rules
-    dense.py             triangular solves and Cholesky, their reverse rules, stacks over leading axes
+    dense.py             triangular solves, Cholesky, LDL^T and LU, their solves and rules, stacks over leading axes
     entry.py             the solve entry point, choosing a factorization by matrix type and assume
 
   viz/
