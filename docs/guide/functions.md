@@ -314,6 +314,8 @@ and `x.mean(axis=(0, 2), keepdims=True)` averages over two axes while retaining
 them with extent one. Negative axes count from the end, as in NumPy. An empty
 axis tuple leaves each entry unchanged. An empty reduction domain sums to zero
 and has a mean of NaN.
+The mean of an integer or bool tensor is `float64`. Floating inputs keep their
+dtype, so the mean of a `float32` tensor is `float32`.
 
 ```python
 @sc.function(sc.arg("x", (2, 3)), outputs=sc.arg("centered"))

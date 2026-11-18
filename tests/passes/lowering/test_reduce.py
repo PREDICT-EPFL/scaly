@@ -43,6 +43,30 @@ def test_sum_mean_every_axis_subset(shape, lowering):
         np.testing.assert_allclose(actual, expected, atol=1e-12, rtol=1e-12)
 
 
+@pytest.mark.parametrize("dtype", ["int32", "int64", "bool", "float32"])
+def test_mean_dtype_matches_numpy(dtype):
+  @sc.function(sc.arg("x", sc.TensorType((2, 3, 4), dtype=sc.dtypes.from_name(dtype))))
+  def f(x):
+    return x.mean(axis=(0, 2)), x.mean(axis=(0, 2), keepdims=True), x.mean(axis=()), x[:, :0, :].mean(axis=(1, 2), keepdims=True)
+
+  data = (np.arange(24).reshape(2, 3, 4) % 7 - 3).astype(dtype)
+  with warnings.catch_warnings():
+    warnings.simplefilter("ignore", RuntimeWarning)
+    expected = (data.mean(axis=(0, 2)), data.mean(axis=(0, 2), keepdims=True), data.mean(axis=()), data[:, :0, :].mean(axis=(1, 2), keepdims=True))
+  for actual, reference in zip(f(data), expected, strict=True):
+    assert actual.dtype == reference.dtype
+    assert actual.shape == reference.shape
+    np.testing.assert_allclose(actual, reference, rtol=1e-6)
+
+  numerator = f.instantiate().outputs[0].args[0]
+  if dtype != "float32":
+    assert numerator.op == sc.ExprOp.CAST
+    assert numerator.type.dtype == sc.dtypes.float64
+    numerator = numerator.args[0]
+  assert numerator.op == sc.ExprOp.REDUCE
+  assert numerator.type.dtype == ("int64" if dtype == "bool" else dtype)
+
+
 @pytest.mark.parametrize("shape", [(4,), (0,), (2, 4), (4, 2), (0, 3)])
 @pytest.mark.parametrize("offset", [-1, 0, 1])
 def test_diag_numpy(shape, offset):
