@@ -11,7 +11,7 @@ unsupported structs, and absolute include/library paths in exported manifests. P
 the workspace decision and every generated-C snapshot. Avoid `docs/guide/functions.md`.
 
 1. [x] Inspect the issue, parent, checkout, stacked prerequisites and documentation conventions.
-2. [ ] Add the focused documentation example test, observe its failure, write the section and API
+2. [x] Add the focused documentation example test, observe its failure, write the section and API
    entries, and demonstrate that a wrong C result fails the NumPy assertion.
 3. [ ] Run focused tests, render and inspect both API docstrings, and run the detached merge checks
    through `~/.scaly-suite/run`. Stop if any C snapshot changes.
@@ -22,3 +22,8 @@ the workspace decision and every generated-C snapshot. Avoid `docs/guide/functio
 
 GitHub Project REST access returned 404. Track status through issue comments without guessing
 Project identifiers. Scratch files and logs live under ignored `build/issue480/`.
+
+Focused validation: 62 documentation and external-library tests passed. The new test first failed
+because its section was absent. Replacing the C square by `3*x` made all three NumPy comparisons
+fail, then the original C was restored. The docs-only Zensical build passed with no issues and
+contains both API anchors and docstrings. Existing docstrings need no edits.
