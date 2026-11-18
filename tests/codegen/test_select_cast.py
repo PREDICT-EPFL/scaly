@@ -158,7 +158,7 @@ def test_unsafe_constant_integer_casts_reach_c(dtype: str, bits: int) -> None:
 @pytest.mark.parametrize("dtype,bits", [("int32", 32), ("int64", 64)])
 def test_finite_in_range_constant_integer_casts_still_fold(dtype: str, bits: int) -> None:
   limit = float(1 << (bits - 1))
-  values = np.array([-limit, -1.5, -0.0, 1.5, min(limit - 1, np.nextafter(limit, 0.0))])
+  values = np.array([-limit, -1.5, -0.0, 1.5, np.nextafter(limit, 0.0)])
   folded = simplify(sc.cast(sc.const(values), dtype))
   assert folded.op == sc.ExprOp.CONST
   np.testing.assert_array_equal(folded.value, values.astype(dtype))
