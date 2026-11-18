@@ -398,9 +398,10 @@ print(select_entries(np.array([2.0, 3.0, 5.0, 7.0]), np.array([3, -1, 1])))
 # [ 7. -1.  3.]
 ```
 
-The `positions` input is declared as `int64` and takes an integer array directly.
-[Float32 and integer functions](codegen.md#float32-and-integer-functions)
-describes the entry signature for functions that mix data types.
+The `positions` input accepts integer arrays. A float array raises `TypeError`.
+This function mixes `float64` and `int64` leaves, so its C entry takes `void`
+pointers, as described in
+[Float32 and integer functions](codegen.md#float32-and-integer-functions).
 
 `sc.dynamic_slice(x, start, size)` reads `size` consecutive entries along the
 last axis, starting at an int64 scalar expression. The size stays fixed between

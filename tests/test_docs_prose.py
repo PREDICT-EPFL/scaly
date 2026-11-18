@@ -1,4 +1,4 @@
-"""Check punctuation in published user prose, and run the examples of the guide pages listed in ``RUNNABLE``."""
+"""Check punctuation in published prose and execute selected guide examples."""
 
 import builtins
 from pathlib import Path
