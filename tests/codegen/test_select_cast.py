@@ -135,6 +135,35 @@ def test_integer_floordiv_and_mod_follow_numpy_floor_semantics(dtype: str, varia
 CAST_CASES = np.array([-(2.0**62), -2.5, -1.5, -0.5, -0.0, 0.5, 1.9, 2.0**53, 2.0**62])
 
 
+@pytest.mark.parametrize("dtype,bits", [("int32", 32), ("int64", 64)])
+def test_unsafe_constant_integer_casts_reach_c(dtype: str, bits: int) -> None:
+  limit = float(1 << (bits - 1))
+  below_min = sc.cast(sc.const(np.nextafter(-limit, -np.inf)), dtype)
+  assert simplify(below_min).op == sc.ExprOp.CAST
+  unsafe = [limit, np.nextafter(-limit - 1, -np.inf), np.inf, -np.inf, np.nan]
+  mixed = sc.cast(sc.const([1.5, *unsafe]), dtype)
+  assert simplify(mixed).op == sc.ExprOp.CAST
+  for value in unsafe:
+    expr = sc.cast(sc.const(value), dtype)
+
+    @sc.function(name="unsafe_constant_cast")
+    def casts() -> sc.Expr:
+      return expr
+
+    source = render_c_source(casts)
+    assert f"(({dtype}_t)(" in source, source
+    assert simplify(expr).op == sc.ExprOp.CAST
+
+
+@pytest.mark.parametrize("dtype,bits", [("int32", 32), ("int64", 64)])
+def test_finite_in_range_constant_integer_casts_still_fold(dtype: str, bits: int) -> None:
+  limit = float(1 << (bits - 1))
+  values = np.array([-limit, -1.5, -0.0, 1.5, np.nextafter(limit, 0.0)])
+  folded = simplify(sc.cast(sc.const(values), dtype))
+  assert folded.op == sc.ExprOp.CONST
+  np.testing.assert_array_equal(folded.value, values.astype(dtype))
+
+
 def test_uint8_casts_are_rejected_before_lowering() -> None:
   for x in (sc.const([0, 255]).block(), sc.sym("bytes", 2).block()):
     with pytest.raises(ValueError, match="unsupported expression dtype uint8"):

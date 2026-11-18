@@ -2878,6 +2878,8 @@ tests/codegen/test_select_cast.py::test_builders_refuse_invalid_operands[where_p
 tests/codegen/test_select_cast.py::test_builders_refuse_invalid_operands[where_shapes]
 tests/codegen/test_select_cast.py::test_casts_to_and_from_bool_and_their_structure
 tests/codegen/test_select_cast.py::test_double_equals_stays_identity
+tests/codegen/test_select_cast.py::test_finite_in_range_constant_integer_casts_still_fold[int32-32]
+tests/codegen/test_select_cast.py::test_finite_in_range_constant_integer_casts_still_fold[int64-64]
 tests/codegen/test_select_cast.py::test_int64_selects_and_bool_constants_keep_their_width[block]
 tests/codegen/test_select_cast.py::test_int64_selects_and_bool_constants_keep_their_width[scalar]
 tests/codegen/test_select_cast.py::test_int_casts_truncate_toward_zero_and_int64_arithmetic_stays_exact[block]
@@ -2897,6 +2899,8 @@ tests/codegen/test_select_cast.py::test_special_value_grid_matches_numpy_in_ever
 tests/codegen/test_select_cast.py::test_special_value_grid_matches_numpy_in_every_lowering_and_when_folded[scalar]
 tests/codegen/test_select_cast.py::test_special_value_grid_matches_numpy_in_every_lowering_and_when_folded[vmap]
 tests/codegen/test_select_cast.py::test_uint8_casts_are_rejected_before_lowering
+tests/codegen/test_select_cast.py::test_unsafe_constant_integer_casts_reach_c[int32-32]
+tests/codegen/test_select_cast.py::test_unsafe_constant_integer_casts_reach_c[int64-64]
 tests/codegen/test_sparse_boundary.py::test_cpp_sparse_metadata_avoids_declared_function_and_library_names[input-f_n_in]
 tests/codegen/test_sparse_boundary.py::test_cpp_sparse_metadata_avoids_declared_function_and_library_names[input-std]
 tests/codegen/test_sparse_boundary.py::test_cpp_sparse_metadata_avoids_declared_function_and_library_names[output-f_n_in]

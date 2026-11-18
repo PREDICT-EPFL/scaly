@@ -374,6 +374,11 @@ the size of the intermediate arrays.
 become expressions, and `sc.cast(x, "uint8")` raises `ValueError`. Convert byte
 data to a supported type explicitly, for example with `sc.const(data, dtype="int32")`.
 
+`sc.cast(x, dtype)` converts values elementwise. Float-to-integer conversions
+drop the fractional part. Out-of-range and non-finite values follow the target's
+C conversion, which is undefined in standard C. Constant folding leaves these
+conversions as casts.
+
 ### Runtime indexing
 
 `sc.gather(x, indices)` reads flat entries of `x`, with the result shaped like
