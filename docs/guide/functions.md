@@ -309,6 +309,42 @@ missing from the reference is not available on `Expr`. The
 NumPy arrays are numerical data, so use Scaly operations to construct symbolic
 calculations rather than assuming a NumPy function accepts `Expr`.
 
+`x.reshape(shape)` changes the shape while keeping the number and row-major
+order of entries. `x.flatten()` returns a rank-1 expression in row-major order.
+It accepts only `order="C"` and, like `reshape`, does not request a storage copy.
+
+`x.squeeze(axis=None)` removes singleton axes. With an integer or tuple of
+axes, it removes only those axes and raises if any has extent other than one.
+`sc.expand_dims(x, axis)` inserts singleton axes at the specified positions
+in the resulting shape. `sc.squeeze(x, axis=None)` is also available.
+Indexing supports integers, slices, steps, `...`, and `None` for a new axis:
+
+```python
+@sc.function(sc.arg("x", (2, 3)), outputs=sc.arg("column"))
+def last_column(x: sc.Expr) -> sc.Expr:
+    return x[..., -1, None]
+
+print(last_column(np.arange(6.0).reshape(2, 3)))
+# [[2.]
+#  [5.]]
+```
+
+`sc.broadcast_to(x, shape)` repeats entries along singleton axes and any new
+leading axes. It requires compatible shapes, as in NumPy. These shape helpers
+retain the input's dtype.
+
+`x.transpose(axes)` permutes axes, and `x.T` reverses their order.
+`x.swapaxes(axis1, axis2)` exchanges two axes, as does `sc.swapaxes`.
+`sc.moveaxis(x, source, destination)` moves one axis or tuples of axes while
+keeping the other axes in their relative order. Negative axes count from the end.
+`sc.flip(x, axis=None)` reverses entries along every axis, or only the integer
+or tuple of axes given by `axis`.
+
+`sc.pad(x, pad_width, mode="constant", constant_values=0)` adds a border.
+The width is an integer for both ends of every axis, a shared `(before, after)`
+pair, or one such pair per axis. Only constant padding with a scalar value is
+supported. The value converts to the input's dtype, which the result retains.
+
 `x.sum()` reduces every axis. `x.sum(axis=1)` sums each row of a matrix,
 and `x.mean(axis=(0, 2), keepdims=True)` averages over two axes while retaining
 them with extent one. Negative axes count from the end, as in NumPy. An empty
