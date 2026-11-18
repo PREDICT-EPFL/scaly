@@ -305,55 +305,6 @@ The main export choices are:
 | `lang="cpp"`          | `--lang cpp`         | C++ header with buffer types and a namespace                |
 | `casadi=True`         | `--casadi`           | Metadata functions for compatible external-function loaders |
 
-## External C functions
-
-[`sc.CLibrary`](../api/core.md#scaly.function.extern.CLibrary) describes C sources and their
-build dependencies. [`sc.extern`](../api/core.md#scaly.function.extern.extern) declares a C
-symbol's inputs and outputs so that a `Function` can call it. All input and output leaves
-must have fixed shapes and currently support only `float64`. Struct arguments and results
-are not supported.
-
-The C signature is `void f(const double*..., double*..., double* w)`, with one pointer per
-input leaf, then one per output leaf, in declaration order. The last pointer supplies
-`workspace` doubles of scratch memory, or `NULL` when `workspace=0`.
-
-This kernel squares a three-element vector. The enclosing `Function` adds one to each
-entry, and the numerical call checks the compiled result against NumPy:
-
-```python
-import numpy as np
-import scaly as sc
-
-library = sc.CLibrary("square", sources={"square.c": """
-void external_square(const double* x, double* y, double* w) {
-    (void)w;
-    for (int i = 0; i < 3; ++i) y[i] = x[i] * x[i];
-}
-"""})
-square = sc.extern(
-    library, "external_square",
-    inputs=(sc.arg("x", 3),), outputs=sc.arg("y", 3),
-)
-
-@sc.function(sc.arg("x", 3), outputs=sc.arg("y"))
-def shifted_square(x: sc.Expr) -> sc.Expr:
-    return square(x) + 1.0
-
-shifted_square.compile()
-values = np.array([-1.0, 0.5, 2.0])
-np.testing.assert_allclose(shifted_square(values), values**2 + 1.0)
-```
-
-The C function must be deterministic and reentrant. It must read inputs without changing
-them, write every output, and retain no pointers or hidden state between calls. Differentiating
-through it requires [`sc.custom_derivative`](../api/functions.md#scaly.function.api.custom_derivative)
-rules on a wrapping `Function`.
-
-Exporting with `write_module` writes the library's sources and headers beside the generated C
-and records its build settings in `<name>.build.json`. A `CLibrary`'s `include_dirs` and
-`library_dirs` appear in this manifest as absolute paths. An application building elsewhere
-must adjust those paths to its dependencies.
-
 ## C++ buffers
 
 `lang="cpp"` generates a C++17 header. The implementation remains C, which
@@ -568,6 +519,55 @@ the placeholders need only the correct shapes. The example solves race-car
 tracking with acados' sequential quadratic programming solver.
 The example's docstring gives the setup for acados-wheels 0.6.0, which requires
 access to its private repository.
+
+## External C functions
+
+[`sc.CLibrary`](../api/core.md#scaly.function.extern.CLibrary) describes C sources and their
+build dependencies. [`sc.extern`](../api/core.md#scaly.function.extern.extern) declares a C
+symbol's inputs and outputs so that a `Function` can call it. All input and output leaves
+must have fixed shapes and dtype `float64`. Struct arguments and results are not supported.
+
+The C signature is `void f(const double*..., double*..., double* w)`, with one pointer per
+input leaf, then one per output leaf, in declaration order. The last pointer supplies
+`workspace` doubles of scratch memory, or `NULL` when `workspace=0`.
+
+This kernel squares a three-element vector. The enclosing `Function` adds one to each
+entry, and the numerical call checks the compiled result against NumPy:
+
+```python
+import numpy as np
+import scaly as sc
+
+library = sc.CLibrary("square", sources={"square.c": """
+void external_square(const double* x, double* y, double* w) {
+    (void)w;
+    for (int i = 0; i < 3; ++i) y[i] = x[i] * x[i];
+}
+"""})
+square = sc.extern(
+    library, "external_square",
+    inputs=(sc.arg("x", 3),), outputs=sc.arg("y", 3),
+)
+
+@sc.function(sc.arg("x", 3), outputs=sc.arg("y"))
+def shifted_square(x: sc.Expr) -> sc.Expr:
+    return square(x) + 1.0
+
+shifted_square.compile()
+values = np.array([-1.0, 0.5, 2.0])
+np.testing.assert_allclose(shifted_square(values), values**2 + 1.0)
+```
+
+The C function must be deterministic and reentrant. It must read inputs without changing
+them, write every output, and retain no pointers or hidden state between calls. Differentiating
+through it requires [`sc.custom_derivative`](../api/functions.md#scaly.function.api.custom_derivative)
+rules on a wrapping `Function`.
+
+`write_module` exports the library's sources and headers under `libraries/` in the output
+directory and records its build settings in `<name>.build.json`. A `CLibrary`'s `include_dirs`
+and `library_dirs` appear in this manifest as absolute paths. These describe the exporting
+machine and may need changing for a deployment target. See
+[deployment dependencies](#solver-export-and-deployment-dependencies) for compilation and linking.
 
 ## Solver export and deployment dependencies
 
