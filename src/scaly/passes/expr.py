@@ -96,6 +96,10 @@ def _constant_fold(e: Expr) -> Expr:
   if any(v is None for v in vals):
     return e
   args = [v for v in vals if v is not None]
+  if e.op == ExprOp.CAST and e.args[0].type.dtype.is_floating and e.type.dtype.is_integer:
+    limit = 1 << (e.type.dtype.bits - 1)
+    if not np.all(np.isfinite(args[0]) & (args[0] >= -limit) & (args[0] < limit)):
+      return e
   try:
     with np.errstate(divide="raise", invalid="raise", over="raise"):
       uniform = all(_uniform_value(v) is not None for v in args)
@@ -103,7 +107,6 @@ def _constant_fold(e: Expr) -> Expr:
         out = ELEMENTWISE[e.op].numpy(*(v.flat[0] for v in args))
         return _uniform(out, e.shape, dtype=e.type.dtype, lowering=e.lowering)
       out = _evaluate(e, args)
-      # Converting here keeps a cast of NaN or an out-of-range float to an integer a runtime operation.
       out = None if out is None else np.asarray(out).astype(e.type.dtype.numpy())
   except FloatingPointError:
     return e
