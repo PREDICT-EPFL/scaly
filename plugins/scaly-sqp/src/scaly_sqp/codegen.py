@@ -14,6 +14,8 @@ import re
 from typing import TYPE_CHECKING
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
+from scaly.ir.types import CanonicalPattern
+from scaly.linalg.symbolic import analyze
 from scaly_piqp import PIQP_VERSION
 
 if TYPE_CHECKING:
@@ -42,26 +44,6 @@ def _csc(entries: list[tuple[int, int, int]], n_cols: int) -> tuple[list[int], l
   for c in range(n_cols):
     col_ptr[c + 1] += col_ptr[c]
   return col_ptr, [e[0] for e in ordered], [e[1] for e in ordered], [e[2] for e in ordered]
-
-
-def _ldl_symbolic(n: int, col_ptr: list[int], rows: list[int]) -> tuple[list[int], list[int]]:
-  """Elimination tree and column counts of the LDL^T factor of an upper-triangular
-  CSC pattern (Davis's ``ldl_symbolic``). Returns ``(parent, col_ptr_of_L)``."""
-  parent, flag, nz = [-1] * n, [-1] * n, [0] * n
-  for k in range(n):
-    flag[k] = k
-    for p in range(col_ptr[k], col_ptr[k + 1]):
-      i = rows[p]
-      while i < k and flag[i] != k:
-        if parent[i] == -1:
-          parent[i] = k
-        nz[i] += 1
-        flag[i] = k
-        i = parent[i]
-  l_ptr = [0] * (n + 1)
-  for k in range(n):
-    l_ptr[k + 1] = l_ptr[k] + nz[k]
-  return parent, l_ptr
 
 
 def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
@@ -105,8 +87,8 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   a_ptr, a_rows, _, a_src = _csc([(r, c, k) for k, (r, c) in enumerate(zip(jrows, jcols, strict=True)) if r < nh], n)
   g_ptr, g_rows, _, g_src = _csc([(r - nh, c, k) for k, (r, c) in enumerate(zip(jrows, jcols, strict=True)) if r >= nh], n)
   nnz_j, nnz_h, nnz_p = len(jrows), len(hrows), len(p_rows)
-  ldl_parent, ldl_ptr = _ldl_symbolic(n, p_ptr, p_rows)
-  nnz_l = ldl_ptr[n]
+  ldl = analyze(CanonicalPattern((n, n), tuple(p_rows), tuple(p_cols)), "natural")
+  ldl_parent, ldl_ptr, nnz_l = list(ldl.parent), list(ldl.l_ptr), ldl.nnz_l
   normal_slot = [p_slot[(r, c)] for r, c, _, _ in normal_terms]
   normal_a = [ka for _, _, ka, _ in normal_terms]
   normal_b = [kb for _, _, _, kb in normal_terms]
