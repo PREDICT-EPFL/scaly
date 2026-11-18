@@ -429,3 +429,72 @@ def test_select_on_the_sampled_coefficient_is_an_ordinary_value():
     expected = np.array([[cot[i, 0] * y[k, 0] + (cot[i, 1] * y[k, 1] if k == 0 else 0) for k in range(2)] for i in range(2)]).ravel()
   assert np.isnan(expected).any() and np.isfinite(expected).any()
   np.testing.assert_array_equal(sc.gradient(loss, wrt="v")(v, w), expected)
+
+
+def test_masked_sampled_product_second_order_guards_an_infinite_coefficient_derivative():
+  pattern = CanonicalPattern((2, 2), (0, 0, 1, 1), (0, 1, 0, 1))
+  output = CanonicalPattern((2, 3), (0, 0, 0, 1, 1, 1), (0, 1, 2, 0, 1, 2))
+  coefficients = np.array([[-2.0, 2.0], [3.0, -3.0]])
+  weights = np.array([1.0, 2.0, 1.0, 1.0, 2.0, 1.0])
+
+  @sc.function(sc.arg("w", 6), name="masked_infinite_coefficient_derivative")
+  def loss(w):
+    # The masked column's coefficients are sqrt(0): finite, with an infinite derivative.
+    entries = [sc.const(-2.0), sc.const(2.0), w[4].sqrt(), sc.const(3.0), sc.const(-3.0), w[5].sqrt()]
+    product = sc.pack(w[:4], pattern).sqrt() @ sc.pack(sc.stack(entries), output)
+    selected = sc.where(sc.pack(sc.const(np.tile([True, True, False], 2)), output), product.sin(), sc.pack(sc.const(np.zeros(6)), output))
+    return (sc.values(selected) * sc.const(weights)).sum()
+
+  def reference_grad(v):
+    partial = weights.reshape(2, 3)[:, :2] * np.cos(np.sqrt(v.reshape(2, 2)) @ coefficients)
+    return (partial @ coefficients.T).ravel() * 0.5 / np.sqrt(v)
+
+  point = np.array([0.4, 0.7, 1.1, 1.6, 0.0, 0.0])
+  expected = np.zeros((6, 6))
+  expected[:4, :4] = finite_difference(reference_grad, point[:4])
+  np.testing.assert_allclose(sc.hessian(loss, wrt="w")(point), expected, atol=1e-8)
+  concrete = as_concrete(loss)
+  first = vjp(concrete.outputs, (concrete.inputs[0],), (sc.const(1.0),))[0]
+  second = vjp((first.sum(),), (concrete.inputs[0],), (sc.const(1.0),))[0]
+
+  @sc.function(sc.arg("w", 6), name="masked_infinite_coefficient_twice")
+  def twice(w):
+    return substitute(second, {concrete.inputs[0]: w})
+
+  np.testing.assert_allclose(twice(point), expected.sum(axis=0), atol=1e-8)
+
+
+def test_sampled_product_tangent_guards_each_inactive_multiply():
+  pattern = CanonicalPattern((2, 2), (0, 0, 1, 1), (0, 1, 0, 1))
+  output = CanonicalPattern((2, 3), (0, 0, 0, 1, 1, 1), (0, 1, 2, 0, 1, 2))
+  coefficients = np.array([[-2.0, 2.0, np.inf], [3.0, -3.0, 5.0]])
+  active = np.array([False, True, True, True])
+
+  @sc.function(sc.arg("v", 4), name="masked_sampled_tangent")
+  def tangent(v):
+    x = sc.pack(sc.where(sc.const(active), v.sqrt(), 1.0), pattern)
+    return sc.values(jvp_many(matmul(x, sc.const(sparse.coo_array(coefficients)), sampled=output), v, sc.const(np.eye(4))))
+
+  v = np.array([0.4, 0.7, 1.1, 1.6])
+  expected = np.zeros((4, 2, 3))
+  with np.errstate(invalid="ignore"):
+    for seed, (i, k) in enumerate(np.ndindex(2, 2)):
+      for row, col in np.ndindex(2, 2):
+        if active[2 * row + col]:
+          expected[seed, row] += (0.5 / np.sqrt(v[seed]) if (row, col) == (i, k) else 0.0) * coefficients[col]
+  np.testing.assert_array_equal(tangent(v), expected.reshape(4, 6))
+
+
+def test_conditioned_sampled_product_adjoint_keeps_the_operand_condition():
+  pattern = CanonicalPattern((2, 2), (0, 0, 1, 1), (0, 1, 0, 1))
+  condition = np.array([True, False, True, True])
+  coefficients = np.array([[1.0, 2.0], [3.0, 4.0]])
+
+  @sc.function(sc.arg("v", 4), name="conditioned_sampled_product")
+  def total(v):
+    keep = sc.pack(sc.const(condition), pattern)
+    product = matmul(sc.pack(v, pattern), sc.const(sparse.coo_array(coefficients)), sampled=pattern, conditions=(keep, None))
+    return sc.values(product).sum()
+
+  expected = np.where(condition.reshape(2, 2), coefficients.sum(axis=1), 0.0).ravel()
+  np.testing.assert_array_equal(sc.gradient(total, wrt="v")(np.ones(4)), expected)
