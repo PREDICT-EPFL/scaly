@@ -4,6 +4,8 @@ reverse Cuthill–McKee ordering and SuperLU's minimum-degree fill."""
 from __future__ import annotations
 
 import dataclasses
+import gc
+import weakref
 from collections.abc import Callable
 
 import numpy as np
@@ -243,6 +245,22 @@ def test_equal_patterns_share_one_immutable_analysis() -> None:
   with pytest.raises(dataclasses.FrozenInstanceError):
     s.perm = ()  # ty: ignore[invalid-assignment]
   assert all(isinstance(getattr(s, f.name), tuple) for f in dataclasses.fields(SymbolicAnalysis) if f.name not in ("n", "digest"))
+
+
+def test_an_analysis_nobody_holds_is_released() -> None:
+  mask = _multistage(3, 2, 2, 11)
+  s = analyze(_pattern(mask), "natural")
+  alive = weakref.ref(s)
+  del s
+  gc.collect()
+  assert alive() is None
+  assert analyze(_pattern(mask), "natural").l_ptr == analyze(_pattern(mask), "natural").l_ptr
+
+
+@pytest.mark.parametrize("ordering", ORDERINGS)
+def test_an_empty_pattern_has_an_empty_analysis(ordering: Ordering) -> None:
+  s = analyze(CanonicalPattern((0, 0), (), ()), ordering)
+  assert s.perm == s.parent == s.postorder == s.l_rows == () and s.l_ptr == s.a_ptr == (0,)
 
 
 def test_orderings_with_equal_tables_give_the_same_analysis() -> None:

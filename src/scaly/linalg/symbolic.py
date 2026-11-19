@@ -15,6 +15,7 @@ from __future__ import annotations
 import heapq
 import math
 import threading
+import weakref
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import Literal
@@ -33,7 +34,8 @@ ORDERINGS: tuple[Ordering, ...] = ("natural", "rcm", "amd")
 class SymbolicAnalysis:
   """The structure of ``P A P^T = L D L^T`` for a symmetric ``A`` with a fixed pattern.
 
-  Equal tables give the same object, so ``is`` compares two analyses, and ``digest`` names them.
+  Equal tables give the same object while one is alive, so ``is`` compares two analyses, and
+  ``digest`` names them.
   Every table is a tuple of ints. A ragged per-column table pairs a pointer tuple with an index
   tuple: ``x_ptr[j]:x_ptr[j + 1]`` is column ``j``.
 
@@ -71,9 +73,11 @@ class SymbolicAnalysis:
     return self.l_ptr[-1]
 
 
+# Weak, so an analysis lives only as long as something holds it: the pattern of L alone can run to
+# tens of megabytes, and a solver plugin keeps only the tree and the column pointers.
 _LOCK = threading.Lock()
-_BY_PATTERN: dict[tuple[str, str], SymbolicAnalysis] = {}
-_BY_DIGEST: dict[str, SymbolicAnalysis] = {}
+_BY_PATTERN: weakref.WeakValueDictionary[tuple[str, str], SymbolicAnalysis] = weakref.WeakValueDictionary()
+_BY_DIGEST: weakref.WeakValueDictionary[str, SymbolicAnalysis] = weakref.WeakValueDictionary()
 
 
 def analyze(pattern: CanonicalPattern, ordering: Ordering = "amd") -> SymbolicAnalysis:
@@ -106,7 +110,7 @@ def _analyze(pattern: CanonicalPattern, ordering: Ordering) -> SymbolicAnalysis:
   )
   adjacency.sum_duplicates()
   adjacency.sort_indices()
-  if ordering == "natural":
+  if ordering == "natural" or n == 0:  # SciPy's RCM refuses an empty graph
     perm = np.arange(n, dtype=np.int64)
   elif ordering == "rcm":
     perm = np.asarray(reverse_cuthill_mckee(adjacency, symmetric_mode=True), dtype=np.int64)
