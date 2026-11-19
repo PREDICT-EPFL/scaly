@@ -150,18 +150,20 @@ def lower_scatter_sum(ctx: LowerCtx, node: Expr, scatters: Sequence[Expr]) -> No
   entries = ctx.domains.get(node.id)
   writes = [scatter_targets(leaf) for leaf in scatters]
   lanes = [scattered_values(leaf, entries) for leaf in scatters]
+  # A scatter repeating any index adds into zeros, as it does whole, even where it stores fewer
+  # values, so that each entry keeps the sum and the sign of zero of the whole scatter.
+  adds = [k > 0 or len(np.unique(targets)) != len(targets) for k, targets in enumerate(writes)]
   zeros = None
   if entries is not None:
-    first = writes[0][lanes[0]]
     written = np.union1d(entries, np.concatenate([idx[kept] for idx, kept in zip(writes, lanes, strict=True)]))
-    zeros = written if len(np.unique(first)) != len(first) else np.setdiff1d(written, first)
+    zeros = written if adds[0] else np.setdiff1d(written, writes[0][lanes[0]])
     zeros = zeros if affine(zeros) else None
   if zeros is None or len(zeros):
     zname = ctx.names.allocate(f"z_{out.attrs['name']}")
     zrng = p.range_(zname, 0, _size_of(node.shape) if zeros is None else len(zeros), kind=RangeKind.GLOBAL)
     z = p.var(zname) if zeros is None else ctx.index_at(zeros, p.var(zname), shared=True)
     ctx.statements.append(p.for_(zrng, [p.store(p.view(out, [z]), constant(0, node.type.dtype))]))
-  for k, (leaf, targets, kept) in enumerate(zip(scatters, writes, lanes, strict=True)):
+  for leaf, targets, kept, add in zip(scatters, writes, lanes, adds, strict=True):
     idx = targets[kept]
     iname = ctx.names.allocate(f"i_{out.attrs['name']}")
     repeated = len(set(idx.tolist())) != len(idx)
@@ -169,7 +171,7 @@ def lower_scatter_sum(ctx: LowerCtx, node: Expr, scatters: Sequence[Expr]) -> No
     i = p.var(iname)
     target = p.view(out, [ctx.index_at(idx, i)])
     value = ctx.read_stored(leaf.args[2], kept, i)
-    stmt = p.store(target, p.add(p.load(target), value) if repeated or k else value)
+    stmt = p.store(target, p.add(p.load(target), value) if add else value)
     if leaf.id in ctx.permutes:
       ctx.emit([irng], [stmt], delinearize=True)
     else:

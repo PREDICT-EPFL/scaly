@@ -277,3 +277,26 @@ def test_a_reduction_and_a_sum_of_scatters_compute_only_the_entries_read() -> No
   _check(fn, ((8, 5), (6,)), lambda x, y: np.sin(x).sum(axis=1)[rows] + np.array([np.cos(y[0]), np.exp(y[0]), np.cos(y[1])]))
   proc = _lowered_checked(fn)
   assert (_flops(proc, ProgramOp.SIN), _flops(proc, ProgramOp.COS), _flops(proc, ProgramOp.EXP)) == (15, 2, 1)
+
+
+@needs_cc
+def test_a_scalar_product_no_entry_of_which_is_read_still_lowers() -> None:
+  """A scalar product in a part that two selected concatenations never select is demanded nowhere
+  and computed whole."""
+
+  def body(a: sc.Expr, b: sc.Expr, c: sc.Expr) -> sc.Expr:
+    joined = sc.concat([sc.stack([a @ b]), c])
+    return sc.gather(joined, np.array([1, 2])) + sc.gather(joined, np.array([2, 3]))
+
+  fn = _function("unread_scalar", ((3,), (3,), (4,)), body)
+  _check(fn, ((3,), (3,), (4,)), lambda a, b, c: c[[0, 1]] + c[[1, 2]])
+  _lowered_checked(fn)
+
+
+@needs_cc
+def test_a_narrowed_scatter_keeps_the_sign_of_zero() -> None:
+  """A scatter that repeats an index nobody reads still adds into zeros where it stores one value,
+  so a negative zero comes out positive, as from the whole scatter."""
+  fn = _function("signed_zero", ((3,),), lambda v: sc.gather(_scatter_zero(v, np.array([0, 2, 2]), 4), np.array([0])))
+  assert not np.signbit(fn((np.array([-0.0, 1.0, 2.0]),))).any()
+  _lowered_checked(fn)
