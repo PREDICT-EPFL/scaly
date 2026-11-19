@@ -140,6 +140,28 @@ def test_matmul_operand_read_once_is_inlined() -> None:
 
 
 @needs_cc
+@pytest.mark.parametrize("width", [None, 5])
+def test_folded_matmul_seeds_keep_their_logical_layout(width):
+  rows, cols = (0, 0, 1, 2, 2), (0, 3, 2, 1, 3)
+  pattern = CanonicalPattern((3, 4), rows, cols)
+  weights = np.array([1.5, 2.0, -1.0, 0.75, -0.5])
+  shape = (4,) if width is None else (4, width)
+
+  @sc.function(sc.arg("x", shape), sc.arg("seeds", (2, *shape)), name=f"folded_seeds_{width}")
+  def derivative(x, seeds):
+    w = sc.pack(weights, pattern)
+    return sc.jvp_many(w @ x, x, seeds).block()
+
+  w = np.zeros((3, 4))
+  w[rows, cols] = weights
+  seeds = np.random.default_rng(69).normal(size=(2, *shape))
+  expected = np.stack([w @ seed for seed in seeds])
+  actual = derivative(np.zeros(shape), seeds)
+  np.testing.assert_allclose(actual if width is None else actual.toarray(), expected, atol=1e-14)
+  assert not _privates(_lowered(derivative))
+
+
+@needs_cc
 @pytest.mark.parametrize("expensive", [False, True])
 def test_a_libm_call_is_not_duplicated_by_two_reads(expensive: bool) -> None:
   op = (lambda v: v.sin()) if expensive else (lambda v: v * 3.0)
