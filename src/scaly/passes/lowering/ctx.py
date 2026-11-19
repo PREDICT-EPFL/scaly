@@ -26,8 +26,8 @@ from ...utils.names import NameScope
 from ..affine import affine_index_map
 from ..arith import constant
 from ...ad.rules import ELEMENTWISE
-from .fusion import ALIASES, _contiguous_slice_offset, plan_fusion
-from .plans import MapRegion, compact_reads, has_compact_map, map_regions
+from .fusion import ALIASES, SeedEpilogue, _contiguous_slice_offset, plan_fusion, product_outputs
+from .plans import MapRegion, compact_reads, has_compact_map, map_regions, plan_seed_map
 from ..arith import fold_program
 from ..program.fold_arith import _fold_index as _fold_bounded
 from ..program.scheduling import ScalarNameAllocator, schedule_values
@@ -274,9 +274,13 @@ class LowerCtx:
     self._shared_indices: dict[tuple[int, ...], ProgramNode] = {}
     self.invariant = invariant
     self.deferred: frozenset[int] = frozenset()
+    self.product_outputs: dict[int, tuple[Expr, np.ndarray, tuple[Expr, ...]]] = {}
+    self.seed_epilogues: dict[int, SeedEpilogue] = {}
+    self.packed_seed_inputs: dict[int, ProgramNode] = {}
     self.sums: dict[int, tuple[Expr, ...]] = {}
     self._compact_reads: dict[int, tuple[np.ndarray, ...]] = {}
     self.planned_maps: dict[int, tuple[MapRegion, ...]] = {}
+    self.seed_maps: dict[int, tuple[int, tuple[tuple[MapRegion, tuple[int, int]], ...]] | None] = {}
     self._reads: dict[tuple[int, _Coordinates, tuple[ProgramNode, ...]], ProgramNode] = {}
     # Each index ``index_at`` built, with the table and the variable it indexes.
     self._indexed: dict[ProgramNode, tuple[np.ndarray, ProgramNode]] = {}
@@ -364,7 +368,7 @@ class LowerCtx:
       reads, _ = self._step((node, True, (at,)))
       return [(arg, _fold_index(coords[0] if flat else _flat(arg.shape, coords))) for arg, flat, coords in reads]
 
-    self.deferred, self.sums, groups = plan_fusion(
+    self.deferred, self.sums, groups, self.seed_epilogues = plan_fusion(
       self.fun,
       self.invariant,
       roots=self._computed,
@@ -375,6 +379,9 @@ class LowerCtx:
       shares_traversal=self._shares_traversal,
     )
     absorbed = {leaf.id for leaves in self.sums.values() for leaf in leaves}
+    absorbed.update(plan.chain[0].id for plan in self.seed_epilogues.values())
+    self.product_outputs = product_outputs(self._computed, self._output_alias)
+    absorbed.update(movement.id for _, _, chain in self.product_outputs.values() for movement in chain)
     self.permutes = set()
     for node in topo(self._computed):
       if ExprOp(node.op) == ExprOp.TRANSPOSE or any(a.id in self.deferred and a.id in self.permutes for a in node.args):
@@ -471,13 +478,26 @@ class LowerCtx:
   def _shares_traversal(self, producer: Expr, consumer: Expr) -> bool:
     if producer.shape != consumer.shape or producer.type.pattern != consumer.type.pattern:
       return False
-    if not has_compact_map(producer) or not has_compact_map(consumer):
-      return False
-    source, target = self._compact_regions(producer), self._compact_regions(consumer)
+    if producer.type.pattern is None:
+      src, dst = self.seed_map(producer), self.seed_map(consumer)
+      if src is None or dst is None:
+        return False
+      source, target = tuple(region for region, _ in src[1]), tuple(region for region, _ in dst[1])
+    else:
+      if not has_compact_map(producer) or not has_compact_map(consumer):
+        return False
+      source, target = self._compact_regions(producer), self._compact_regions(consumer)
     if len(source) != len(target):
       return False
     operand = next(i for i, arg in enumerate(consumer.args) if arg is producer)
     return all(np.array_equal(src.writes, dst.reads[operand]) for src, dst in zip(source, target, strict=True))
+
+  def seed_map(self, expr: Expr) -> tuple[int, tuple[tuple[MapRegion, tuple[int, int]], ...]] | None:
+    if not self.seed_pairs:
+      return None
+    if expr.id not in self.seed_maps:
+      self.seed_maps[expr.id] = plan_seed_map(expr, self.support_of)
+    return self.seed_maps[expr.id]
 
   def read_stored(self, expr: Expr, slots: np.ndarray, k: ProgramNode) -> ProgramNode:
     if expr.type.pattern is None and expr.id not in self._orders:
@@ -695,13 +715,16 @@ class LowerCtx:
   def _map_step(self, expr: Expr, operands: Sequence[Expr], region: MapRegion, number: int, k: ProgramNode) -> _Step:
     reads: list[_Read] = []
     values = []
+    seeded = self.seed_maps.get(expr.id) is not None
     for arg, slots in zip(operands, region.reads, strict=True):
       if slots[0] < 0:
         values.append(constant(0, arg.type.dtype))
-      elif arg.type.pattern is not None and arg.id in self.deferred:
+      elif arg.id in self.deferred and (arg.type.pattern is not None or seeded and self.seed_maps.get(arg.id) is not None):
         # Traversal agreement makes the same region and iteration valid in the producer.
         reads.append((arg, "stored", (k, p.const_int(number))))
         values.append(None)
+      elif seeded and arg.op == ExprOp.CONST and arg.value is not None and np.all((sample := arg.value.reshape(-1)[slots]) == sample[0]):
+        values.append(constant(sample[0].item(), arg.type.dtype))
       else:
         values.append(self.read_stored(arg, slots, k))
 
@@ -756,7 +779,8 @@ class LowerCtx:
     if flat == "stored":
       k, region_index = at
       number = int(region_index.attrs["value"])
-      region = self.planned_maps[expr.id][number]
+      seed_map = self.seed_maps.get(expr.id)
+      region = self.planned_maps[expr.id][number] if seed_map is None else seed_map[1][number][0]
       return self._map_step(expr, expr.args[: len(region.reads)], region, number, k)
     op = ExprOp(expr.op)
     if op in ELEMENTWISE:
@@ -768,6 +792,30 @@ class LowerCtx:
       if (value := _uniform(expr)) is not None:
         return [], lambda _: constant(value, expr.type.dtype)
       return [], lambda _: p.load(p.view(self.raw_buf_of(expr), [position]))
+    if op == ExprOp.CONCAT:
+      reads, bounds = [], []
+      offset = 0
+      for arg in expr.args:
+        if not arg.size:
+          continue
+        end = offset + arg.size
+        below = ProgramNode(ProgramOp.LT, (position, p.const_int(end)), dtype=dtypes.bool_)
+        above = ProgramNode(ProgramOp.LE, (p.const_int(offset), position), dtype=dtypes.bool_)
+        active = ProgramNode(ProgramOp.AND, (above, below), dtype=dtypes.bool_)
+        slot = ProgramNode(ProgramOp.SELECT, (active, _shift(position, -offset), p.const_int(0)), dtype=dtypes.int64)
+        reads.append((arg, True, (slot,)))
+        bounds.append(below)
+        offset = end
+
+      def choose(values: list[ProgramNode]) -> ProgramNode:
+        value = values[-1]
+        for below, item in reversed(list(zip(bounds[:-1], values[:-1], strict=True))):
+          value = ProgramNode(ProgramOp.SELECT, (below, item, value), dtype=expr.type.dtype)
+        return value
+
+      if not reads:
+        return [], lambda _: constant(0, expr.type.dtype)
+      return reads, choose
     src = expr.args[0]
     if op in ALIASES:
       if not flat and src.id in self.deferred and src.id not in self.value_buffers and ExprOp(src.op) in (ExprOp.TRANSPOSE, ExprOp.SLICE):

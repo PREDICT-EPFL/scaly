@@ -17,8 +17,9 @@ def kkt_assembly():
 
   @sc.function(sc.arg("data", 10), sc.arg("xr", 3), sc.arg("dr", ()), sc.arg("zr", 2), name="kkt_assembly")
   def assemble(data, xr, dr, zr):
-    blocks = sc.concat((data[:3], data[3:7], data[7:], (-dr).reshape((1,)), -zr, sc.const([0.0])))
-    base = sc.gather(blocks, slots)
+    blocks = sc.concat((data[:3], data[3:7], data[7:], dr.reshape((1,)), zr, sc.const([0.0])))
+    value = sc.gather(blocks, slots)
+    base = sc.where((rows == cols) & (cols >= 3), -value, value)
     diagonal = sc.gather(xr, np.where(primal_diagonal, rows, 0))
     return sc.where(primal_diagonal, base + diagonal, base).block()
 

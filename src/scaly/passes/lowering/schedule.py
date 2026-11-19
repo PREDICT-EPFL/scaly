@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from ...ir import program as p
 from ...ir.program import ProgramNode, ProgramOp, walk_program
@@ -23,6 +23,7 @@ def emit_reduction(
   batch_axes: int = 0,
   identity: ProgramNode | None = None,
   delinearize: bool = False,
+  finish: Callable[[ProgramNode], ProgramNode] | None = None,
 ) -> None:
   """Use four scalar output lanes for unit-stride reductions, otherwise put reduction axes first.
 
@@ -30,6 +31,9 @@ def emit_reduction(
   reduction carries its running sums in the destination between iterations, with batch axes outside. Loaded bounds keep
   their output coordinates outside the reduction and disable lane expansion, and so does a carried output range, which
   is never split or moved inside another loop.
+
+  With ``finish``, apply the consumer to the completed accumulator. For a strided reduction this
+  uses the same destination for the partial sums and finishes it in place after accumulation.
   """
   if identity is None:
     identity = constant(
@@ -53,6 +57,8 @@ def emit_reduction(
   if strided and not loaded and not carried:
     ctx.emit(outputs, [p.store(target, identity)])
     ctx.emit([*outputs[:batch_axes], *reductions, *outputs[batch_axes:]], [p.store(target, combine(p.load(target), value))], delinearize=delinearize)
+    if finish is not None:
+      ctx.emit(outputs, [p.store(target, finish(p.load(target)))], delinearize=delinearize)
     return
 
   def emit(outer: Sequence[ProgramNode], coordinates: Sequence[ProgramNode] = ()) -> None:
@@ -63,7 +69,10 @@ def emit_reduction(
     # An empty reduction must not remove its identity or final store.
     ranges, updates = ctx.delinearize(reductions, updates, outer=outer) if delinearize else (reductions, updates)
     loops = ctx.nest_body(ranges, updates)
-    stores = [p.store(dst, acc) for dst, (_, acc, _) in zip(targets, accumulators, strict=True)]
+    results = [acc if finish is None else finish(acc) for _, acc, _ in accumulators]
+    if finish is not None and coordinates:
+      results = [substitute_var(result, outputs[-1].attrs["name"], coord) for result, coord in zip(results, coordinates, strict=True)]
+    stores = [p.store(dst, result) for dst, result in zip(targets, results, strict=True)]
     ctx.emit(outer, [*(initial for _, _, initial in accumulators), *loops, *stores], delinearize=delinearize)
 
   count = trip_count(outputs[-1]) if outputs else 1
