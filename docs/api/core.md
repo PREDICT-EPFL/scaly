@@ -155,6 +155,20 @@ from a `Function`.
 
 ::: scaly.ir.expr.ravel
 
+::: scaly.ir.expr.squeeze
+
+::: scaly.ir.expr.expand_dims
+
+::: scaly.ir.expr.broadcast_to
+
+::: scaly.ir.expr.flip
+
+::: scaly.ir.expr.pad
+
+::: scaly.ir.expr.swapaxes
+
+::: scaly.ir.expr.moveaxis
+
 ::: scaly.ir.expr.gather
     options:
       show_source: false

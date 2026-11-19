@@ -697,6 +697,27 @@ class Expr:
     """Flatten this expression to rank 1 in row-major order."""
     return self.reshape((self.size,))
 
+  def squeeze(self, axis: int | tuple[int, ...] | None = None) -> Expr:
+    """Remove singleton axes, or only those named by ``axis``.
+
+    Negative axes count from the end. A selected axis must have extent one.
+    Omitting ``axis`` removes every singleton axis, possibly producing a scalar.
+    """
+    return squeeze(self, axis)
+
+  def flatten(self, order: str = "C") -> Expr:
+    """Return a rank-1 expression in row-major order. Only ``order='C'`` is supported.
+
+    This is a reshape and does not request a copy of the expression's storage.
+    """
+    if order != "C":
+      raise ValueError("flatten supports only row-major order='C'")
+    return self.reshape((self.size,))
+
+  def swapaxes(self, axis1: int, axis2: int) -> Expr:
+    """Exchange two axes. Negative axes count from the end."""
+    return swapaxes(self, axis1, axis2)
+
   def transpose(self, axes: tuple[int, ...] | None = None) -> Expr:
     axes = tuple(reversed(range(len(self.shape)))) if axes is None else tuple(axes)
     if sorted(axes) != list(range(len(self.shape))):
@@ -719,8 +740,11 @@ class Expr:
     return self.transpose()
 
   def __getitem__(self, index: Any) -> Expr:
+    """Select with integers, slices and steps. ``...`` fills remaining axes and ``None`` inserts a singleton axis."""
     index = _normalize_index(index, self.shape)
     shape = tuple(np.broadcast_to(np.empty(()), self.shape)[index].shape)
+    if any(item is None for item in index):
+      return self[tuple(item for item in index if item is not None)].reshape(shape)
     return Expr(
       ExprOp.SLICE,
       (self,),
@@ -1316,15 +1340,20 @@ def maximum(x: Any, y: Any) -> Expr:
 def _normalize_index(index: Any, shape: tuple[int, ...]) -> tuple[Any, ...]:
   if not isinstance(index, tuple):
     index = (index,)
-  if Ellipsis in index:
-    ellipsis_pos = index.index(Ellipsis)
-    fill = len(shape) - (len(index) - 1)
+  ellipses = [i for i, item in enumerate(index) if item is Ellipsis]
+  if len(ellipses) > 1:
+    raise IndexError("indexing accepts only one ellipsis")
+  consumed = sum(item is not None and item is not Ellipsis for item in index)
+  if ellipses:
+    ellipsis_pos = ellipses[0]
+    fill = len(shape) - consumed
     if fill < 0:
       raise IndexError(f"too many indices for shape {shape}")
     index = index[:ellipsis_pos] + (slice(None),) * fill + index[ellipsis_pos + 1 :]
-  if len(index) > len(shape):
+    consumed += fill
+  if consumed > len(shape):
     raise IndexError(f"too many indices for shape {shape}")
-  index = index + (slice(None),) * (len(shape) - len(index))
+  index = index + (slice(None),) * (len(shape) - consumed)
 
   def integer(item: Any) -> int:
     if isinstance(item, bool | np.bool_) or not isinstance(item, int | np.integer):
@@ -1332,9 +1361,141 @@ def _normalize_index(index: Any, shape: tuple[int, ...]) -> tuple[Any, ...]:
     return int(item)
 
   return tuple(
-    slice(*(None if v is None else integer(v) for v in (item.start, item.stop, item.step))) if isinstance(item, slice) else integer(item)
+    None
+    if item is None
+    else slice(*(None if v is None else integer(v) for v in (item.start, item.stop, item.step)))
+    if isinstance(item, slice)
+    else integer(item)
     for item in index
   )
+
+
+def squeeze(a: Any, axis: int | tuple[int, ...] | None = None) -> Expr:
+  """Remove axes of extent one, retaining the dtype and row-major value order.
+
+  ``axis`` selects an integer axis or a tuple of axes, with negative axes counting
+  from the end. Selected axes must have extent one. ``None`` selects all singleton axes.
+  """
+  x = as_expr(a)
+  try:
+    shape = np.squeeze(np.broadcast_to(np.empty(()), x.shape), axis=axis).shape
+  except (ValueError, IndexError) as exc:
+    raise ValueError(f"squeeze: {exc}") from exc
+  return x.reshape(shape)
+
+
+def expand_dims(a: Any, axis: int | tuple[int, ...]) -> Expr:
+  """Insert singleton axes at ``axis``, an integer or tuple of output-axis positions.
+
+  Negative axes count from the end of the resulting shape. Values and dtype are unchanged.
+  """
+  x = as_expr(a)
+  try:
+    shape = np.expand_dims(np.broadcast_to(np.empty(()), x.shape), axis=axis).shape
+  except (ValueError, IndexError) as exc:
+    raise ValueError(f"expand_dims: {exc}") from exc
+  return x.reshape(shape)
+
+
+def broadcast_to(array: Any, shape: int | tuple[int, ...], subok: bool = False) -> Expr:
+  """Broadcast to a fixed shape using NumPy's trailing-axis rules, retaining the dtype.
+
+  Each source extent must equal its target or be one. ``subok`` has no effect on expressions.
+  """
+  x = as_expr(array)
+  try:
+    shape = np.broadcast_to(np.broadcast_to(np.empty(()), x.shape), shape).shape
+  except (ValueError, IndexError) as exc:
+    raise ValueError(f"broadcast_to: {exc}") from exc
+  if shape == x.shape:
+    return x
+  return where(_uniform(True, shape, dtype=dtypes.bool_, lowering=x.lowering), x, zeros_like(x))
+
+
+def _shape_axes(axis: int | tuple[int, ...], ndim: int, helper: str) -> tuple[int, ...]:
+  axes = (axis,) if isinstance(axis, int | np.integer) else tuple(axis)
+  if any(not isinstance(i, int | np.integer) for i in axes):
+    raise TypeError(f"{helper} axes must be integers")
+  if any(i < -ndim or i >= ndim for i in axes):
+    raise IndexError(f"{helper} axis {axis} out of bounds for rank {ndim}")
+  axes = tuple(int(i) % ndim for i in axes)
+  if len(set(axes)) != len(axes):
+    raise ValueError(f"{helper} axes must not repeat")
+  return axes
+
+
+def flip(m: Any, axis: int | tuple[int, ...] | None = None) -> Expr:
+  """Reverse entries along the selected axes, or every axis when ``axis`` is ``None``.
+
+  Negative axes count from the end. The result keeps the input's shape and dtype.
+  """
+  x = as_expr(m)
+  axes = tuple(range(len(x.shape))) if axis is None else _shape_axes(axis, len(x.shape), "flip")
+  return x[tuple(slice(None, None, -1) if i in axes else slice(None) for i in range(len(x.shape)))]
+
+
+def pad(array: Any, pad_width: Any, mode: str = "constant", *, constant_values: Any = 0) -> Expr:
+  """Pad each axis with a scalar constant, converted to the input's dtype.
+
+  ``pad_width`` is a nonnegative integer, a shared ``(before, after)`` pair, or
+  one such pair per axis. Only ``mode='constant'`` and a numerical scalar ``constant_values``
+  are supported. The default padding value is zero.
+  """
+  x = as_expr(array)
+  if mode != "constant":
+    raise ValueError("pad supports only mode='constant'")
+  if isinstance(constant_values, Expr) or np.ndim(constant_values) != 0:
+    raise ValueError("pad constant_values must be a numerical scalar")
+  try:
+    widths = np.asarray(pad_width)
+  except ValueError as exc:
+    raise ValueError(f"pad: {exc}") from exc
+  if widths.dtype.kind not in "iu":
+    raise TypeError("pad_width must contain integers")
+  if np.any(widths < 0):
+    raise ValueError("pad widths must be nonnegative")
+  try:
+    widths = np.broadcast_to(widths, (len(x.shape), 2))
+  except ValueError as exc:
+    raise ValueError(f"pad: {exc}") from exc
+  for axis, pair in enumerate(widths):
+    pieces = []
+    before, after = map(int, pair)
+    if before:
+      pieces.append(_uniform(constant_values, x.shape[:axis] + (before,) + x.shape[axis + 1 :], dtype=x.type.dtype, lowering=x.lowering))
+    pieces.append(x)
+    if after:
+      pieces.append(_uniform(constant_values, x.shape[:axis] + (after,) + x.shape[axis + 1 :], dtype=x.type.dtype, lowering=x.lowering))
+    if len(pieces) > 1:
+      x = concat(pieces, axis=axis)
+  return x
+
+
+def swapaxes(a: Any, axis1: int, axis2: int) -> Expr:
+  """Exchange two axes of ``a``, retaining its dtype. Negative axes count from the end."""
+  x = as_expr(a)
+  (axis1,) = _shape_axes((axis1,), len(x.shape), "swapaxes")
+  (axis2,) = _shape_axes((axis2,), len(x.shape), "swapaxes")
+  axes = list(range(len(x.shape)))
+  axes[axis1], axes[axis2] = axes[axis2], axes[axis1]
+  return x.transpose(tuple(axes))
+
+
+def moveaxis(a: Any, source: int | tuple[int, ...], destination: int | tuple[int, ...]) -> Expr:
+  """Move source axes to destination positions, keeping other axes in their relative order.
+
+  ``source`` and ``destination`` are integers or equally long tuples of distinct axes.
+  Negative axes count from the end. The result retains the input's dtype.
+  """
+  x = as_expr(a)
+  source = _shape_axes(source, len(x.shape), "moveaxis")
+  destination = _shape_axes(destination, len(x.shape), "moveaxis")
+  if len(source) != len(destination):
+    raise ValueError("moveaxis source and destination must have the same number of axes")
+  axes = [i for i in range(len(x.shape)) if i not in source]
+  for dest, src in sorted(zip(destination, source, strict=True)):
+    axes.insert(dest, src)
+  return x.transpose(tuple(axes))
 
 
 def matmul(x: Expr, y: Expr, *, sampled: CanonicalPattern | None = None, conditions: tuple[Expr | None, Expr | None] = (None, None)) -> Expr:

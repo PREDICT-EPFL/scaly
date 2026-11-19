@@ -3876,6 +3876,17 @@ tests/ir/test_program.py::test_signed_zeros_are_two_constants
 tests/ir/test_program.py::test_view_rejects_non_scalar_index
 tests/ir/test_program.py::test_view_requires_buffer
 tests/ir/test_program.py::test_view_requires_one_flat_index[2]
+tests/ir/test_shape_helpers.py::test_reshape_helpers_lower_without_workspace
+tests/ir/test_shape_helpers.py::test_shape_helpers_invalid_inputs
+tests/ir/test_shape_helpers.py::test_shape_helpers_numpy_and_gradient[broadcast_to]
+tests/ir/test_shape_helpers.py::test_shape_helpers_numpy_and_gradient[expand_dims]
+tests/ir/test_shape_helpers.py::test_shape_helpers_numpy_and_gradient[flatten]
+tests/ir/test_shape_helpers.py::test_shape_helpers_numpy_and_gradient[flip]
+tests/ir/test_shape_helpers.py::test_shape_helpers_numpy_and_gradient[moveaxis]
+tests/ir/test_shape_helpers.py::test_shape_helpers_numpy_and_gradient[newaxis]
+tests/ir/test_shape_helpers.py::test_shape_helpers_numpy_and_gradient[pad]
+tests/ir/test_shape_helpers.py::test_shape_helpers_numpy_and_gradient[squeeze]
+tests/ir/test_shape_helpers.py::test_shape_helpers_numpy_and_gradient[swapaxes]
 tests/ir/test_sparse_boundary.py::test_from_dense_and_sparsify_keep_declared_coordinates
 tests/ir/test_sparse_boundary.py::test_pack_values_and_dense_projection_match_numpy
 tests/ir/test_sparse_boundary.py::test_scipy_constant_copies_sums_duplicates_and_keeps_zeros

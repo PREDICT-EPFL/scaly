@@ -40,6 +40,9 @@ def test_public_exports_are_canonical() -> None:
   for name in ("segment_max", "take", "dynamic_slice", "index_add", "index_set"):
     assert name in sc.__all__
     assert getattr(sc, name).__module__ == "scaly.ir.expr"
+  for name in ("squeeze", "expand_dims", "broadcast_to", "flip", "pad", "swapaxes", "moveaxis"):
+    assert name in sc.__all__
+    assert getattr(sc, name).__module__ == "scaly.ir.expr"
   assert sc.Expr is Expr
   assert sc.ExprOp is ExprOp
   from scaly.function.extern import CLibrary, extern
