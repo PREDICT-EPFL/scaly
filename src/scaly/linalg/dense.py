@@ -11,18 +11,34 @@ from ..function.api import custom_derivative, function
 from ..function.model import Function
 from ..function.sugar import broadcast, scan, vmap
 from ..function.tree import arg, group
-from ..ir.expr import Expr, argmax, as_expr, equal, gather, minimum, scatter, stack, where, zeros_like
+from ..ir.expr import Expr, argmax, as_expr, equal, gather, minimum, promote_dtype, scatter, stack, where, zeros_like
 from ..ir.types import TensorType, dtypes
 
 _INDEX = TensorType((), dtypes.int64)
+_STATUS = TensorType((), dtypes.int32)
 
 
 def _index(value: Any) -> Expr:
   return Expr.const(np.asarray(value, dtype=np.int64), dtype=dtypes.int64)
 
 
+def _status(value: Any) -> Expr:
+  """A status, 0 or one plus a pivot index, as the int32 that every factorization returns."""
+  return value.cast(dtypes.int32) if isinstance(value, Expr) else Expr.const(np.int32(value), dtype=dtypes.int32)
+
+
+def _like(x: Expr, value: Any) -> Expr:
+  """``value`` as a constant of ``x``'s dtype."""
+  return Expr.const(value, dtype=x.type.dtype)
+
+
+def _eps(x: Expr) -> float:
+  """The machine epsilon of ``x``'s dtype, against which pivots are tested."""
+  return float(np.finfo(x.type.dtype.numpy()).eps)
+
+
 def _masked(G: Expr, mask: np.ndarray) -> Expr:
-  return G * Expr.const(mask)
+  return G * _like(G, mask)
 
 
 def _lower_cotangent(G: Expr) -> Expr:
@@ -92,7 +108,7 @@ def _triangular(lower: bool, trans: bool, unit: bool) -> Function:
   return custom_derivative(_substitution(lower, trans, unit), fwd=fwd, bwd=bwd)
 
 
-@function(arg("s", ()), arg("k", _INDEX), arg("L"), arg("i", _INDEX), arg("j", _INDEX), name="cholesky_dot")
+@function(arg("s"), arg("k", _INDEX), arg("L"), arg("i", _INDEX), arg("j", _INDEX), name="cholesky_dot")
 def _cholesky_dot(s: Expr, k: Expr, L: Expr, i: Expr, j: Expr) -> Expr:
   n = L.shape[0]
   return s + gather(L, i * n + k) * gather(L, j * n + k)
@@ -102,29 +118,29 @@ def _cholesky_dot(s: Expr, k: Expr, L: Expr, i: Expr, j: Expr) -> Expr:
 def _cholesky_entry(t: Expr, L: Expr, A: Expr, j: Expr) -> tuple[Expr]:
   n = L.shape[0]
   i = j + t
-  s, _ = scan(_cholesky_dot, Expr.const(0.0), (broadcast(L), broadcast(i), broadcast(j)), length=n, trip=j, index=True)
+  s, _ = scan(_cholesky_dot, _like(A, 0.0), (broadcast(L), broadcast(i), broadcast(j)), length=n, trip=j, index=True)
   return (gather(A, i * n + j) - s,)
 
 
-@function(arg("L"), arg("status", _INDEX), arg("j", _INDEX), arg("A"), name="cholesky_column")
+@function(arg("L"), arg("status", _STATUS), arg("j", _INDEX), arg("A"), name="cholesky_column")
 def _cholesky_column(L: Expr, status: Expr, j: Expr, A: Expr) -> tuple[Expr, Expr]:
   n = L.shape[0]
   _, (c,) = scan(_cholesky_entry, (), (broadcast(L), broadcast(A), broadcast(j)), length=n, trip=n - j, index=True)
   pivot, diagonal = c[0], gather(A, j * n + j)
-  unusable = ~(pivot > float(np.finfo(np.float64).eps) * diagonal.abs())
+  unusable = ~(pivot > _eps(A) * diagonal.abs())
   d = pivot.sqrt()
   rows = _index(np.arange(n))
-  column = where(rows > j, gather(c, rows - j, mode="fill") / d, where(equal(rows, j), d, Expr.const(0.0)))
-  return scatter(L, rows * n + j, column, combine="set"), where(unusable & equal(status, 0), j + 1, status)
+  column = where(rows > j, gather(c, rows - j, mode="fill") / d, where(equal(rows, j), d, _like(A, 0.0)))
+  return scatter(L, rows * n + j, column, combine="set"), where(unusable & equal(status, 0), _status(j + 1), status)
 
 
 def _cholesky_parts(A: Expr) -> tuple[Expr, Expr]:
   n = A.shape[0]
-  (L, status), _ = scan(_cholesky_column, (zeros_like(A), _index(0)), (broadcast(A),), length=n, index=True)
+  (L, status), _ = scan(_cholesky_column, (zeros_like(A), _status(0)), (broadcast(A),), length=n, index=True)
   return L, status
 
 
-_FACTOR_OUTPUTS = group(arg("L"), arg("status", _INDEX))
+_FACTOR_OUTPUTS = group(arg("L"), arg("status", _STATUS))
 
 
 @function(arg("A"), outputs=group(_FACTOR_OUTPUTS, arg("L_")), name="cholesky_fwd")
@@ -150,10 +166,10 @@ def _cholesky_jvp(A: Expr, dA: Expr) -> tuple[Expr, Expr]:
   low = _masked(dA, np.tril(np.ones((n, n)), -1))
   lower = _triangular(True, False, False)
   M = lower(L, lower(L, low + low.T + _masked(dA, np.eye(n))).T).T
-  return L @ _phi(M), _index(0)
+  return L @ _phi(M), _status(0)
 
 
-@function(arg("L"), group(arg("L_bar"), arg("status_bar", _INDEX)), name="cholesky_bwd")
+@function(arg("L"), group(arg("L_bar"), arg("status_bar", _STATUS)), name="cholesky_bwd")
 def _cholesky_bwd(L: Expr, weights: tuple[Expr, Expr]) -> Expr:
   L_bar = weights[0]
   below = _triangular(True, True, False)
@@ -172,7 +188,7 @@ def _positive_parts(K: Expr, B: Expr) -> tuple[Expr, Expr, Expr]:
   return X, status, L
 
 
-_SOLVE_OUTPUTS = group(arg("X"), arg("status", _INDEX))
+_SOLVE_OUTPUTS = group(arg("X"), arg("status", _STATUS))
 
 
 @function(arg("K"), arg("B"), outputs=group(_SOLVE_OUTPUTS, group(arg("L"), arg("X_"))), name="solve_pos_fwd")
@@ -181,7 +197,7 @@ def _positive_fwd(K: Expr, B: Expr) -> tuple[tuple[Expr, Expr], tuple[Expr, Expr
   return (X, status), (L, X)
 
 
-@function(group(arg("L"), arg("X")), group(arg("X_bar"), arg("status_bar", _INDEX)), name="solve_pos_bwd")
+@function(group(arg("L"), arg("X")), group(arg("X_bar"), arg("status_bar", _STATUS)), name="solve_pos_bwd")
 def _positive_bwd(residuals: tuple[Expr, Expr], weights: tuple[Expr, Expr]) -> tuple[Expr, Expr]:
   (L, X), X_bar = residuals, weights[0]
   B_bar = _triangular(True, True, False)(L, _triangular(True, False, False)(L, X_bar))
@@ -199,7 +215,7 @@ _positive = custom_derivative(_positive_body, fwd=_positive_fwd, bwd=_positive_b
 
 def _unusable(pivot: Expr, diagonal: Expr) -> Expr:
   """A pivot of either sign not greater in magnitude than eps times its diagonal entry, or infinite, or NaN."""
-  return ~(pivot.abs() > float(np.finfo(np.float64).eps) * diagonal.abs()) | ~pivot.isfinite()
+  return ~(pivot.abs() > _eps(pivot) * diagonal.abs()) | ~pivot.isfinite()
 
 
 def _strict_lower(n: int) -> np.ndarray:
@@ -212,7 +228,7 @@ def _diagonal(M: Expr) -> Expr:
   return gather(M.reshape((*M.shape[:-2], n * n)), _index(np.arange(n) * (n + 1)), axis=len(M.shape) - 2)
 
 
-@function(arg("s", ()), arg("k", _INDEX), arg("LD"), arg("v"), arg("i", _INDEX), name="ldl_dot")
+@function(arg("s"), arg("k", _INDEX), arg("LD"), arg("v"), arg("i", _INDEX), name="ldl_dot")
 def _ldl_dot(s: Expr, k: Expr, LD: Expr, v: Expr, i: Expr) -> Expr:
   return s + gather(LD, i * LD.shape[0] + k) * gather(v, k)
 
@@ -221,11 +237,11 @@ def _ldl_dot(s: Expr, k: Expr, LD: Expr, v: Expr, i: Expr) -> Expr:
 def _ldl_entry(t: Expr, LD: Expr, v: Expr, A: Expr, j: Expr) -> tuple[Expr]:
   n = LD.shape[0]
   i = j + t
-  s, _ = scan(_ldl_dot, Expr.const(0.0), (broadcast(LD), broadcast(v), broadcast(i)), length=n, trip=j, index=True)
+  s, _ = scan(_ldl_dot, _like(A, 0.0), (broadcast(LD), broadcast(v), broadcast(i)), length=n, trip=j, index=True)
   return (gather(A, i * n + j) - s,)
 
 
-@function(arg("LD"), arg("status", _INDEX), arg("j", _INDEX), arg("A"), name="ldl_column")
+@function(arg("LD"), arg("status", _STATUS), arg("j", _INDEX), arg("A"), name="ldl_column")
 def _ldl_column(LD: Expr, status: Expr, j: Expr, A: Expr) -> tuple[Expr, Expr]:
   """Column ``j`` of ``L`` below the diagonal and the pivot ``d_j`` on it, with ``v = d * L[j, :]`` shared by every row's dot product."""
   n = LD.shape[0]
@@ -233,14 +249,14 @@ def _ldl_column(LD: Expr, status: Expr, j: Expr, A: Expr) -> tuple[Expr, Expr]:
   v = gather(LD, rows * (n + 1)) * gather(LD, j * n + rows)
   _, (c,) = scan(_ldl_entry, (), (broadcast(LD), broadcast(v), broadcast(A), broadcast(j)), length=n, trip=n - j, index=True)
   pivot = c[0]
-  column = where(rows > j, gather(c, rows - j, mode="fill") / pivot, where(equal(rows, j), pivot, Expr.const(0.0)))
-  status = where(_unusable(pivot, gather(A, j * n + j)) & equal(status, 0), j + 1, status)
+  column = where(rows > j, gather(c, rows - j, mode="fill") / pivot, where(equal(rows, j), pivot, _like(A, 0.0)))
+  status = where(_unusable(pivot, gather(A, j * n + j)) & equal(status, 0), _status(j + 1), status)
   return scatter(LD, rows * n + j, column, combine="set"), status
 
 
 def _ldl_parts(A: Expr) -> tuple[Expr, Expr]:
   """``L`` below the diagonal and ``d`` on it, packed in one matrix so that a forward derivative runs one rule."""
-  (LD, status), _ = scan(_ldl_column, (zeros_like(A), _index(0)), (broadcast(A),), length=A.shape[0], index=True)
+  (LD, status), _ = scan(_ldl_column, (zeros_like(A), _status(0)), (broadcast(A),), length=A.shape[0], index=True)
   return LD, status
 
 
@@ -251,7 +267,7 @@ def _symmetric_tangent(dA: Expr) -> Expr:
   return low + low.T + _masked(dA, np.eye(n))
 
 
-_LDL_OUTPUTS = group(arg("LD"), arg("status", _INDEX))
+_LDL_OUTPUTS = group(arg("LD"), arg("status", _STATUS))
 
 
 @function(arg("A"), arg("dA"), outputs=_LDL_OUTPUTS, name="ldl_jvp")
@@ -264,14 +280,14 @@ def _ldl_jvp(A: Expr, dA: Expr) -> tuple[Expr, Expr]:
   LD, _ = _ldl_parts(A)
   unit = _triangular(True, False, True)
   F = unit(LD, unit(LD, _symmetric_tangent(dA)).T).T
-  L = _masked(LD, _strict_lower(n)) + Expr.const(np.eye(n))
-  return L @ (_masked(F, _strict_lower(n)) / _diagonal(LD).reshape((1, n))) + _masked(F, np.eye(n)), _index(0)
+  L = _masked(LD, _strict_lower(n)) + _like(LD, np.eye(n))
+  return L @ (_masked(F, _strict_lower(n)) / _diagonal(LD).reshape((1, n))) + _masked(F, np.eye(n)), _status(0)
 
 
 _ldl = custom_derivative(function(arg("A"), outputs=_LDL_OUTPUTS, name="ldl")(_ldl_parts), jvp=_ldl_jvp)
 
 
-@function(arg("s", ()), arg("m", _INDEX), arg("M"), arg("c"), arg("i", _INDEX), name="lu_dot")
+@function(arg("s"), arg("m", _INDEX), arg("M"), arg("c"), arg("i", _INDEX), name="lu_dot")
 def _lu_dot(s: Expr, m: Expr, M: Expr, c: Expr, i: Expr) -> Expr:
   return s + gather(M, i * M.shape[0] + m) * gather(c, m)
 
@@ -279,7 +295,7 @@ def _lu_dot(s: Expr, m: Expr, M: Expr, c: Expr, i: Expr) -> Expr:
 @function(arg("c"), arg("i", _INDEX), arg("M"), arg("k", _INDEX), name="lu_row")
 def _lu_row(c: Expr, i: Expr, M: Expr, k: Expr) -> Expr:
   """Entry ``i`` of column ``k``: minus the dot product of row ``i`` of ``L`` with the entries of the column above it."""
-  s, _ = scan(_lu_dot, Expr.const(0.0), (broadcast(M), broadcast(c), broadcast(i)), length=M.shape[0], trip=minimum(i, k), index=True)
+  s, _ = scan(_lu_dot, _like(M, 0.0), (broadcast(M), broadcast(c), broadcast(i)), length=M.shape[0], trip=minimum(i, k), index=True)
   return scatter(c, i, gather(c, i) - s, combine="set")
 
 
@@ -287,24 +303,24 @@ def _lu_row(c: Expr, i: Expr, M: Expr, k: Expr) -> Expr:
 def _lu(n: int) -> Function:
   """``P A = L U`` with partial pivoting for order ``n``, whose permutation is an int64 vector of that length."""
   perm_type = TensorType((n,), dtypes.int64)
-  outputs = group(arg("LU"), arg("piv", perm_type), arg("perm", perm_type), arg("status", _INDEX))
+  outputs = group(arg("LU"), arg("piv", perm_type), arg("perm", perm_type), arg("status", _STATUS))
 
-  @function(arg("M"), arg("perm", perm_type), arg("status", _INDEX), arg("k", _INDEX), arg("A"), name="lu_column")
+  @function(arg("M"), arg("perm", perm_type), arg("status", _STATUS), arg("k", _INDEX), arg("A"), name="lu_column")
   def column(M: Expr, perm: Expr, status: Expr, k: Expr, A: Expr) -> tuple[Expr, Expr, Expr, Expr]:
     """Column ``k`` of the left-looking factorization: the column, the pivot of largest magnitude from row ``k`` on, the row swap."""
     rows = _index(np.arange(n))
     c, _ = scan(_lu_row, gather(M, rows * n + k), (broadcast(M), broadcast(k)), length=n, index=True)
-    p = argmax(where(rows >= k, c.abs(), Expr.const(-1.0)))
+    p = argmax(where(rows >= k, c.abs(), _like(c, -1.0)))
     pivot, swapped = gather(c, p), gather(c, k)
     c = where(equal(rows, k), pivot, where(equal(rows, p), swapped, c))
     perm = where(equal(rows, k), gather(perm, p), where(equal(rows, p), gather(perm, k), perm))
-    status = where(_unusable(pivot, gather(A, gather(perm, k) * n + k)) & equal(status, 0), k + 1, status)
+    status = where(_unusable(pivot, gather(A, gather(perm, k) * n + k)) & equal(status, 0), _status(k + 1), status)
     swap = stack([k, p])
     M = scatter(M, swap, gather(M, swap[::-1], axis=0), axis=0, combine="set")
     return scatter(M, rows * n + k, where(rows > k, c / pivot, c), combine="set"), perm, status, p
 
   def parts(A: Expr) -> tuple[Expr, Expr, Expr, Expr]:
-    (M, perm, status), (piv,) = scan(column, (A, _index(np.arange(n)), _index(0)), (broadcast(A),), length=n, index=True)
+    (M, perm, status), (piv,) = scan(column, (A, _index(np.arange(n)), _status(0)), (broadcast(A),), length=n, index=True)
     return M, piv, perm, status
 
   @function(arg("A"), arg("dA"), outputs=outputs, name="lu_jvp")
@@ -319,8 +335,8 @@ def _lu(n: int) -> Function:
     strict = _strict_lower(n)
     G = _triangular(True, False, True)(M, gather(dA, perm, axis=0))
     S = _masked(_triangular(False, True, False)(M, G.T).T, strict)
-    L, U = _masked(M, strict) + Expr.const(np.eye(n)), _masked(M, 1.0 - strict)
-    return _masked(L @ S, strict) + _masked(G - S @ U, 1.0 - strict), zeros_like(piv), zeros_like(perm), _index(0)
+    L, U = _masked(M, strict) + _like(M, np.eye(n)), _masked(M, 1.0 - strict)
+    return _masked(L @ S, strict) + _masked(G - S @ U, 1.0 - strict), zeros_like(piv), zeros_like(perm), _status(0)
 
   return custom_derivative(function(arg("A"), outputs=outputs, name="lu")(parts), jvp=jvp)
 
@@ -341,7 +357,7 @@ def _symmetric_fwd(K: Expr, B: Expr) -> tuple[tuple[Expr, Expr], tuple[Expr, Exp
   return (X, status), (LD, X)
 
 
-@function(group(arg("LD"), arg("X")), group(arg("X_bar"), arg("status_bar", _INDEX)), name="solve_sym_bwd")
+@function(group(arg("LD"), arg("X")), group(arg("X_bar"), arg("status_bar", _STATUS)), name="solve_sym_bwd")
 def _symmetric_bwd(residuals: tuple[Expr, Expr], weights: tuple[Expr, Expr]) -> tuple[Expr, Expr]:
   (LD, X), X_bar = residuals, weights[0]
   B_bar = _ldl_solve(LD, X_bar)
@@ -372,7 +388,7 @@ def _general(n: int) -> Function:
     X, status, M, perm = parts(K, B)
     return (X, status), (M, perm, X)
 
-  @function(group(arg("LU"), arg("perm", perm_type), arg("X")), group(arg("X_bar"), arg("status_bar", _INDEX)), name="solve_gen_bwd")
+  @function(group(arg("LU"), arg("perm", perm_type), arg("X")), group(arg("X_bar"), arg("status_bar", _STATUS)), name="solve_gen_bwd")
   def bwd(residuals: tuple[Expr, Expr, Expr], weights: tuple[Expr, Expr]) -> tuple[Expr, Expr]:
     """``B_bar = K^-T X_bar = P^T L^-T U^-T X_bar`` and ``K_bar = -B_bar X^T``."""
     (M, perm, X), X_bar = residuals, weights[0]
@@ -391,8 +407,8 @@ def _general(n: int) -> Function:
 def _dense(name: str, what: str, x: Expr) -> None:
   if x.type.pattern is not None:
     raise TypeError(f"{name} takes a dense {what}, got a sparse one")
-  if x.type.dtype != dtypes.float64:
-    raise TypeError(f"{name} takes a float64 {what}, got {x.type.dtype}")
+  if x.type.dtype not in (dtypes.float32, dtypes.float64):
+    raise TypeError(f"{name} takes a float32 or float64 {what}, got {x.type.dtype}")
 
 
 def _square(name: str, A: Expr) -> tuple[int, ...]:
@@ -403,8 +419,13 @@ def _square(name: str, A: Expr) -> tuple[int, ...]:
 
 
 def _right_hand_side(name: str, A: Expr, b: Any) -> tuple[Expr, bool]:
-  b = as_expr(b)
+  """``b`` beside ``A``: a Python value takes ``A``'s dtype, and an ``Expr`` or a NumPy array must have it."""
+  b = as_expr(b) if isinstance(b, Expr | np.ndarray | np.generic) else _like(A, b)
   _dense(name, "right-hand side", b)
+  try:
+    promote_dtype(A, b)
+  except TypeError as error:
+    raise TypeError(f"{name}: {error}") from None
   batch, n = A.shape[:-2], A.shape[-1]
   if b.shape[: len(batch)] != batch or b.shape[len(batch) : len(batch) + 1] != (n,) or len(b.shape) > len(batch) + 2:
     raise ValueError(f"{name}: the right-hand side has shape {b.shape}, expected {(*batch, n)} or {(*batch, n, 'k')}")
@@ -485,7 +506,7 @@ def ldl(A: Any) -> tuple[Expr, Expr, Expr]:
   A = as_expr(A)
   LD, status = _mapped(_ldl, _square("ldl", A), A)
   n = A.shape[-1]
-  return where(Expr.const(_strict_lower(n) > 0), LD, Expr.const(np.eye(n))), _diagonal(LD), status
+  return where(Expr.const(_strict_lower(n) > 0), LD, _like(LD, np.eye(n))), _diagonal(LD), status
 
 
 def lu_factor(A: Any) -> tuple[Expr, Expr, Expr]:
