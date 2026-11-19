@@ -49,7 +49,7 @@ from .aot import _RENDER_OBSERVERS, CModule, render_c_module
 from .solver import solver_stats_symbols, solver_functions
 from ..ir.layout import DenseLayout, SparseLayout
 from ..passes import program
-from ..passes.lowering import workspace_dtype
+from ..passes.program.pack_workspace import WORKSPACE_ALIGNMENT
 from ..passes.program._common import prints
 from ..solvers.model import CSolverOption
 from ..solvers.stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats
@@ -73,10 +73,15 @@ from ..function.model import Function, as_concrete
 
 # Bump when the ABI, codegen output, or JIT cache layout changes incompatibly.
 # External-library contents and build flags enter both cache keys.
-_JIT_CACHE_VERSION = "11"
+_JIT_CACHE_VERSION = "12"
 
 _C_VOID_PP = ctypes.POINTER(ctypes.c_void_p)
-_C_INT_P = ctypes.POINTER(ctypes.c_int)
+_workspace_malloc = ctypes.pythonapi.PyMem_RawMalloc
+_workspace_malloc.argtypes = [ctypes.c_size_t]
+_workspace_malloc.restype = ctypes.c_void_p
+_workspace_free = ctypes.pythonapi.PyMem_RawFree
+_workspace_free.argtypes = [ctypes.c_void_p]
+_workspace_free.restype = None
 _LM_ID_NEWLM = -1
 _RTLD_DI_LMID = 1
 
@@ -520,9 +525,9 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
     if sys.platform == "win32":
       # Explicit CasADi oracle exports disable MinGW's automatic exports of our entry points.
       # A module definition file also works with Zig, which ignores --export-all-symbols.
-      exports = [symbol]
+      exports = [f"{symbol}_abi"]
       if solver_functions(fun):
-        exports += [f"{symbol}_with_options"]
+        exports += [f"{symbol}_abi_with_options"]
         for solver_symbol in solver_stats_symbols(fun):
           exports += [f"{solver_symbol}_stats", f"{solver_symbol}_default_options"]
       _write_cached_text(source_path.with_suffix(".def"), "EXPORTS\n" + "\n".join(exports) + "\n")
@@ -561,7 +566,7 @@ class CompiledFunction:
 
   Holds the ``ctypes.CDLL`` for the cached shared object, the resolved entry point with
   ``argtypes``/``restype`` set up for the pointer ABI, and the workspace size the rendered module
-  reported. That is the header's ``SZ_W``, since the library exports no size query of its own.
+  reported.
   """
 
   __slots__ = (
@@ -596,8 +601,8 @@ class CompiledFunction:
     symbol = c_ident(fun.name)
     self._symbol = symbol
     solvers = solver_functions(fun)
-    entry = getattr(self._lib, f"{symbol}_with_options" if solvers else symbol)
-    entry.argtypes = [_C_VOID_PP, _C_VOID_PP, _C_INT_P, ctypes.c_void_p, ctypes.c_int]
+    entry = getattr(self._lib, f"{symbol}_abi_with_options" if solvers else f"{symbol}_abi")
+    entry.argtypes = [_C_VOID_PP, _C_VOID_PP, ctypes.c_void_p]
     self._options = (ctypes.POINTER(CSolverOption) * len(solvers))(*(fn.descriptor.runtime_options for fn in solvers))
     if solvers:
       entry.argtypes = [*entry.argtypes, ctypes.POINTER(ctypes.POINTER(CSolverOption))]
@@ -612,7 +617,7 @@ class CompiledFunction:
       stats_entry.argtypes = [ctypes.POINTER(CSolverStats)]
       stats_entry.restype = ctypes.c_int
       self._stats_entries[stats_symbol] = stats_entry
-    self._w_bytes = self._artifact.workspace_size * workspace_dtype(fun).itemsize
+    self._w_bytes = self._artifact.workspace_size
     self._input_dtypes = tuple(e.type.dtype.numpy() for e in fun.inputs)
     self._output_dtypes = tuple(e.type.dtype.numpy() for e in fun.outputs)
     self._input_names = tuple(fun.input_names)
@@ -684,15 +689,21 @@ class CompiledFunction:
       outputs.append(out)
       res_array[i] = out.ctypes.data
 
-    # Eight-byte words, so every slot of a byte workspace is aligned to its dtype.
-    w_buf = np.empty(-(-self._w_bytes // 8), dtype=np.uint64)
-    w_ptr = w_buf.ctypes.data if self._w_bytes else None
-
     # C stdout buffers apart from sys.stdout, and holds its lines until exit when it is not a terminal.
     # Flushing both around a call that prints keeps the two in the order they were written.
     if self._artifact.prints:
       sys.stdout.flush()
-    status = self._entry(arg_array, res_array, _C_INT_P(), w_ptr, 0, *((self._options,) if self._options else ()))
+    workspace = None
+    if self._w_bytes:
+      workspace = _workspace_malloc(self._w_bytes + WORKSPACE_ALIGNMENT - 1)
+      if workspace is None:
+        raise MemoryError("could not allocate the generated workspace")
+    try:
+      aligned = -(-workspace // WORKSPACE_ALIGNMENT) * WORKSPACE_ALIGNMENT if workspace is not None else None
+      status = self._entry(arg_array, res_array, aligned, *((self._options,) if self._options else ()))
+    finally:
+      if workspace is not None:
+        _workspace_free(workspace)
     if self._artifact.prints:
       libc = self._lib if self._artifact.external and sys.platform == "linux" else _process_libc()
       if flush := getattr(libc, "fflush", None):

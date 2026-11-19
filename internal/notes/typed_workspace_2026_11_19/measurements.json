@@ -1,0 +1,208 @@
+{
+  "machine": "la015",
+  "main_before_layer_3": "de31cfdd3cfe99bec726a5d3262a4b719b296488",
+  "generation_includes": [
+    "derivative construction",
+    "lowering",
+    "rendering",
+    "writing C and headers"
+  ],
+  "compiler": "Ubuntu clang version 20.1.8 (++20250804090239+87f0227cb601-1~exp1~20250804210352.139)",
+  "working_directory": "The compile commands use paths relative to the checkout.",
+  "before": [
+    {
+      "workload": "chain",
+      "size": 5,
+      "source_bytes": 788490,
+      "source_lines": 7877,
+      "generation_ms": 13259.250076022,
+      "compile_ms": 4715.515022864565,
+      "command": [
+        "/usr/bin/clang",
+        "-O3",
+        "-march=native",
+        "-fno-math-errno",
+        "-fveclib=libmvec",
+        "-I",
+        "benchmarks/results/workspace-372/before/chain_5",
+        "-c",
+        "benchmarks/results/workspace-372/before/chain_5/chain_M5_N40_hess_lower.c",
+        "-o",
+        "benchmarks/results/workspace-372/before/chain_5/kernel.o"
+      ],
+      "frame_bytes": 12984,
+      "workspace_bytes": 533952,
+      "source_sha256": "abd3ce1da1db706032e4f3df55d615676c41322387eecd843f33743684eae3e2"
+    },
+    {
+      "workload": "race_cars",
+      "size": 5,
+      "source_bytes": 71628,
+      "source_lines": 1148,
+      "generation_ms": 1023.0052531696856,
+      "compile_ms": 282.9486469272524,
+      "command": [
+        "/usr/bin/clang",
+        "-O3",
+        "-march=native",
+        "-fno-math-errno",
+        "-fveclib=libmvec",
+        "-I",
+        "benchmarks/results/workspace-372/before/race_cars_5",
+        "-c",
+        "benchmarks/results/workspace-372/before/race_cars_5/race_car_closed_loop_N5_hess_lower.c",
+        "-o",
+        "benchmarks/results/workspace-372/before/race_cars_5/kernel.o"
+      ],
+      "frame_bytes": 4144,
+      "workspace_bytes": 0,
+      "source_sha256": "f5e864ec38681d348c84f7c1038a7c62209039ecb9c5592a0ca467a7962654d6"
+    },
+    {
+      "workload": "npmpc_jac",
+      "size": 100,
+      "source_bytes": 66596,
+      "source_lines": 1098,
+      "generation_ms": 1902.4343369528651,
+      "compile_ms": 904.5543761458248,
+      "command": [
+        "/usr/bin/clang",
+        "-O3",
+        "-march=native",
+        "-fno-math-errno",
+        "-fveclib=libmvec",
+        "-I",
+        "benchmarks/results/workspace-372/before/npmpc_jac_100",
+        "-c",
+        "benchmarks/results/workspace-372/before/npmpc_jac_100/npmpc_N100_jac.c",
+        "-o",
+        "benchmarks/results/workspace-372/before/npmpc_jac_100/kernel.o"
+      ],
+      "frame_bytes": 46976,
+      "workspace_bytes": 0,
+      "source_sha256": "1710bc2eaa84d8a43d09f756827e6903a74b889ad8abfd695904c177a60fb038"
+    },
+    {
+      "workload": "npmpc",
+      "size": 100,
+      "source_bytes": 132347,
+      "source_lines": 1477,
+      "generation_ms": 1667.2559881117195,
+      "compile_ms": 1358.6124901194125,
+      "command": [
+        "/usr/bin/clang",
+        "-O3",
+        "-march=native",
+        "-fno-math-errno",
+        "-fveclib=libmvec",
+        "-I",
+        "benchmarks/results/workspace-372/before/npmpc_100",
+        "-c",
+        "benchmarks/results/workspace-372/before/npmpc_100/npmpc_N100_hess_lower.c",
+        "-o",
+        "benchmarks/results/workspace-372/before/npmpc_100/kernel.o"
+      ],
+      "frame_bytes": 55592,
+      "workspace_bytes": 157952,
+      "source_sha256": "1ddf1b7647a5371d34b2714b4961cc83233c21a06848cc876a484fc7ad99ca09"
+    }
+  ],
+  "after": [
+    {
+      "workload": "chain",
+      "size": 5,
+      "source_bytes": 790281,
+      "source_lines": 7906,
+      "generation_ms": 11154.988987836987,
+      "compile_ms": 4312.228779075667,
+      "command": [
+        "/usr/bin/clang",
+        "-O3",
+        "-march=native",
+        "-fno-math-errno",
+        "-fveclib=libmvec",
+        "-I",
+        "benchmarks/results/workspace-372/after/chain_5",
+        "-c",
+        "benchmarks/results/workspace-372/after/chain_5/chain_M5_N40_hess_lower.c",
+        "-o",
+        "benchmarks/results/workspace-372/after/chain_5/kernel.o"
+      ],
+      "frame_bytes": 12984,
+      "workspace_bytes": 533952,
+      "source_sha256": "53d756368411ffd87b053f77455165c0e01d2799b39f66be9ebcb05d3ce82981"
+    },
+    {
+      "workload": "race_cars",
+      "size": 5,
+      "source_bytes": 73548,
+      "source_lines": 1178,
+      "generation_ms": 1255.9087350964546,
+      "compile_ms": 262.1985070873052,
+      "command": [
+        "/usr/bin/clang",
+        "-O3",
+        "-march=native",
+        "-fno-math-errno",
+        "-fveclib=libmvec",
+        "-I",
+        "benchmarks/results/workspace-372/after/race_cars_5",
+        "-c",
+        "benchmarks/results/workspace-372/after/race_cars_5/race_car_closed_loop_N5_hess_lower.c",
+        "-o",
+        "benchmarks/results/workspace-372/after/race_cars_5/kernel.o"
+      ],
+      "frame_bytes": 4144,
+      "workspace_bytes": 0,
+      "source_sha256": "425453e50c5f98693818bfb8282bf307eb8f6335bba9572a3896a3df2872f27b"
+    },
+    {
+      "workload": "npmpc_jac",
+      "size": 100,
+      "source_bytes": 67751,
+      "source_lines": 1127,
+      "generation_ms": 1567.1949810348451,
+      "compile_ms": 860.8799278736115,
+      "command": [
+        "/usr/bin/clang",
+        "-O3",
+        "-march=native",
+        "-fno-math-errno",
+        "-fveclib=libmvec",
+        "-I",
+        "benchmarks/results/workspace-372/after/npmpc_jac_100",
+        "-c",
+        "benchmarks/results/workspace-372/after/npmpc_jac_100/npmpc_N100_jac.c",
+        "-o",
+        "benchmarks/results/workspace-372/after/npmpc_jac_100/kernel.o"
+      ],
+      "frame_bytes": 46976,
+      "workspace_bytes": 0,
+      "source_sha256": "58337c8e73520277b46751edd47be0c5db48c7d566f89d818070230aa13d0e57"
+    },
+    {
+      "workload": "npmpc",
+      "size": 100,
+      "source_bytes": 134005,
+      "source_lines": 1506,
+      "generation_ms": 1387.9083509091288,
+      "compile_ms": 1119.7506769094616,
+      "command": [
+        "/usr/bin/clang",
+        "-O3",
+        "-march=native",
+        "-fno-math-errno",
+        "-fveclib=libmvec",
+        "-I",
+        "benchmarks/results/workspace-372/after/npmpc_100",
+        "-c",
+        "benchmarks/results/workspace-372/after/npmpc_100/npmpc_N100_hess_lower.c",
+        "-o",
+        "benchmarks/results/workspace-372/after/npmpc_100/kernel.o"
+      ],
+      "frame_bytes": 55592,
+      "workspace_bytes": 157952,
+      "source_sha256": "866bac3b5dc25c943f4becb3357589ee3eee9d0870159c52a39cc908c356df04"
+    }
+  ]
+}

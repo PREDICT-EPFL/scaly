@@ -63,28 +63,27 @@ def test_c_source_executes_scalar_subset_through_universal_abi(tmp_path) -> None
   assert not hasattr(lib, "f_sz_w") and not hasattr(lib, "f_alloc_mem")
 
   c_double_p = ctypes.POINTER(ctypes.c_double)
-  lib.f.argtypes = [ctypes.POINTER(c_double_p), ctypes.POINTER(c_double_p), ctypes.POINTER(ctypes.c_int), c_double_p, ctypes.c_int]
-  lib.f.restype = ctypes.c_int
+  lib.f_abi.argtypes = [ctypes.POINTER(c_double_p), ctypes.POINTER(c_double_p), ctypes.c_void_p]
+  lib.f_abi.restype = ctypes.c_int
 
   xv = np.array([0.25, -0.75])
   x_buf = (ctypes.c_double * 2)(*xv)
   y_buf = (ctypes.c_double * 4)()
   s_buf = (ctypes.c_double * 1)()
-  w_buf = (ctypes.c_double * 1)()
   args = (c_double_p * 1)(ctypes.cast(x_buf, c_double_p))
   res = (c_double_p * 2)(ctypes.cast(y_buf, c_double_p), ctypes.cast(s_buf, c_double_p))
 
-  assert lib.f(args, res, None, w_buf, 0) == 0
+  assert lib.f_abi(args, res, None) == 0
   expected = np.concatenate([np.sin(np.array([[2.0, -1.0], [0.5, 3.0]]) @ xv), xv[[1, 0]]])
   np.testing.assert_allclose(np.array(y_buf), expected)
   np.testing.assert_allclose(np.array(s_buf), expected.sum())
 
-  assert lib.f(None, res, None, w_buf, 0) == 1
-  assert lib.f(args, res, None, None, 0) == 0
+  assert lib.f_abi(None, res, None) == 1
+  assert lib.f_abi(args, res, None) == 0
   bad_res = (c_double_p * 2)(c_double_p(), ctypes.cast(s_buf, c_double_p))
-  assert lib.f(args, bad_res, None, w_buf, 0) == 3
+  assert lib.f_abi(args, bad_res, None) == 3
   bad_args = (c_double_p * 1)(c_double_p())
-  assert lib.f(bad_args, res, None, w_buf, 0) == 4
+  assert lib.f_abi(bad_args, res, None) == 4
 
 
 def test_entry_refuses_a_null_workspace_it_needs(tmp_path) -> None:
@@ -107,17 +106,18 @@ def test_entry_refuses_a_null_workspace_it_needs(tmp_path) -> None:
 
   lib = ctypes.CDLL(str(lib_path))
   c_double_p = ctypes.POINTER(ctypes.c_double)
-  lib.spilled.argtypes = [ctypes.POINTER(c_double_p), ctypes.POINTER(c_double_p), ctypes.POINTER(ctypes.c_int), c_double_p, ctypes.c_int]
-  lib.spilled.restype = ctypes.c_int
+  lib.spilled_abi.argtypes = [ctypes.POINTER(c_double_p), ctypes.POINTER(c_double_p), ctypes.c_void_p]
+  lib.spilled_abi.restype = ctypes.c_int
   rng = np.random.default_rng(0)
   a, b = rng.standard_normal(1600), rng.standard_normal(1600)
   a_buf, b_buf, out_buf = (ctypes.c_double * 1600)(*a), (ctypes.c_double * 1600)(*b), (ctypes.c_double * 1)()
-  w_buf = (ctypes.c_double * module.workspace_size)()
+  scratch = np.empty(module.workspace_size + 63, dtype=np.uint8)
+  workspace = ctypes.c_void_p((scratch.ctypes.data + 63) & ~63)
   args = (c_double_p * 2)(ctypes.cast(a_buf, c_double_p), ctypes.cast(b_buf, c_double_p))
   res = (c_double_p * 1)(ctypes.cast(out_buf, c_double_p))
 
-  assert lib.spilled(args, res, None, None, 0) == 2
-  assert lib.spilled(args, res, None, w_buf, 0) == 0
+  assert lib.spilled_abi(args, res, None) == 2
+  assert lib.spilled_abi(args, res, workspace) == 0
   A, B = a.reshape(40, 40), b.reshape(40, 40)
   np.testing.assert_allclose(out_buf[0], (A @ B + B @ A).sum(), rtol=1e-12)
 
@@ -140,8 +140,8 @@ def test_c_source_column_slice_is_not_contiguous(tmp_path) -> None:
 
   lib = ctypes.CDLL(str(lib_path))
   c_double_p = ctypes.POINTER(ctypes.c_double)
-  lib.g.argtypes = [ctypes.POINTER(c_double_p), ctypes.POINTER(c_double_p), ctypes.POINTER(ctypes.c_int), c_double_p, ctypes.c_int]
-  lib.g.restype = ctypes.c_int
+  lib.g_abi.argtypes = [ctypes.POINTER(c_double_p), ctypes.POINTER(c_double_p), ctypes.c_void_p]
+  lib.g_abi.restype = ctypes.c_int
 
   xv = np.arange(35, dtype=np.float64).reshape(5, 7)
   yv = np.arange(35, dtype=np.float64).reshape(5, 1, 7) + 100.0
@@ -152,7 +152,7 @@ def test_c_source_column_slice_is_not_contiguous(tmp_path) -> None:
   row2d_buf = (ctypes.c_double * 35)()
   args = (c_double_p * 2)(ctypes.cast(x_buf, c_double_p), ctypes.cast(y_buf, c_double_p))
   res = (c_double_p * 3)(ctypes.cast(col1_buf, c_double_p), ctypes.cast(row2_buf, c_double_p), ctypes.cast(row2d_buf, c_double_p))
-  assert lib.g(args, res, None, None, 0) == 0
+  assert lib.g_abi(args, res, None) == 0
   np.testing.assert_allclose(np.array(col1_buf), xv[:, 1])
   np.testing.assert_allclose(np.array(row2_buf), xv[2, :])
   np.testing.assert_allclose(np.array(row2d_buf).reshape(5, 7), yv[:, 0, :])
@@ -175,24 +175,23 @@ def test_c_source_lowers_call_nodes_through_internal_raw_function(tmp_path) -> N
   src = tmp_path / "outer.c"
   lib_path = tmp_path / ("libouter.dylib" if sys.platform == "darwin" else "libouter.so")
   source = render_c_source(outer)
-  assert source.index("void inner_raw(") < source.index("int outer(")
+  assert source.index("void inner_raw(") < source.index("void outer(")
   src.write_text(source)
   cmd = [*cc, "-dynamiclib" if sys.platform == "darwin" else "-shared", "-fPIC", str(src), "-lm", "-o", str(lib_path)]
   subprocess.run(cmd, check=True)
 
   lib = ctypes.CDLL(str(lib_path))
   c_double_p = ctypes.POINTER(ctypes.c_double)
-  lib.outer.argtypes = [ctypes.POINTER(c_double_p), ctypes.POINTER(c_double_p), ctypes.POINTER(ctypes.c_int), c_double_p, ctypes.c_int]
-  lib.outer.restype = ctypes.c_int
+  lib.outer_abi.argtypes = [ctypes.POINTER(c_double_p), ctypes.POINTER(c_double_p), ctypes.c_void_p]
+  lib.outer_abi.restype = ctypes.c_int
 
   zv = np.array([0.25, -0.75])
   z_buf = (ctypes.c_double * 2)(*zv)
   y_buf = (ctypes.c_double * 2)()
-  w_buf = (ctypes.c_double * 1)()
   args = (c_double_p * 1)(ctypes.cast(z_buf, c_double_p))
   res = (c_double_p * 1)(ctypes.cast(y_buf, c_double_p))
 
-  assert lib.outer(args, res, None, w_buf, 0) == 0
+  assert lib.outer_abi(args, res, None) == 0
   actual = zv + 1.0
   np.testing.assert_allclose(np.array(y_buf), actual * actual + actual.sum())
 
@@ -223,7 +222,7 @@ def test_c_header_typed_buffers_compile_and_run_from_c(tmp_path) -> None:
 #include "f.h"
 
 _Static_assert(alignof(f_x_t) == 16, "aligned");
-_Static_assert(alignof(f_workspace_t) == 16, "aligned");
+_Static_assert(sizeof(f_workspace_t) == 1, "no scratch");
 _Static_assert(sizeof(((f_x_t*)0)->data) == 3 * sizeof(double), "three doubles");
 
 int main(void) {
@@ -302,9 +301,9 @@ def test_scalarized_stores_coalesce_into_vector_accesses() -> None:
     return (x * 2.0 + 1.0).scalar()
 
   source = render_c_source(f, lanes=1)
-  assert "*(double2*)(res[0]) = (double2){" in source
-  assert "*(double2*)(res[0] + 4) = (double2){" in source
-  assert "res[0][6] = " in source
+  assert "*(double2*)(y) = (double2){" in source
+  assert "*(double2*)(y + 4) = (double2){" in source
+  assert "y[6] = " in source
   values = np.arange(7.0) + 0.5
 
   assert np.array_equal(f(values), values * 2.0 + 1.0)
@@ -343,7 +342,7 @@ def test_store_run_stays_scalar_when_not_contiguous_or_reading_its_own_target(tm
   cc = c_compiler()
   src = tmp_path / "gaps.c"
   lib_path = tmp_path / ("libgaps.dylib" if sys.platform == "darwin" else "libgaps.so")
-  src.write_text("#include <stddef.h>\n" + source + "\nvoid gaps_test(double* x, double* y) { gaps_raw(x, y, NULL); }\n")
+  src.write_text("#include <stddef.h>\n" + source + "\nvoid gaps_test(double* x, double* y) { gaps_raw(x, y); }\n")
   cmd = [*cc, "-dynamiclib" if sys.platform == "darwin" else "-shared", "-fPIC", str(src), "-o", str(lib_path)]
   subprocess.run(cmd, check=True)
   lib = ctypes.CDLL(str(lib_path))

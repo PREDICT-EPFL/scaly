@@ -110,21 +110,21 @@ def test_compiled_reciprocal_policy(tmp_path, reciprocal, mapped):
   library = tmp_path / ("policy" + shared_lib_ext())
   source.write_text(render_program_c(program, fun.instantiate()))
   subprocess.run([*compiler, "-O3", "-fPIC", shared_lib_flag(), str(source), "-lm", "-o", str(library)], check=True)
-  entry = ctypes.CDLL(str(library)).reciprocal_policy
+  entry = ctypes.CDLL(str(library)).reciprocal_policy_abi
   ptr = ctypes.POINTER(ctypes.c_double)
-  entry.argtypes = [ctypes.POINTER(ptr), ctypes.POINTER(ptr), ctypes.POINTER(ctypes.c_int), ptr, ctypes.c_int]
+  entry.argtypes = [ctypes.POINTER(ptr), ctypes.POINTER(ptr), ctypes.c_void_p]
   entry.restype = ctypes.c_int
   values = np.array([0.25, 1, -2, 4, 7, 20.0])
   denominator, out = np.array([3.0]), np.empty(6)
   args = (ptr * 2)(values.ctypes.data_as(ptr), denominator.ctypes.data_as(ptr))
   results = (ptr * 1)(out.ctypes.data_as(ptr))
-  assert entry(args, results, None, None, 0) == 0
+  assert entry(args, results, None) == 0
   expected = values * (1 / denominator) if reciprocal else values / denominator
   np.testing.assert_array_equal(out, expected)
   for magnitude in (1e-310, 1e308):
     values.fill(magnitude)
     denominator.fill(magnitude)
-    assert entry(args, results, None, None, 0) == 0
+    assert entry(args, results, None) == 0
     with np.errstate(over="ignore"):
       expected = values * (1 / denominator) if reciprocal else values / denominator
     np.testing.assert_array_equal(out, expected)

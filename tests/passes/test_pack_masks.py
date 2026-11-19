@@ -88,8 +88,10 @@ def _reference(masks: list[np.ndarray], x: np.ndarray) -> np.ndarray:
 
 def _run(prog, tmp_path, lanes: int, x: np.ndarray, out_size: int) -> np.ndarray:
   source = "\n".join([*_includes(dialect="gnu", prog=prog), *_render_raw_callee(prog.args[0], dialect="gnu")])
-  workspace = int(prog.args[0].attrs.get("sz_w", 0))
-  source += f"\nvoid run(double *x, double *y) {{ double w[{max(workspace, 1)}]; kernel_raw(x, y, w); }}\n"
+  layout = prog.args[0].attrs.get("workspace_layout", ())
+  scratch = " ".join(f"static {dtype.c_type} w{i}[{count}];" for i, (dtype, count) in enumerate(layout))
+  args = ", ".join(["x", "y", *(f"w{i}" for i in range(len(layout)))])
+  source += f"\nvoid run(double *x, double *y) {{ {scratch} kernel_raw({args}); }}\n"
   path, library = tmp_path / f"kernel{lanes}.c", tmp_path / f"kernel{lanes}.so"
   path.write_text(source)
   subprocess.run(

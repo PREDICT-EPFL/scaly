@@ -1,17 +1,4 @@
-"""Render a lowered Program IR ``PROGRAM`` to standalone scalar C — rendering only, no lowering
-decisions of its own.
-
-This is the renderer half of the Program-IR architecture (``docs/how_it_works/architecture.md``):
-``passes.lowering.lower_function`` produces the Program IR; this module turns it into a
-translation unit exposing the pointer ABI (``<symbol>(arg,res,iw,w,mem)``) so
-``codegen.jit.CompiledFunction`` dispatches it unchanged. ``codegen/aot.py`` also uses its procedure and entry renderers to add solver option entries.
-
-There is **no silent fallback**: a function outside the lowered subset raises
-``LoweringError`` loudly. Workspace lifetime/spill packing is a Program-IR pass
-(``passes/program/pack_workspace.py``); the renderer just honors the ``sz_w`` / ``workspace_offset`` it sets.
-Scalar emission spells elementwise ops as the table in ``ad/rules.py`` says — the lowerer
-(``passes/lowering/``) holds the extensible ``ExprOp``-keyed registry.
-"""
+"""Render lowered Program IR to standalone C with typed or CasADi-compatible entry points."""
 
 from __future__ import annotations
 
@@ -21,11 +8,21 @@ import math
 
 import numpy as np
 
-from .abi import ENTRY_C_TYPES, abi_status_defines, c_api_signature, c_ident
+from .abi import (
+  ALIGNAS,
+  WORKSPACE_MEMBERS,
+  abi_status_defines,
+  buffer_idents,
+  buffer_structs,
+  c_api_signature,
+  c_ident,
+  pointer_signature,
+  wrapper_param_idents,
+)
 from .casadi import casadi_defines, render_casadi_queries
 from ..ad.rules import ELEMENTWISE
 from ..function.concrete import ConcreteFunction
-from ..passes.lowering import LoweringError, main_proc, workspace_dtype
+from ..passes.lowering import LoweringError, main_proc
 from ..passes.arith import SIGNED_WRAP_OPS
 from ..ir import program as p
 from ..ir.expr import OP_INFO
@@ -33,6 +30,7 @@ from ..ir.match import Pattern, rewrite
 from ..ir.program import walk_program, ProgramNode, ProgramOp
 from ..ir.types import DType, dtypes
 from ..passes.program._common import name_scope, buffer_refs, prints, rebuild_program, substitute_var
+from ..passes.program.pack_workspace import WORKSPACE_ALIGNMENT, extern_workspace
 from ..utils.names import NameScope
 from .toolchain import CDialect, VectorLibm
 
@@ -130,14 +128,15 @@ _VECTOR_TYPEDEF = "typedef double double2 __attribute__((vector_size(16), aligne
 def render_program_c(
   prog: ProgramNode, fun: ConcreteFunction, *, casadi: bool = False, dialect: CDialect = "gnu", vector_libm: VectorLibm = "none"
 ) -> str:
-  """Render ``fun``'s lowered PROGRAM to a standalone pointer-ABI translation unit. ``casadi`` adds
-  the CasADi query functions (``codegen/casadi.py``)."""
+  """Render ``fun``'s lowered PROGRAM to a standalone translation unit."""
   proc = main_proc(prog)
   pc = int(prog.attrs.get("proc_count", 1))
   callees = list(prog.args[: pc - 1])
+  adapters, staging = casadi_extern_adapters(prog) if casadi else ([], 0)
   lines: list[str] = [
-    *_includes(dialect=dialect, prog=prog, vector_libm=vector_libm),
+    *_includes(("#include <stdlib.h>",) if staging else (), dialect="c" if casadi else dialect, prog=prog, vector_libm=vector_libm),
     "",
+    *entry_types(fun, proc, casadi=casadi),
     *abi_status_defines(),
     "",
     *(casadi_defines() + [""] if casadi else []),
@@ -147,13 +146,18 @@ def render_program_c(
     "",
   ]
   lines += extern_declarations(prog)
+  lines += adapters
   reserved_names = _c_reserved_names(prog)
   for callee in callees:
-    lines += _render_raw_callee(callee, dialect=dialect, vector_libm=vector_libm, reserved_names=reserved_names, unit=workspace_dtype(fun))
+    lines += _render_raw_callee(
+      callee, dialect=dialect, vector_libm=vector_libm, reserved_names=reserved_names, byte_workspace=casadi, staging=bool(staging)
+    )
     lines.append("")
-  lines += _render_entry(proc, fun, casadi=casadi, dialect=dialect, vector_libm=vector_libm)
+  lines += _render_entry(proc, fun, casadi=casadi, dialect=dialect, vector_libm=vector_libm, external_staging=staging)
   if casadi:
     lines += ["", *render_casadi_queries(fun, int(proc.attrs.get("sz_w", 0)))]
+  else:
+    lines += ["", *render_typed_entry(fun, proc)]
   lines += ["", "#ifdef __cplusplus", "}", "#endif"]
   return "\n".join(lines).rstrip() + "\n"
 
@@ -162,21 +166,104 @@ def extern_declarations(prog: ProgramNode) -> list[str]:
   """The concrete pointer signatures of the external symbols reached by this program."""
   declarations = []
   for fn in prog.attrs.get("externs", ()):
-    params = [*(f"const {e.type.dtype.c_type}*" for e in fn.inputs), *(f"{e.type.dtype.c_type}*" for e in fn.outputs), "double*"]
+    scratch = [f"{dtype.c_type}*" for dtype, _ in extern_workspace(fn)] if hasattr(fn, "workspace_layout") else ["double*"]
+    params = [*(f"const {e.type.dtype.c_type}*" for e in fn.inputs), *(f"{e.type.dtype.c_type}*" for e in fn.outputs), *scratch]
     declaration = f"void {fn.name}({', '.join(params)});"
     if declaration not in declarations:
       declarations.append(declaration)
   return [*declarations, ""] if declarations else []
 
 
-def entry_prologue(fun: ConcreteFunction, sz_w: int, *, options_count: int = 0) -> list[str]:
-  """The opening of a pointer-ABI entry: the signature and the null checks behind the status codes.
-  ``iw`` and ``mem`` are accepted and ignored; ``sz_w`` is the total workspace the entry reads."""
+def casadi_extern_adapters(prog: ProgramNode) -> tuple[list[str], int]:
+  """Marshal byte-backed arguments into typed memory for external C functions."""
+  lines: list[str] = []
+  largest = 0
+  for fn in prog.attrs.get("externs", ()):
+    inputs, outputs = fn.input_tree.types, fn.output_tree.types
+    layout = extern_workspace(fn)
+    declarations = [
+      *(f"const unsigned char* in{i}" for i in range(len(inputs))),
+      *(f"unsigned char* out{i}" for i in range(len(outputs))),
+      "unsigned char* storage",
+    ]
+    lines += [f"static inline void SCALY_EXTERN_{fn.name}({', '.join(declarations)}) {{"]
+    offset = 0
+    arguments = []
+    for i, leaf in enumerate((*inputs, *outputs)):
+      dtype, count = leaf.dtype, leaf.storage_size
+      name = f"arg{i}"
+      lines.append(f"  {dtype.c_type}* {name} = ({dtype.c_type}*)(storage + {offset});")
+      arguments.append(name)
+      offset += _padded_bytes(dtype.itemsize * max(1, count))
+      if i < len(inputs):
+        if count:
+          lines.append(f"  for (size_t k = 0; k < {count}; ++k) {name}[k] = SCALY_LOAD_{dtype.name}(in{i} + k * sizeof(*{name}));")
+        else:
+          lines.append(f"  (void)in{i};")
+    for dtype, count in layout:
+      arguments.append(f"({dtype.c_type}*)(storage + {offset})")
+      offset += _padded_bytes(dtype.itemsize * count)
+    if not layout and not hasattr(fn, "workspace_layout"):
+      arguments.append("NULL")
+    lines.append(f"  {fn.name}({', '.join(arguments)});")
+    for i, leaf in enumerate(outputs):
+      name = f"arg{i + len(inputs)}"
+      if leaf.storage_size:
+        lines.append(f"  memcpy(out{i}, {name}, {leaf.storage_size} * sizeof(*{name}));")
+      else:
+        lines.append(f"  (void)out{i};")
+    lines += ["}", ""]
+    largest = max(largest, offset)
+  return lines, largest
+
+
+def _padded_bytes(size: int) -> int:
+  return -(-size // WORKSPACE_ALIGNMENT) * WORKSPACE_ALIGNMENT
+
+
+def _staging_allocation(size: int) -> list[str]:
+  if not size:
+    return []
+  mask = WORKSPACE_ALIGNMENT - 1
+  return [
+    f"  void* SCALY_EXTERN_ALLOCATION = malloc({size} + {mask});",
+    "  if (!SCALY_EXTERN_ALLOCATION) return SCALY_ERR_ALLOC_WORK;",
+    f"  unsigned char* SCALY_EXTERN_STORAGE = (unsigned char*)(((uintptr_t)SCALY_EXTERN_ALLOCATION + {mask}) & ~(uintptr_t){mask});",
+  ]
+
+
+def entry_types(fun: ConcreteFunction, proc: ProgramNode, *, casadi: bool) -> list[str]:
+  layout = proc.attrs.get("workspace_layout", ())
+  return ["#include <stdbool.h>", *ALIGNAS, *buffer_structs(fun, layout), *(_byte_accessors() if casadi else []), ""]
+
+
+def _native_workspace_args(proc: ProgramNode) -> list[str]:
+  return [f"({dtype.c_type}*)w->{WORKSPACE_MEMBERS[dtype]}" for dtype, _ in proc.attrs.get("workspace_layout", ())]
+
+
+def render_typed_entry(fun: ConcreteFunction, proc: ProgramNode, *, entry_setup: Sequence[str] = ()) -> list[str]:
   symbol = c_ident(fun.name)
+  inputs, outputs = buffer_idents(fun)
+  ins, outs, _ = wrapper_param_idents(symbol, inputs, outputs, type_prefix=f"{symbol}_")
+  params = [
+    *(f"(const {expr.type.dtype.c_type}*){name}->data" for name, expr in zip(ins, fun.inputs, strict=True)),
+    *(f"({expr.type.dtype.c_type}*){name}->data" for name, expr in zip(outs, fun.outputs, strict=True)),
+  ]
+  workspace = _native_workspace_args(proc)
+  return [
+    c_api_signature(fun) + " {",
+    *([] if workspace else ["  (void)w;"]),
+    *entry_setup,
+    f"  SCALY_KERNEL_{symbol}({', '.join([*params, *workspace])});",
+    "}",
+  ]
+
+
+def entry_prologue(fun: ConcreteFunction, sz_w: int, *, casadi: bool, options_count: int = 0) -> list[str]:
+  """The pointer entry's signature and status checks."""
   lines = [
-    c_api_signature(fun, f"{symbol}_with_options" if options_count else symbol, solver_options=bool(options_count)) + " {",
-    "  (void)iw;",
-    "  (void)mem;",
+    pointer_signature(fun, casadi=casadi, solver_options=bool(options_count)) + " {",
+    *(["  (void)iw;", "  (void)mem;"] if casadi else []),
     "  if (!arg || !res) return SCALY_ERR_NULL_ABI;",
     "  if (!w) return SCALY_ERR_NULL_WORK;" if sz_w else "  (void)w;",
   ]
@@ -199,36 +286,49 @@ def _render_entry(
   vector_libm: VectorLibm = "none",
   options_count: int = 0,
   entry_setup: Sequence[str] = (),
+  external_staging: int = 0,
 ) -> list[str]:
-  """Emit the pointer-ABI entry ``<symbol>(arg,res,iw,w,mem)`` with ``fun``'s main PROC body
-  inlined. ``codegen/aot.py`` reuses this for solver-bearing functions, so the top function's body
-  lowers through Program IR exactly like any other host function."""
+  """Emit the root kernel and its pointer-array entry, or emit the CasADi byte kernel."""
   param_count = int(proc.attrs["param_count"])
   body = list(proc.args[param_count:])
   sz_w = int(proc.attrs.get("sz_w", 0))  # set by passes/program/pack_workspace.py
-  unit = workspace_dtype(fun)
-
-  # Buffer name -> C pointer expression for the ABI entry (inputs are arg[i], outputs res[i]).
-  ptr_expr: dict[str, str] = {}
-  for i, param in enumerate(proc.args[:param_count]):
-    ptr_expr[param.attrs["name"]] = f"arg[{i}]" if i < len(fun.inputs) else f"res[{i - len(fun.inputs)}]"
-
+  symbol = c_ident(fun.name)
+  prologue = entry_prologue(fun, sz_w, casadi=casadi, options_count=options_count)
+  if not casadi:
+    params = [
+      *(f"(const {expr.type.dtype.c_type}*)arg[{i}]" for i, expr in enumerate(fun.inputs)),
+      *(f"({expr.type.dtype.c_type}*)res[{i}]" for i, expr in enumerate(fun.outputs)),
+      *_native_workspace_args(proc),
+    ]
+    return [
+      *_render_raw_callee(proc, dialect=dialect, vector_libm=vector_libm, name=f"SCALY_KERNEL_{symbol}"),
+      "",
+      *prologue,
+      *entry_setup,
+      f"  SCALY_KERNEL_{symbol}({', '.join(params)});",
+      "  return SCALY_SUCCESS;",
+      "}",
+    ]
+  ptr_expr = _BytePointers(staging=bool(external_staging))
   lines = [
-    *_render_vector_helpers(proc, dialect=dialect, vector_libm=vector_libm),
-    *entry_prologue(fun, sz_w, options_count=options_count),
+    *_render_vector_helpers(proc, dialect=dialect, vector_libm=vector_libm, byte_workspace=True),
+    *prologue,
+    *_staging_allocation(external_staging),
     *entry_setup,
   ]
-  if unit == dtypes.uint8:
-    # Untyped entry pointers: one cast per leaf, defined because each came from an object of that
-    # type. Lowering named the parameters clear of the entry's own arguments.
-    for i, param in enumerate(proc.args[:param_count]):
-      local = c_ident(param.attrs["name"])
-      const = "const " if i < len(fun.inputs) else ""
-      lines.append(f"  {const}{param.dtype.c_type}* {local} = ({const}{param.dtype.c_type}*){ptr_expr[param.attrs['name']]};")
-      ptr_expr[param.attrs["name"]] = local
-  _emit_local_buffers(body, lines, ptr_expr, indent=2, unit=unit)
-  _emit_body(body, ptr_expr, lines, indent=2, dialect=dialect, unit=unit)
-  lines += ["  return SCALY_SUCCESS;", "}"]
+  for i, param in enumerate(proc.args[:param_count]):
+    const = "const " if i < len(fun.inputs) else ""
+    leaf = f"arg[{i}]" if i < len(fun.inputs) else f"res[{i - len(fun.inputs)}]"
+    ptr_expr[param.attrs["name"]] = f"(({const}unsigned char*){leaf})"
+  offset = 0
+  for dtype, count in proc.attrs.get("workspace_layout", ()):
+    lines.append(f"  unsigned char* {_workspace_pointer(dtype)} = (unsigned char*)w + {offset};")
+    if external_staging:
+      lines.append(f"  (void){_workspace_pointer(dtype)};")
+    offset += count * dtype.itemsize
+  _emit_local_buffers(body, lines, ptr_expr, indent=2)
+  _emit_body(body, ptr_expr, lines, indent=2, dialect=dialect)
+  lines += [*(["  free(SCALY_EXTERN_ALLOCATION);"] if external_staging else []), "  return SCALY_SUCCESS;", "}"]
   return lines
 
 
@@ -242,14 +342,14 @@ def _render_raw_callee(
   dialect: CDialect = "gnu",
   vector_libm: VectorLibm = "none",
   reserved_names: NameScope | None = None,
-  unit: DType = dtypes.float64,
+  byte_workspace: bool = False,
+  staging: bool = False,
+  name: str | None = None,
 ) -> list[str]:
-  """A callee renders as ``static inline void <name>_raw(const <dtype>* p0, ..., <unit>* w)`` — a
-  pointer per param plus the workspace tail (spilled slots index into ``w``; ``call`` sites pass
-  the caller's ``w`` advanced past its own spill window). ``w`` points to ``unit``, the
-  program's workspace dtype, and is ``void*`` for a byte workspace. The leading ``input_count`` params are
-  inputs and are ``const``-qualified except for explicit ``inout`` parameters, so a solver wrapper can pass
-  its ``const double*`` arguments without discarding qualifiers. No ABI wrapper.
+  """Render a private procedure with a pointer per leaf and per workspace array.
+
+  Inputs are const-qualified unless they are explicitly inout. In CasADi mode
+  the pointers address bytes and loads and stores copy the element representations.
 
   Callees stay inline unless lowering marks them ``noinline``, which it does for forward-AD helpers;
   see internal/notes/macos_clang_call_miscompile.md.
@@ -258,46 +358,95 @@ def _render_raw_callee(
   input_count = int(proc.attrs.get("input_count", 0))
   params = list(proc.args[:param_count])
   body = list(proc.args[param_count:])
-  sz_w = int(proc.attrs.get("sz_w", 0))
-  ptr_expr = {pp.attrs["name"]: c_ident(pp.attrs["name"]) for pp in params}
+  ptr_expr: dict[str, str] = _BytePointers(staging=staging) if byte_workspace else {}
+  ptr_expr.update((pp.attrs["name"], c_ident(pp.attrs["name"])) for pp in params)
   param_decls = ", ".join(
     [
       *(
-        f"{'const ' if i < input_count and pp.attrs.get('intent') != 'inout' else ''}{pp.dtype.c_type}* {c_ident(pp.attrs['name'])}"
+        f"{'const ' if i < input_count and pp.attrs.get('intent') != 'inout' else ''}"
+        f"{'unsigned char' if byte_workspace else pp.dtype.c_type}* {c_ident(pp.attrs['name'])}"
         for i, pp in enumerate(params)
       ),
-      f"{ENTRY_C_TYPES[unit]}* w",
+      *(["unsigned char* SCALY_EXTERN_STORAGE"] if staging else []),
+      *(f"{'unsigned char' if byte_workspace else dtype.c_type}* {_workspace_pointer(dtype)}" for dtype, _ in proc.attrs.get("workspace_layout", ())),
     ]
   )
   proc_name = proc.attrs["name"]
   noinline = bool(proc.attrs.get("noinline"))
   qualifier = ("static __attribute__((noinline))" if dialect == "gnu" else "static") if noinline else "static inline"
-  raw_name = f"{c_ident(proc_name)}_raw"
+  raw_name = name or f"{c_ident(proc_name)}_raw"
   implementation = (
     (reserved_names if reserved_names is not None else _c_reserved_names(proc)).allocate(f"{raw_name}_impl")
     if noinline and dialect == "c"
     else raw_name
   )
-  out = [*_render_vector_helpers(proc, dialect=dialect, vector_libm=vector_libm), f"{qualifier} void {implementation}({param_decls}) {{"]
-  if not sz_w:
-    out.append("  (void)w;")
-  _emit_local_buffers(body, out, ptr_expr, indent=2, unit=unit)
-  _emit_body(body, ptr_expr, out, indent=2, dialect=dialect, unit=unit)
+  out = [
+    *_render_vector_helpers(proc, dialect=dialect, vector_libm=vector_libm, byte_workspace=byte_workspace),
+    f"{qualifier} void {implementation}({param_decls or 'void'}) {{",
+  ]
+  nodes = list(walk_program(proc))
+  referenced = {n.attrs["buffer"] for n in nodes if n.op == ProgramOp.VIEW}
+  referenced.update(n.attrs["alias_of"] for n in body if "alias_of" in n.attrs)
+  referenced.update(a.attrs["name"] for n in nodes if n.op == ProgramOp.CALL for a in n.args if a.op == ProgramOp.BUFFER)
+  out.extend(f"  (void){ptr_expr[pp.attrs['name']]};" for pp in params if pp.attrs["name"] not in referenced)
+  if staging:
+    out.append("  (void)SCALY_EXTERN_STORAGE;")
+    out.extend(f"  (void){_workspace_pointer(dtype)};" for dtype, _ in proc.attrs.get("workspace_layout", ()))
+  _emit_local_buffers(body, out, ptr_expr, indent=2)
+  _emit_body(body, ptr_expr, out, indent=2, dialect=dialect)
   out.append("}")
   if implementation != raw_name:
     out.append(f"static void (*volatile {raw_name})({param_decls}) = {implementation};")
   return out
 
 
-def _workspace_at(offset: int, unit: DType) -> str:
-  """``w`` advanced by ``offset`` units, counted in bytes for a byte workspace."""
-  if offset == 0:
-    return "w"
-  return f"(unsigned char*)w + {offset}" if unit == dtypes.uint8 else f"w + {offset}"
+class _BytePointers(dict[str, str]):
+  """Buffer expressions for a CasADi procedure. Every array is addressed as bytes."""
+
+  def __init__(self, *, staging: bool = False) -> None:
+    super().__init__()
+    self.staging = staging
 
 
-def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dict[str, str], indent: int, *, unit: DType = dtypes.float64) -> None:
+def _workspace_pointer(dtype: DType) -> str:
+  return f"SCALY_W_{WORKSPACE_MEMBERS[dtype]}"
+
+
+def _advance(pointer: str, offset: str | int, dtype: DType, byte_workspace: bool) -> str:
+  if str(offset) == "0":
+    return pointer
+  return f"({pointer} + ({offset}) * sizeof({dtype.c_type}))" if byte_workspace else f"({pointer} + {offset})"
+
+
+def _byte_accessors() -> list[str]:
+  return [
+    "#include <string.h>",
+    "#if defined(__GNUC__)",
+    "#define SCALY_BYTE_INLINE static inline __attribute__((unused))",
+    "#else",
+    "#define SCALY_BYTE_INLINE static inline",
+    "#endif",
+    *(
+      line
+      for dtype in WORKSPACE_MEMBERS
+      for line in (
+        f"SCALY_BYTE_INLINE {dtype.c_type} SCALY_LOAD_{dtype.name}(const unsigned char* p) {{",
+        f"  {dtype.c_type} value;",
+        "  memcpy(&value, p, sizeof value);",
+        "  return value;",
+        "}",
+        f"SCALY_BYTE_INLINE void SCALY_STORE_{dtype.name}(unsigned char* p, {dtype.c_type} value) {{",
+        "  memcpy(p, &value, sizeof value);",
+        "}",
+      )
+    ),
+    "#undef SCALY_BYTE_INLINE",
+  ]
+
+
+def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dict[str, str], indent: int) -> None:
   pad = " " * indent
+  byte_workspace = isinstance(ptr_expr, _BytePointers)
   seen: set[str] = set()
   for stmt in body:
     if stmt.op != ProgramOp.BUFFER or stmt.attrs["name"] in seen:
@@ -308,23 +457,29 @@ def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dic
     for d in stmt.attrs["shape"]:
       size *= int(d)
     size = size or 1
+    kind = "unsigned char" if byte_workspace else stmt.dtype.c_type
+    if byte_workspace:
+      ptr_expr[stmt.attrs["name"]] = name
     if stmt.attrs.get("address_space") == "constant" and "values" in stmt.attrs:
       fmt = (lambda v: _c_int(int(v))) if stmt.dtype.is_integer or stmt.dtype.is_bool else (lambda v: _c_float(v, stmt.dtype))
       values = ", ".join(fmt(v) for v in stmt.attrs["values"])
       lines.append(f"{pad}static const {stmt.dtype.c_type} {name}[{size}] = {{{values}}};")
+      if byte_workspace:
+        ptr_expr[stmt.attrs["name"]] = f"((const unsigned char*){name})"
     elif "alias_of" in stmt.attrs:
       # Zero-copy alias: a pointer into another buffer (contiguous slice / reshape).
       src = ptr_expr.get(stmt.attrs["alias_of"], c_ident(stmt.attrs["alias_of"]))
       offset = int(stmt.attrs["alias_offset"])
-      rhs = src if offset == 0 else f"{src} + {offset}"
-      lines.append(f"{pad}const {stmt.dtype.c_type}* {name} = {rhs};")
+      rhs = _advance(src, offset, stmt.dtype, byte_workspace)
+      lines.append(f"{pad}const {kind}* {name} = {rhs};")
     elif "workspace_offset" in stmt.attrs:
-      # A spilled slot: a window into the caller-provided w[] instead of a stack array.
       offset = int(stmt.attrs["workspace_offset"])
-      window = f"w + {offset}" if unit != dtypes.uint8 else f"({stmt.dtype.c_type}*)({_workspace_at(offset, unit)})"
-      lines.append(f"{pad}{stmt.dtype.c_type}* {name} = {window};")
+      window = _advance(_workspace_pointer(stmt.dtype), offset, stmt.dtype, byte_workspace)
+      lines.append(f"{pad}{kind}* {name} = {window};")
     else:
       lines.append(f"{pad}{stmt.dtype.c_type} {name}[{size}];")
+      if byte_workspace:
+        ptr_expr[stmt.attrs["name"]] = f"((unsigned char*){name})"
 
 
 def _has_integer_data(body: list[ProgramNode]) -> bool:
@@ -352,7 +507,6 @@ def _emit_body(
   *,
   dialect: CDialect = "gnu",
   integer_data: bool | None = None,
-  unit: DType = dtypes.float64,
 ) -> None:
   """Render Program statements in order."""
   if integer_data is None:
@@ -367,7 +521,6 @@ def _emit_body(
       indent,
       dialect=dialect,
       integer_data=integer_data,
-      unit=unit,
     )
 
 
@@ -379,9 +532,9 @@ def _emit_statement(
   *,
   dialect: CDialect = "gnu",
   integer_data: bool,
-  unit: DType = dtypes.float64,
 ) -> None:
   pad = " " * indent
+  byte_workspace = isinstance(ptr_expr, _BytePointers)
   if stmt.op == ProgramOp.BLOCK:
     _emit_body(
       list(stmt.args),
@@ -390,7 +543,6 @@ def _emit_statement(
       indent,
       dialect=dialect,
       integer_data=integer_data,
-      unit=unit,
     )
   elif stmt.op == ProgramOp.FOR and "vector_helper" in stmt.attrs:
     _emit_vector_calls(stmt, ptr_expr, lines, indent)
@@ -401,7 +553,7 @@ def _emit_statement(
       assert stmt.args[1].args[1].op in (ProgramOp.CONST_INT, ProgramOp.CONST_FLOAT) and stmt.args[1].args[1].attrs["value"] == 0
       target = _emit_view(stmt.args[1].args[0], ptr_expr, {rng.attrs["name"]: "0"})
       count = _emit_scalar(rng.args[1], ptr_expr)
-      lines.append(f"{pad}memset(&{target}, 0, {count} * sizeof({stmt.args[1].dtype.c_type}));")
+      lines.append(f"{pad}memset({'' if byte_workspace else '&'}{target}, 0, {count} * sizeof({stmt.args[1].dtype.c_type}));")
       return
     name = c_ident(rng.attrs["name"])
     start = _emit_scalar(rng.args[0], ptr_expr, index=True)
@@ -419,25 +571,33 @@ def _emit_statement(
       indent + 2,
       dialect=dialect,
       integer_data=integer_data,
-      unit=unit,
     )
     lines.append(f"{pad}}}")
   elif stmt.op == ProgramOp.IF:
     lines.append(f"{pad}if ({_emit_scalar(stmt.args[0], ptr_expr)}) {{")
-    _emit_body(list(stmt.args[1].args), ptr_expr, lines, indent + 2, dialect=dialect, integer_data=integer_data, unit=unit)
+    _emit_body(list(stmt.args[1].args), ptr_expr, lines, indent + 2, dialect=dialect, integer_data=integer_data)
     if stmt.args[2].args:
       lines.append(f"{pad}}} else {{")
-      _emit_body(list(stmt.args[2].args), ptr_expr, lines, indent + 2, dialect=dialect, integer_data=integer_data, unit=unit)
+      _emit_body(list(stmt.args[2].args), ptr_expr, lines, indent + 2, dialect=dialect, integer_data=integer_data)
     lines.append(f"{pad}}}")
   elif stmt.op == ProgramOp.BREAK_IF:
     lines.append(f"{pad}if ({_emit_scalar(stmt.args[0], ptr_expr)}) break;")
   elif stmt.op == ProgramOp.STORE:
-    _emit_assignment(_emit_view(stmt.args[0], ptr_expr), [stmt.args[1]], ptr_expr, lines, indent)
+    target = _emit_view(stmt.args[0], ptr_expr)
+    if byte_workspace:
+      value = _emit_scalar(stmt.args[1], ptr_expr)
+      lines.append(f"{pad}SCALY_STORE_{stmt.dtype.name}({target}, {value});")
+    else:
+      _emit_assignment(target, [stmt.args[1]], ptr_expr, lines, indent)
   elif stmt.op == ProgramOp.STORE_PAIR:
     view = stmt.args[0]
     ptr = ptr_expr.get(view.attrs["buffer"], c_ident(view.attrs["buffer"]))
     index = _emit_scalar(view.args[0], ptr_expr, index=True)
-    if dialect == "c":
+    if byte_workspace:
+      for offset, value in enumerate(stmt.args[1:]):
+        target = _advance(ptr, f"({index}) + {offset}", stmt.dtype, True)
+        lines.append(f"{pad}SCALY_STORE_{stmt.dtype.name}({target}, {_emit_scalar(value, ptr_expr)});")
+    elif dialect == "c":
       for offset, value in enumerate(stmt.args[1:]):
         _emit_assignment(f"{ptr}[({index}) + {offset}]", [value], ptr_expr, lines, indent)
     else:
@@ -449,14 +609,16 @@ def _emit_statement(
   elif stmt.op == ProgramOp.CALL:
     n_in, n_out = int(stmt.attrs["n_in"]), int(stmt.attrs["n_out"])
     ptrs = [_emit_call_arg(a, ptr_expr) for a in stmt.args[: n_in + n_out]]
-    # Workspace tail: a callee needing its own w[] gets this proc's w advanced past its spill
-    # window; one needing none gets NULL. Set by the workspace pass; absent => no spill anywhere.
-    if stmt.attrs.get("callee_needs_w"):
-      window = _workspace_at(int(stmt.attrs.get("w_self", 0)), unit)
-      # An external function takes ``double* w`` whatever the caller's workspace.
-      ptrs.append(f"(double*)({window})" if stmt.attrs.get("external") and unit == dtypes.uint8 else window)
-    else:
+    if isinstance(ptr_expr, _BytePointers) and stmt.attrs.get("external"):
+      ptrs.append("SCALY_EXTERN_STORAGE")
+      lines.append(f"{pad}SCALY_EXTERN_{stmt.attrs['callee']}({', '.join(ptrs)});")
+      return
+    offsets = stmt.attrs.get("workspace_offsets", ())
+    ptrs.extend(_advance(_workspace_pointer(dtype), offset, dtype, byte_workspace) for dtype, offset in offsets)
+    if stmt.attrs.get("external") and not offsets and not stmt.attrs.get("typed_extern_workspace"):
       ptrs.append("NULL")
+    if isinstance(ptr_expr, _BytePointers) and ptr_expr.staging:
+      ptrs.append("SCALY_EXTERN_STORAGE")
     symbol = stmt.attrs["callee"] if stmt.attrs.get("external") else f"{c_ident(stmt.attrs['callee'])}_raw"
     lines.append(f"{pad}{symbol}({', '.join(ptrs)});")
   elif stmt.op == ProgramOp.PRINT:
@@ -492,7 +654,7 @@ def _emit_call_arg(node: ProgramNode, ptr_expr: dict[str, str]) -> str:
   if node.op == ProgramOp.VIEW:
     ptr = ptr_expr.get(node.attrs["buffer"], c_ident(node.attrs["buffer"]))
     idx = _emit_scalar(node.args[0], ptr_expr, index=True)
-    return ptr if idx == "0" else f"({ptr} + {idx})"
+    return _advance(ptr, idx, node.dtype, isinstance(ptr_expr, _BytePointers))
   raise LoweringError(f"unsupported CALL arg op {node.op}")
 
 
@@ -501,6 +663,8 @@ def _emit_view(view: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, 
     raise LoweringError(f"expected a VIEW, got {view.op}")
   ptr = ptr_expr.get(view.attrs["buffer"], c_ident(view.attrs["buffer"]))
   idx = _emit_scalar(view.args[0], ptr_expr, var_expr, index=True)
+  if isinstance(ptr_expr, _BytePointers):
+    return _advance(ptr, idx, view.dtype, True)
   return f"{ptr}[{idx}]"
 
 
@@ -561,7 +725,11 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, s
     elif op == ProgramOp.VAR:
       s = (var_expr or {}).get(node.attrs["name"], c_ident(node.attrs["name"]))
     elif op == ProgramOp.LOAD:
-      s = (var_expr or {}).get(f"@load{id(node)}") or _emit_view(node.args[0], ptr_expr, var_expr)
+      s = (var_expr or {}).get(f"@load{id(node)}")
+      if s is None:
+        s = _emit_view(node.args[0], ptr_expr, var_expr)
+        if isinstance(ptr_expr, _BytePointers):
+          s = f"SCALY_LOAD_{node.dtype.name}({s})"
     elif not index and node.dtype.is_integer and not node.dtype.is_unsigned and op in SIGNED_WRAP_OPS:
       # Compiler indices are bounded by static shapes. User arithmetic wraps before every use,
       # including a comparison or another operation without an intervening store.
@@ -697,7 +865,9 @@ def _emit_vector_calls(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[
   buffers, variables = _vector_captures(stmt)
   accumulators = _ordered_accumulators(stmt)
   captures = [
-    f"&{c_ident(n.attrs['buffer'])}" if n.attrs["buffer"] in accumulators else ptr_expr.get(n.attrs["buffer"], c_ident(n.attrs["buffer"]))
+    f"{'(unsigned char*)' if isinstance(ptr_expr, _BytePointers) else ''}&{c_ident(n.attrs['buffer'])}"
+    if n.attrs["buffer"] in accumulators
+    else ptr_expr.get(n.attrs["buffer"], c_ident(n.attrs["buffer"]))
     for n in buffers
   ]
   captures += [c_ident(n.attrs["name"]) for n in variables]
@@ -712,7 +882,7 @@ def _emit_vector_calls(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[
   ]
 
 
-def _render_vector_helpers(proc: ProgramNode, *, dialect: CDialect, vector_libm: VectorLibm) -> list[str]:
+def _render_vector_helpers(proc: ProgramNode, *, dialect: CDialect, vector_libm: VectorLibm, byte_workspace: bool = False) -> list[str]:
   lines: list[str] = []
   for stmt in reversed(list(walk_program(proc))):
     if stmt.op != ProgramOp.FOR or "vector_helper" not in stmt.attrs:
@@ -739,15 +909,19 @@ def _render_vector_helpers(proc: ProgramNode, *, dialect: CDialect, vector_libm:
       ]
       body = [rewrite(n, patterns, rebuild=rebuild_program, fixpoint=False) for n in body]
     params = [f"long long {start}", f"long long {valid}"]
-    params += [f"{'const ' if n.attrs['buffer'] not in writes else ''}{n.dtype.c_type}* {c_ident(n.attrs['buffer'])}" for n in buffers]
+    params += [
+      f"{'const ' if n.attrs['buffer'] not in writes else ''}{'unsigned char' if byte_workspace else n.dtype.c_type}* {c_ident(n.attrs['buffer'])}"
+      for n in buffers
+    ]
     params += [f"{n.dtype.c_type} {c_ident(n.attrs['name'])}" for n in variables]
     qualifier = "static inline __attribute__((always_inline))" if dialect == "gnu" else "static inline"
     lines.append(f"{qualifier} void {helper}({', '.join(params)}) {{")
     local_buffers = [n for n in reversed(list(walk_program(vector))) if n.op == ProgramOp.BUFFER]
-    _emit_local_buffers(local_buffers, lines, {}, 2)
-    if dialect == "c":
+    ptr_expr = _BytePointers() if byte_workspace else {}
+    _emit_local_buffers(local_buffers, lines, ptr_expr, 2)
+    if dialect == "c" or byte_workspace:
       lines.append(f"  for (long long {lane} = 0; {lane} < {valid}; ++{lane}) {{")
-      _emit_body(body, {}, lines, 4, dialect="c")
+      _emit_body(body, ptr_expr, lines, 4, dialect="c")
       lines.append("  }")
     else:
       _emit_vector_body(body, vec, start, lane, width, lines, scope, valid, vector.args[0].attrs["lane_dtype"])

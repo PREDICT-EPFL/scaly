@@ -94,14 +94,13 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   normal_b = [kb for _, _, _, kb in normal_terms]
 
   param_args = [f"in{param_start + i}" for i in range(len(desc.param_names))]
-  base_args = lambda x, f, g: ", ".join([x, *param_args, f, *((g,) if m else ()), "w"])  # noqa: E731
-  one_out_args = lambda x, out: ", ".join([x, *param_args, out, "w"])  # noqa: E731
-  hess_args = lambda x, lf, lg, out: ", ".join([x, *param_args, lf, *((lg,) if m else ()), out, "w"])  # noqa: E731
-  bounds_args = ", ".join([*param_args, "xlb", "xub", *(("gl", "gu") if ng else ()), "w"])
+  base_args = lambda x, f, g: ", ".join([x, *param_args, f, *((g,) if m else ()), *ctx.oracle_workspace(base)])  # noqa: E731
+  hess_args = lambda x, lf, lg, out: ", ".join([x, *param_args, lf, *((lg,) if m else ()), out, *ctx.oracle_workspace(hess)])  # noqa: E731
+  bounds_args = ", ".join([*param_args, "xlb", "xub", *(("gl", "gu") if ng else ()), *ctx.oracle_workspace(bounds)])
   signature = [
     *(f"const double* in{i}" for i in range(len(desc.input_signature))),
     *(f"double* out{i}" for i in range(len(desc.output_signature))),
-    "double* w",
+    *ctx.workspace_declarations,
     "const scaly_solver_option* options",
   ]
   base_raw, grad_raw = ctx.raw_symbol_of(base), ctx.raw_symbol_of(grad)
@@ -154,8 +153,8 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     bounds_raw=bounds_raw,
     base_args=base_args("x", "&f", "g"),
     trial_args=base_args("trial", "&trial_f", "trial_g"),
-    grad_args=one_out_args("x", "grad_buf"),
-    jac_args=one_out_args("x", "jac_buf"),
+    grad_args=", ".join(["x", *param_args, "grad_buf", *ctx.oracle_workspace(grad)]),
+    jac_args=", ".join(["x", *param_args, "jac_buf", *ctx.oracle_workspace(jac)]) if jac is not None else "",
     hess_args=hess_args("x", "&(double){1.0}", "exact_hessian ? lam_g : zero_lam", "hess_buf"),
     objective_hess_args=hess_args("x", "&(double){1.0}", "zero_lam", "hess_buf"),
     bounds_args=bounds_args,

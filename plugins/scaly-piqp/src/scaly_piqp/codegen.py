@@ -74,7 +74,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   # Parameters for the raw signature.
   c_inputs = [f"const double* in{i}" for i in range(len(desc.input_signature))]
   c_outputs = [f"double* out{i}" for i in range(len(desc.output_signature))]
-  params = [*c_inputs, *c_outputs, "double* w", "const scaly_solver_option* options"]
+  params = [*c_inputs, *c_outputs, *ctx.workspace_declarations, "const scaly_solver_option* options"]
 
   lines: list[str] = []
   lines.append(f"// PIQP {PIQP_VERSION} solver wrapper for {fun.name} (n={n}, p={p}, m={m}, nnz P/A/G = {nnz_P}/{nnz_A}/{nnz_G}).")
@@ -90,7 +90,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   # 2. Call the oracle. The oracle's input order is the param list; its
   # output order matches oracle_outs above.
   oracle_raw = ctx.raw_symbol_of(oracle)
-  oracle_call = ", ".join([*oracle_param_args, *(name for name, _ in oracle_outs), "w"])
+  oracle_call = ", ".join([*oracle_param_args, *(name for name, _ in oracle_outs), *ctx.oracle_workspace(oracle)])
   lines.append("  double fe_t0 = scaly_clock_s();")
   lines.append(f"  {oracle_raw}({oracle_call});")
   # Core oracles use IEEE infinities for open sides; PIQP uses its finite sentinel.

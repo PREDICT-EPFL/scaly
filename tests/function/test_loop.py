@@ -474,7 +474,7 @@ def test_generated_c_is_constant_in_the_number_of_steps() -> None:
   from scaly.codegen import render_c_source
 
   def source(length: int) -> str:
-    return render_c_source(rollout(length)).replace(f"_{length}", "_N").replace(f" < {length};", " < N;").replace(f"(res[1] + {length - 1}", "")
+    return render_c_source(rollout(length)).replace(f"_{length}", "_N").replace(f" < {length};", " < N;").replace(f"data[{length}]", "data[N]")
 
   assert source(20) == source(200) == source(2000)
   assert source(200).count("for (long long i_loop") == 1

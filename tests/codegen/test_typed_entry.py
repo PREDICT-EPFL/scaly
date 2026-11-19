@@ -1,5 +1,4 @@
-"""Typed entry points: the signature follows the leaf dtypes, and every leaf crosses the JIT, the C
-header and the C++ header as its own C type, checked against NumPy."""
+"""Typed entry points and workspace storage checked against NumPy."""
 
 from __future__ import annotations
 
@@ -23,9 +22,6 @@ from scaly.passes.lowering import LoweringError, lower_function
 from tests.codegen.test_float32 import _elementwise, _reference
 from tests.compilers import c_compiler, cxx_compiler
 
-DOUBLE = "int {}(const double** arg, double** res, int* iw, double* w, int mem)"
-FLOAT = "int {}(const float** arg, float** res, int* iw, float* w, int mem)"
-VOID = "int {}(const void** arg, void** res, int* iw, void* w, int mem)"
 ITEMSIZE = {"float64": 8, "float32": 4, "int32": 4, "int64": 8, "bool": 1}
 # A frame budget small enough that every large temporary spills, while scalars stay local.
 SPILL_BUDGET = 4200
@@ -80,12 +76,12 @@ def _assert_match(got: np.ndarray, expected: np.ndarray) -> None:
 @pytest.mark.parametrize(
   "fn,expected",
   [
-    (_unary("float64"), DOUBLE),
-    (_unary("float32"), FLOAT),
-    (_mixed(), VOID),
+    (_unary("float64"), "void {0}(const {0}_x_t* x, {0}_y_t* y, {0}_workspace_t* w)"),
+    (_unary("float32"), "void {0}(const {0}_x_t* x, {0}_y_t* y, {0}_workspace_t* w)"),
+    (_mixed(), "void {0}(const {0}_x_t* x, const {0}_i_t* i, const {0}_m_t* m, {0}_y_t* y, {0}_k_t* k, {0}_b_t* b, {0}_workspace_t* w)"),
   ],
 )
-def test_signature_follows_the_leaf_dtypes(fn, expected):
+def test_signature_takes_one_typed_pointer_per_leaf_and_workspace(fn, expected):
   symbol = c_ident(as_concrete(fn).name)
   assert c_api_signature(fn) == expected.format(symbol)
   assert expected.format(symbol) + ";" in render_c_api_header(fn)
@@ -111,11 +107,11 @@ _C_DRIVER = """
 
 int run({params}) {{
 {copy_in}
-  {symbol}_workspace_t* ws = malloc(sizeof *ws);
-  int status = {symbol}_call({call});
+  static {symbol}_workspace_t scratch;
+  {symbol}_workspace_t* ws = &scratch;
+  {symbol}({call});
 {copy_out}
-  free(ws);
-  return status;
+  return 0;
 }}
 """
 
@@ -135,8 +131,7 @@ extern "C" int run({params}) {{
 
 
 def _build_driver(tmp_path, fun: sc.Function, lang: str, flags: tuple[str, ...] = (), frame_budget: int = 65536) -> ctypes.CDLL:
-  """A shared library whose ``run`` copies flat arrays into the typed buffers, calls the typed
-  wrapper with a heap workspace, and copies the outputs back."""
+  """Call the typed entry or C++ wrapper and copy the outputs back to flat arrays."""
   module = render_c_module(fun, lang=lang, frame_budget=frame_budget)
   concrete = as_concrete(fun)
   symbol = c_ident(concrete.name)
@@ -220,14 +215,16 @@ def test_spilled_slots_of_mixed_dtypes_start_at_64_byte_offsets():
   prog = lower_function(_spilling(), lanes=1, frame_budget=SPILL_BUDGET)
   slots = {(n.attrs["name"], n.attrs["workspace_offset"], n.dtype.name, n.attrs["shape"][0]) for n in _slots(prog)}
   assert {dtype for _, _, dtype, _ in slots} >= {"float32", "int64", "bool"}
-  for _, offset, _, _ in slots:
-    assert offset % 64 == 0
+  for _, offset, dtype, _ in slots:
+    assert offset * ITEMSIZE[dtype] % 64 == 0
   sz_w = int(prog.args[-1].attrs["sz_w"])
   assert 4096 < int(prog.args[-1].attrs["frame_bytes"]) <= SPILL_BUDGET
-  assert sz_w >= max(offset + size * ITEMSIZE[dtype] for _, offset, dtype, size in slots)
+  layout = dict(prog.args[-1].attrs["workspace_layout"])
+  assert all(layout[sc.dtypes.from_name(dtype)] >= offset + size for _, offset, dtype, size in slots)
   assert sz_w % 64 == 0
-  ends = sorted((offset, offset + size * ITEMSIZE[dtype]) for _, offset, dtype, size in slots)
-  assert all(a_end <= b_start for (_, a_end), (b_start, _) in zip(ends, ends[1:], strict=False))
+  for dtype in layout:
+    ends = sorted((offset, offset + size) for _, offset, name, size in slots if name == dtype.name)
+    assert all(a_end <= b_start for (_, a_end), (b_start, _) in zip(ends, ends[1:], strict=False))
   x, i = np.linspace(0.1, 2, 1100, dtype=np.float32), np.arange(-500, 600, dtype=np.int64)
   y, k, c = _spilling()((x, i))
   assert y.dtype == np.float32 and k.dtype == np.int64 and c.dtype == np.int32
@@ -246,9 +243,9 @@ def test_float32_workspace_counts_floats_at_64_byte_offsets():
   slots = _slots(prog)
   assert len(slots) == 2 and all(n.dtype == sc.dtypes.float32 for n in slots)
   assert sorted(n.attrs["workspace_offset"] for n in slots) == [0, 1040]
-  assert int(prog.args[-1].attrs["sz_w"]) == 1040 + 1040
+  assert prog.args[-1].attrs["workspace_layout"] == ((sc.dtypes.float32, 2080),)
   body = render_c_module(fn, frame_budget=SPILL_BUDGET).body
-  assert FLOAT.format("float32_spill") + " {" in body and re.search(r"float\* s\d+ = w \+ 1040;", body)
+  assert re.search(r"float\* s\d+ = \(SCALY_W_f32 \+ 1040\);", body)
   x = np.linspace(0.1, 1, 1030, dtype=np.float32)
   s, t = fn(x)
   np.testing.assert_allclose([s, t], [np.sin(x).sum() + np.cos(x[:1025]).sum(), (np.sin(x[:1025]) * np.cos(x[:1025])).sum()], rtol=1e-4)
@@ -291,19 +288,23 @@ def _siblings_reference(x: np.ndarray, i: np.ndarray) -> list[np.ndarray]:
   return [y + float_stage(y), int_stage(i + y.astype(np.int64))]
 
 
-def test_byte_workspace_gives_sibling_callees_disjoint_windows():
+def test_sibling_callees_share_their_caller_array_by_dtype():
   prog = lower_function(_siblings(), lanes=1, frame_budget=SPILL_BUDGET)
-  calls = [n for n in walk_program(prog.args[-1]) if n.op == ProgramOp.CALL and n.attrs.get("callee_needs_w")]
-  windows = {n.attrs["callee"]: int(n.attrs["w_self"]) for n in calls}
-  assert len(windows) == 2 and len(set(windows.values())) == 2
-  sizes = {pr.attrs["name"]: int(pr.attrs["sz_w"]) for pr in prog.args}
-  (first, start), (second, end) = sorted(windows.items(), key=lambda item: item[1])
-  assert start % 64 == 0 and end % 64 == 0 and start + sizes[first] <= end
-  assert end + sizes[second] <= int(prog.args[-1].attrs["sz_w"])
+  calls = [n for n in walk_program(prog.args[-1]) if n.op == ProgramOp.CALL and n.attrs["workspace_offsets"]]
+  layouts = {pr.attrs["name"]: dict(pr.attrs["workspace_layout"]) for pr in prog.args}
+  root = layouts[prog.args[-1].attrs["name"]]
+  assert len(calls) == 3
+  assert {dtype for call in calls for dtype, _ in call.attrs["workspace_offsets"]} == {sc.dtypes.float32, sc.dtypes.int64}
+  for call in calls:
+    callee = layouts[call.attrs["callee"]]
+    assert dict(call.attrs["workspace_offsets"]).keys() == callee.keys()
+    for dtype, offset in call.attrs["workspace_offsets"]:
+      assert offset * dtype.itemsize % 64 == 0
+      assert offset + callee[dtype] == root[dtype]
 
 
 @pytest.mark.parametrize("lang", ["c", "cpp"])
-def test_byte_workspace_is_correct_under_strict_aliasing(tmp_path, lang):
+def test_workspace_is_correct_under_strict_aliasing(tmp_path, lang):
   fun = _siblings()
   x = np.linspace(-3, 3, 1100, dtype=np.float32)
   i = np.arange(-550, 550, dtype=np.int64)
@@ -328,7 +329,6 @@ def test_every_elementwise_op_runs_with_float32_leaves():
     rows = [_elementwise(op, x, y) for op in _OPS]
     return sc.stack([r if r.type.dtype == sc.dtypes.float32 else sc.cast(r, "float32") for r in rows]).with_lowering("block")
 
-  assert c_api_signature(as_concrete(fn)) == FLOAT.format(c_ident(as_concrete(fn).name))
   results = np.asarray(fn(values, other))
   assert results.dtype == np.float32
   for op, got in zip(_OPS, results, strict=True):
@@ -354,7 +354,10 @@ def test_float32_derivatives_match_float64_with_float32_leaves(op):
 
   jac32 = sc.jacobian(build("float32"), "out", "x")
   jac64 = sc.jacobian(build("float64"), "out", "x")
-  assert c_api_signature(as_concrete(jac32)).startswith("int ") and "const float**" in c_api_signature(as_concrete(jac32))
+  symbol = c_ident(as_concrete(jac32).name)
+  header = render_c_api_header(jac32)
+  for name in ("x", "y", "jac_out_x"):
+    assert f"float data[6]; }} {symbol}_{name}_t;" in header
   got = np.asarray(jac32(values, other))
   assert got.dtype == np.float32
   np.testing.assert_allclose(got, np.asarray(jac64(values.astype(float), other.astype(float))), rtol=1e-5, atol=1e-6)
@@ -500,7 +503,7 @@ def test_float32_column_major_and_pattern_hole_leaves_round_once():
   assert got.data.dtype == np.float32 and got.data[0] == np.float32(rounded) * 2
 
 
-def test_external_functions_take_a_double_workspace_inside_a_byte_one():
+def test_external_functions_take_the_double_workspace_member():
   from tests.function.test_extern import pair
 
   external = pair()
@@ -512,8 +515,7 @@ def test_external_functions_take_a_double_workspace_inside_a_byte_one():
     squared, total = external(x)
     return squared, total, k * 2
 
-  assert c_api_signature(host) == VOID.format("typed_extern_host")
-  assert "(double*)" in render_c_module(host).body
+  assert "double f64[8];" in render_c_module(host).header
   x, k = np.array([1.0, 2.0, 3.0]), np.array([4, 5, 6])
   squared, total, doubled = host(x, k)
   np.testing.assert_array_equal(squared, x * x)

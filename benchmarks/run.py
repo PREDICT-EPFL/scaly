@@ -178,15 +178,15 @@ def _solver_call_smoke(required: bool) -> str | None:
         *(f'#include "{fun.name}.h"' for fun in functions),
         "int main() {",
         "  std::array<double, 4> x{0.0, 0.0, 2.0, 0.0}, ref{0.1, -0.1, 0.2, 0.0}, out{};",
-        "  const double* arg[] = {x.data(), ref.data()};",
-        "  double* res[] = {out.data()};",
+        "  const void* arg[] = {x.data(), ref.data()};",
+        "  void* res[] = {out.data()};",
         *(
           line
           for index, fun in enumerate(functions)
           for line in (
-            f"  std::array<double, ({fun.name}_SZ_W > 0 ? {fun.name}_SZ_W : 1)> w_{index}{{}};",
+            f"  static {fun.name}_workspace_t w_{index};",
             '  out.fill(std::nan(""));',
-            f"  if ({fun.name}(arg, res, nullptr, w_{index}.data(), 0) != 0) return 1;",
+            f"  if ({fun.name}_abi(arg, res, &w_{index}) != 0) return 1;",
             "  for (int i = 0; i < 4; ++i) if (!std::isfinite(out[i]) || std::abs(out[i] - ref[i]) > 1e-6) return 2;",
           )
         ),

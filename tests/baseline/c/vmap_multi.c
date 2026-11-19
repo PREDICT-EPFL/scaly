@@ -46,11 +46,34 @@ static inline __attribute__((always_inline)) lanes_8_8_8_8_vec lanes_8_8_8_8_vec
   return result;
 }
 
+#include <stdbool.h>
+#ifndef SCALY_ALIGNAS
+#ifdef __cplusplus
+#define SCALY_ALIGNAS(n) alignas(n)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define SCALY_ALIGNAS(n) _Alignas(n)
+#elif defined(__GNUC__)
+#define SCALY_ALIGNAS(n) __attribute__((aligned(n)))
+#else
+#define SCALY_ALIGNAS(n)
+#endif
+#endif
+#ifndef SCALY_TYPES_multi_output
+#define SCALY_TYPES_multi_output
+typedef struct { SCALY_ALIGNAS(16) double data[10]; } multi_output_xs_t;
+typedef struct { SCALY_ALIGNAS(16) double data[10]; } multi_output_vectors_t;
+typedef struct { SCALY_ALIGNAS(16) double data[5]; } multi_output_totals_t;
+typedef struct {
+  unsigned char unused;
+} multi_output_workspace_t;
+#endif
+
 #define SCALY_SUCCESS 0
 #define SCALY_ERR_NULL_ABI 1
 #define SCALY_ERR_NULL_WORK 2
 #define SCALY_ERR_NULL_RESULT 3
 #define SCALY_ERR_NULL_INPUT 4
+#define SCALY_ERR_ALLOC_WORK 5
 
 #ifdef __cplusplus
 extern "C" {
@@ -81,28 +104,35 @@ static inline __attribute__((always_inline)) void lanes_3(long long i, long long
   else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = s0[((i + k) < 9 ? (i + k) : 9)];
   lanes_8_8_8_8_vec_st(&vectors[(i) + 0], l, n);
 }
-int multi_output(const double** arg, double** res, int* iw, double* w, int mem) {
-  (void)iw;
-  (void)mem;
+static inline void SCALY_KERNEL_multi_output(const double* xs, double* vectors, double* totals) {
+  double s0[10];
+  for (long long it_t0_start = 0; it_t0_start <= 5 - SCALY_WIDTH_8_8_8_8; it_t0_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_2(it_t0_start, SCALY_WIDTH_8_8_8_8, s0, totals, xs);
+  }
+#if (5 % SCALY_WIDTH_8_8_8_8) != 0
+  lanes_2(5 - 5 % SCALY_WIDTH_8_8_8_8, 5 % SCALY_WIDTH_8_8_8_8, s0, totals, xs);
+#endif
+  for (long long c_vectors_start = 0; c_vectors_start <= 10 - SCALY_WIDTH_8_8_8_8; c_vectors_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_3(c_vectors_start, SCALY_WIDTH_8_8_8_8, s0, vectors);
+  }
+#if (10 % SCALY_WIDTH_8_8_8_8) != 0
+  lanes_3(10 - 10 % SCALY_WIDTH_8_8_8_8, 10 % SCALY_WIDTH_8_8_8_8, s0, vectors);
+#endif
+}
+
+int multi_output_abi(const void* const* arg, void* const* res, multi_output_workspace_t* w) {
   if (!arg || !res) return SCALY_ERR_NULL_ABI;
   (void)w;
   if (!arg[0]) return SCALY_ERR_NULL_INPUT;
   if (!res[0]) return SCALY_ERR_NULL_RESULT;
   if (!res[1]) return SCALY_ERR_NULL_RESULT;
-  double s0[10];
-  for (long long it_t0_start = 0; it_t0_start <= 5 - SCALY_WIDTH_8_8_8_8; it_t0_start += SCALY_WIDTH_8_8_8_8) {
-    lanes_2(it_t0_start, SCALY_WIDTH_8_8_8_8, s0, res[1], arg[0]);
-  }
-#if (5 % SCALY_WIDTH_8_8_8_8) != 0
-  lanes_2(5 - 5 % SCALY_WIDTH_8_8_8_8, 5 % SCALY_WIDTH_8_8_8_8, s0, res[1], arg[0]);
-#endif
-  for (long long c_vectors_start = 0; c_vectors_start <= 10 - SCALY_WIDTH_8_8_8_8; c_vectors_start += SCALY_WIDTH_8_8_8_8) {
-    lanes_3(c_vectors_start, SCALY_WIDTH_8_8_8_8, s0, res[0]);
-  }
-#if (10 % SCALY_WIDTH_8_8_8_8) != 0
-  lanes_3(10 - 10 % SCALY_WIDTH_8_8_8_8, 10 % SCALY_WIDTH_8_8_8_8, s0, res[0]);
-#endif
+  SCALY_KERNEL_multi_output((const double*)arg[0], (double*)res[0], (double*)res[1]);
   return SCALY_SUCCESS;
+}
+
+void multi_output(const multi_output_xs_t* xs, multi_output_vectors_t* vectors, multi_output_totals_t* totals, multi_output_workspace_t* w) {
+  (void)w;
+  SCALY_KERNEL_multi_output((const double*)xs->data, (double*)vectors->data, (double*)totals->data);
 }
 
 #ifdef __cplusplus

@@ -25,7 +25,7 @@ from scaly.codegen.jit import CompiledFunction, JitError
 from scaly.solvers.registry import available_backends
 from scaly.solvers.stats import CSolverStats
 from scaly.solvers.paths import solver_paths
-from tests.compilers import c_compiler, cxx_compiler
+from tests.compilers import c_compiler, cxx_compiler, named_compiler
 
 pytestmark = pytest.mark.skipif(
   "piqp" not in available_backends(), reason="structural tests build the private QP differential fixture and need the scaly-piqp plugin installed"
@@ -209,6 +209,40 @@ def test_two_sqp_wrappers_in_one_translation_unit() -> None:
 
 
 @pytest.mark.solver("piqp")
+def test_solver_bridge_compiles_with_typed_where_scratch(tmp_path: Path) -> None:
+  from scaly.codegen import render_c_module
+
+  @sc.problem(vars=sc.arg("x", ()), params=sc.arg("p", 1030))
+  def tracking(x: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    mask = (p > 0).block()
+    target = (sc.where(mask, p, -p) + sc.where(mask[::-1], p, -p)).sum()
+    return sc.ProblemSpec(minimize=0.5 * x * x - x * target)
+
+  solve = sc.solver(tracking, "piqp")
+  module = render_c_module(solve.function, lanes=1, frame_budget=0)
+  assert "bool b[" in module.header
+  (build,) = module._library_builds
+  ((name, generated),) = build.library.sources
+  assert "uint8_t* w_b" in generated
+  assert "_entry_raw(" in generated
+  subprocess.run(
+    [
+      *named_compiler("gcc"),
+      *build.flags,
+      "-O3",
+      "-fstrict-aliasing",
+      "-Wstrict-aliasing",
+      "-Werror",
+      "-c",
+      str(build.directory / name),
+      "-o",
+      str(tmp_path / "bridge.o"),
+    ],
+    check=True,
+  )
+
+
+@pytest.mark.solver("piqp")
 @pytest.mark.parametrize("lang", ["c", "cpp"])
 def test_exported_solver_accepts_runtime_options(lang: str, tmp_path: Path) -> None:
   from scaly.codegen import render_c_module
@@ -228,16 +262,16 @@ def test_exported_solver_accepts_runtime_options(lang: str, tmp_path: Path) -> N
 int main(void) {{
   double zero[2] = {{0, 0}}, x[2], lam[2], empty[1] = {{0}};
   double target[2] = {{1, 2}};
-  const double* arg[] = {{zero, zero, empty, empty, target}};
-  double* res[] = {{x, lam, empty, empty}};
+  const void* arg[] = {{zero, zero, empty, empty, target}};
+  void* res[] = {{x, lam, empty, empty}};
   scaly_solver_option values[] = {{{{ "max_iter", 0, 1, 0.0, 0 }}, {{ "verbose", 0, 0, 0.0, 0 }}, {{ 0, 0, 0, 0.0, 0 }}}};
   const scaly_solver_option* options[] = {{values}};
-  double w[export_options_SZ_W > 0 ? export_options_SZ_W : 1];
+  static export_options_workspace_t w;
   scaly_solver_stats stats;
-  if ({"export_options::" if lang == "cpp" else ""}export_options_with_options(arg, res, 0, w, 0, options)) return 1;
+  if ({"export_options::" if lang == "cpp" else ""}export_options_abi_with_options(arg, res, &w, options)) return 1;
   {"export_options::" if lang == "cpp" else ""}export_options_stats(&stats);
   if (stats.status != SCALY_SOLVE_MAX_ITER) return 2;
-  if ({"export_options::" if lang == "cpp" else ""}export_options(arg, res, 0, w, 0)) return 3;
+  if ({"export_options::" if lang == "cpp" else ""}export_options_abi(arg, res, &w)) return 3;
   {"export_options::" if lang == "cpp" else ""}export_options_stats(&stats);
   return stats.status != SCALY_SOLVE_OK || fabs(x[0] - 1.0) > 1e-6 || fabs(x[1] - 2.0) > 1e-6;
 }}
@@ -381,11 +415,11 @@ def test_solver_manifest_builds_without_backend_flags(backend: str, tmp_path: Pa
 #include "{module.header_name}"
 int main(void) {{
   double zero[2] = {{0,0}}, empty[1] = {{0}}, target[2] = {{0.3,-0.7}}, x[2], lam[2];
-  const double* arg[] = {{zero, zero, empty, empty, target}};
-  double* res[] = {{x, lam, empty, empty}};
-  double w[manifest_solver_SZ_W > 0 ? manifest_solver_SZ_W : 1];
+  const void* arg[] = {{zero, zero, empty, empty, target}};
+  void* res[] = {{x, lam, empty, empty}};
+  static manifest_solver_workspace_t w;
   scaly_solver_stats stats;
-  if (manifest_solver(arg, res, 0, w, 0)) return 1;
+  if (manifest_solver_abi(arg, res, &w)) return 1;
   if (manifest_solver_stats(&stats) || stats.status != SCALY_SOLVE_OK) return 2;
   return fabs(x[0]-target[0]) > 1e-6 || fabs(x[1]-target[1]) > 1e-6;
 }}

@@ -68,29 +68,42 @@ typedef struct { const char* name; int kind; int64_t integer; double number; con
 #ifndef SCALY_ERR_NULL_INPUT
 #define SCALY_ERR_NULL_INPUT 4
 #endif
+#ifndef SCALY_ERR_ALLOC_WORK
+#define SCALY_ERR_ALLOC_WORK 5
+#endif
 
 #ifndef SCALY_ALIGNAS
 #ifdef __cplusplus
 #define SCALY_ALIGNAS(n) alignas(n)
 #elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 #define SCALY_ALIGNAS(n) _Alignas(n)
+#elif defined(__GNUC__)
+#define SCALY_ALIGNAS(n) __attribute__((aligned(n)))
 #else
 #define SCALY_ALIGNAS(n)
 #endif
 #endif
 
+#ifndef SCALY_TYPES_qp_host
+#define SCALY_TYPES_qp_host
+typedef struct { SCALY_ALIGNAS(16) double data[2]; } qp_host_mu_t;
+typedef struct { SCALY_ALIGNAS(16) double data[1]; } qp_host_cost_t;
+typedef struct {
+  unsigned char unused;
+} qp_host_workspace_t;
+#endif
+
 #define qp_host_SZ_ARG 1
 #define qp_host_SZ_RES 1
-#define qp_host_SZ_IW 0
-#define qp_host_SZ_W 0
+#define qp_host_WORKSPACE_BYTES 0
 #define qp_host_FRAME_BYTES 4144
 
-// The pointer ABI for qp_host.
 #ifdef __cplusplus
 extern "C" {
 #endif
-int qp_host(const double** arg, double** res, int* iw, double* w, int mem);
-int qp_host_with_options(const double** arg, double** res, int* iw, double* w, int mem, const scaly_solver_option* const* solver_options);
+void qp_host(const qp_host_mu_t* mu, qp_host_cost_t* cost, qp_host_workspace_t* w);
+int qp_host_abi(const void* const* arg, void* const* res, qp_host_workspace_t* w);
+int qp_host_abi_with_options(const void* const* arg, void* const* res, qp_host_workspace_t* w, const scaly_solver_option* const* solver_options);
 #define qp_host_N_SOLVERS 1
 #define qp_host_OPTIONS_corpus_qp 0
 const scaly_solver_option* corpus_qp_default_options(void);
@@ -99,17 +112,13 @@ int corpus_qp_stats(scaly_solver_stats* out);
 }
 #endif
 
-// Typed buffers: one struct per input and output, and the caller-owned workspace.
-typedef struct { SCALY_ALIGNAS(16) double data[2]; } qp_host_mu_t;
-typedef struct { SCALY_ALIGNAS(16) double data[1]; } qp_host_cost_t;
-typedef struct { SCALY_ALIGNAS(16) double data[qp_host_SZ_W > 0 ? qp_host_SZ_W : 1]; } qp_host_workspace_t;
 static inline int qp_host_call(const qp_host_mu_t* mu, qp_host_cost_t* cost, qp_host_workspace_t* workspace) {
-  const double* arg[qp_host_SZ_ARG > 0 ? qp_host_SZ_ARG : 1] = {mu->data};
-  double* res[qp_host_SZ_RES > 0 ? qp_host_SZ_RES : 1] = {cost->data};
-  return qp_host(arg, res, NULL, workspace ? workspace->data : NULL, 0);
+  const void* arg[qp_host_SZ_ARG > 0 ? qp_host_SZ_ARG : 1] = {mu->data};
+  void* res[qp_host_SZ_RES > 0 ? qp_host_SZ_RES : 1] = {cost->data};
+  return qp_host_abi(arg, res, workspace);
 }
 static inline int qp_host_call_with_options(const qp_host_mu_t* mu, qp_host_cost_t* cost, qp_host_workspace_t* workspace, const scaly_solver_option* const* solver_options) {
-  const double* arg[qp_host_SZ_ARG > 0 ? qp_host_SZ_ARG : 1] = {mu->data};
-  double* res[qp_host_SZ_RES > 0 ? qp_host_SZ_RES : 1] = {cost->data};
-  return qp_host_with_options(arg, res, NULL, workspace ? workspace->data : NULL, 0, solver_options);
+  const void* arg[qp_host_SZ_ARG > 0 ? qp_host_SZ_ARG : 1] = {mu->data};
+  void* res[qp_host_SZ_RES > 0 ? qp_host_SZ_RES : 1] = {cost->data};
+  return qp_host_abi_with_options(arg, res, workspace, solver_options);
 }

@@ -91,7 +91,7 @@ def _run_raw(prog, tmp_path, inputs, outputs, *, dialect="gnu"):
     [
       *_includes(prog=prog, dialect=dialect),
       *(line for proc in prog.args for line in _render_raw_callee(proc, dialect=dialect)),
-      f"void run({declarations}) {{ {prog.args[-1].attrs['name']}_raw({arguments}, NULL); }}",
+      f"void run({declarations}) {{ {prog.args[-1].attrs['name']}_raw({arguments}); }}",
     ]
   )
   path, library = tmp_path / "kernel.c", tmp_path / "kernel.so"

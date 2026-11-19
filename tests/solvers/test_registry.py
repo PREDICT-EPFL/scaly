@@ -48,7 +48,7 @@ class _FakeBackend:
     inputs = ", ".join(f"const double* in{i}" for i in range(len(as_concrete(fun).descriptor.input_signature)))
     outputs = ", ".join(f"double* out{i}" for i in range(len(as_concrete(fun).descriptor.output_signature)))
     return [
-      f"static void {ctx.raw_symbol}({inputs}, {outputs}, double* w, const scaly_solver_option* options) {{",
+      f"static void {ctx.raw_symbol}({inputs}, {outputs}, {', '.join([*ctx.workspace_declarations, 'const scaly_solver_option* options'])}) {{",
       f"  {ctx.stats_symbol}.version = SCALY_SOLVER_STATS_VERSION;",
       "}",
     ]
@@ -193,7 +193,7 @@ def test_external_oracle_workspace_is_part_of_solver_workspace(monkeypatch: pyte
   from scaly.codegen.aot import render_c_module
 
   header = render_c_module(descriptor_function(desc)).header
-  assert "#define external_workspace_SZ_W 7" in header
+  assert "#define external_workspace_WORKSPACE_BYTES 64" in header
 
 
 def _external_solver(name: str, oracle: ExternalOracle) -> sc.Function:

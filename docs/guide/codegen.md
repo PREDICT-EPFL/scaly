@@ -63,16 +63,18 @@ current directory is one way to provide it.
 
 ## The C header
 
-The generated header declares one struct per input and output, a workspace
-struct, and an `energy_call` helper that evaluates the function. These are
-excerpts from `energy.h`:
+The generated header declares one struct per input and output, one workspace
+struct for scratch, and a function that takes pointers to these structs.
+These are excerpts from `energy.h`:
 
 ```c
 typedef struct { SCALY_ALIGNAS(16) double data[3]; } energy_x_t;
 typedef struct { SCALY_ALIGNAS(16) double data[1]; } energy_energy__t;
-typedef struct { SCALY_ALIGNAS(16) double data[energy_SZ_W > 0 ? energy_SZ_W : 1]; } energy_workspace_t;
+typedef struct {
+  unsigned char unused;
+} energy_workspace_t;
 
-static inline int energy_call(const energy_x_t* x, energy_energy__t* energy_, energy_workspace_t* workspace);
+void energy(const energy_x_t* x, energy_energy__t* energy_, energy_workspace_t* w);
 ```
 
 Each struct holds one contiguous buffer of an input's or output's values,
@@ -87,13 +89,11 @@ Python tuple groups do not become extra buffers. The output name becomes
 `energy_` inside the generated interface to avoid a collision with the function
 name, which accounts for the double underscore in `energy_energy__t`.
 
-The structs own their storage. You can allocate them on the stack, statically,
-or on the heap. C11 and C++ buffers request 16-byte alignment, while C99 uses
-natural alignment. The workspace struct reserves at least one entry because
-standard C does not allow a zero-length array. The header reports the real
-requirement as `energy_SZ_W`, counted in doubles for this function.
-[Float32 and integer functions](#float32-and-integer-functions) describes the
-other data types.
+The structs own their storage. Each input and output buffer requests 16-byte
+alignment, and each workspace array requests 64-byte alignment. These requests
+apply in C11 and C++, and with GCC and Clang in C99 mode.
+A workspace with no scratch has one unused member because C requires a nonempty
+struct. Its reported scratch size is zero. This is the case for `energy`.
 
 For the `energy` model above, the following complete C caller supplies one
 three-element input and reads one scalar output. The compilation command below
@@ -108,8 +108,7 @@ int main(void) {
     energy_energy__t result;
     energy_workspace_t workspace;
 
-    int status = energy_call(&x, &result, &workspace);
-    if (status != 0) return status;
+    energy(&x, &result, &workspace);
     printf("%g\n", result.data[0]);
     return 0;
 }
@@ -121,8 +120,7 @@ cc -O2 -Igenerated main.c generated/energy.c -lm -o energy_demo
 ```
 
 The program prints `14`. It links the C math library with `-lm` and needs no
-Python runtime. The [interface reference](../how_it_works/generated_interface.md)
-lists the argument checks and return codes.
+Python runtime.
 
 The exported files are ordinary C source, so the application compiles them
 with whatever compiler and build system it already uses, such as CMake, a ROS
@@ -139,32 +137,24 @@ these commands.
 
 ### The pointer entry
 
-`energy_call` is a header-only helper. The compiled symbol underneath it is a
-pointer-based entry point with the same five arguments for every generated
-function. For a function whose inputs and outputs are all `float64`, such as
-`energy`, it is:
+The typed entry expects pointers to the structs in the header. To pass
+buffers owned by another library, use the pointer-array entry:
 
 ```c
-int energy(const double** arg, double** res, int* iw, double* w, int mem);
+int energy_abi(const void* const* arg, void* const* res, energy_workspace_t* w);
 ```
 
-`arg` contains one pointer per input and `res` one pointer per output, in
-declaration order. `w` is the workspace of `energy_SZ_W` doubles, or `NULL`
-when that size is zero. `iw` and `mem` are unused and take `NULL` and `0`.
-The [CasADi section](#casadi-compatible-exports) explains why they exist.
-The helper only fills the two pointer arrays and forwards to this entry.
-
-Call the entry directly in two situations. The first is memory that another
-library already owns, such as a message array in a ROS node or an Eigen
-matrix, which the typed structs would require copying. The second is loading
-the compiled library with `dlopen` and no header, where this signature
-is the whole contract. The C++ header and the CasADi layer are both built on
-the same symbol, so every generated module can be called this way.
+Pass one pointer per input in `arg` and one per output in `res`, in declaration
+order. Each pointer refers to values of the C type declared for that leaf.
+The workspace still has type `energy_workspace_t`. The header-only
+`energy_call` helper accepts the same typed buffers as `energy` and returns
+the status from `energy_abi`. The [interface reference](../how_it_works/generated_interface.md#the-pointer-abi)
+lists the status codes.
 
 ### Solver options in C
 
-A module containing a solver exports an additional `<name>_with_options` entry.
-Its first five arguments match the pointer entry. The sixth is
+A module containing a solver exports an additional `<name>_abi_with_options`
+entry. It takes the three arguments of the pointer-array entry, followed by
 `const scaly_solver_option* const* solver_options`, with one option array per
 solver. The header's `<name>_OPTIONS_<solver>` macros give each array's index,
 and `<name>_N_SOLVERS` gives the count.
@@ -187,11 +177,12 @@ overload. Python supplies validated options automatically. A C or C++ caller
 must supply names and values valid for the backend and include every entry
 required by its default array.
 
-The standard five-argument entry and the typed helpers without an option argument
-use backend tuning defaults. PIQP's `sparse` and SQP's `qp` select the compiled
+The typed entry and the helpers without an option argument use backend tuning
+defaults. PIQP's `sparse` and SQP's `qp` select the compiled
 matrix interface and are absent from the runtime arrays. Other options supplied
 to `sc.solver` affect Python calls without changing the exported source. An
-ahead-of-time caller supplies its chosen tuning through `_with_options`.
+ahead-of-time caller supplies its chosen tuning through `_call_with_options`
+or `_abi_with_options`.
 
 ## Float32 and integer functions
 
@@ -223,22 +214,11 @@ array for an integer one. A float array for an integer input raises
 `TypeError` naming the function and the input. Each output comes back in the
 type of the expression it returns, `float32` for `scaled`.
 
-The pointer types of the entry follow the types of the inputs and outputs:
+Each input or output buffer holds `double`, `float`, `int32_t`, `int64_t` or
+`bool`, according to its declared type. The C++ header uses the same C types,
+as in `Buffer<float, 3>`. A bool value is one byte holding 0 or 1.
 
-| Inputs and outputs             | Entry pointers                                  | `SZ_W` counts |
-| ------------------------------ | ----------------------------------------------- | ------------- |
-| all `float64`                  | `const double** arg, double** res, double* w`   | doubles       |
-| all `float32`                  | `const float** arg, float** res, float* w`      | floats        |
-| any other combination of types | `const void** arg, void** res, void* w`         | bytes         |
-
-`iw` and `mem` keep their types. A typed buffer holds `double`, `float`,
-`int32_t`, `int64_t` or `bool`, the C type of its input or output, and the C++
-header spells the same types, as in `Buffer<float, 3>`. A `bool` value is one
-byte holding 0 or 1. With `void` pointers, each `arg[i]` and `res[i]` must
-point to values of that input's or output's C type, and `w` must be aligned to
-8 bytes, which `malloc` guarantees.
-
-This function mixes three types, so its entry takes `void` pointers:
+This function mixes three types:
 
 ```python
 steps = sc.TensorType((4,), dtype=sc.dtypes.int64)
@@ -255,24 +235,18 @@ print(gated(np.ones(4), np.array([1, 2, 3, 4]), np.array([True, False, True, Tru
 Its header declares:
 
 ```c
-int gated(const void** arg, void** res, int* iw, void* w, int mem);
 typedef struct { SCALY_ALIGNAS(16) double data[4]; } gated_x_t;
 typedef struct { SCALY_ALIGNAS(16) int64_t data[4]; } gated_k_t;
 typedef struct { SCALY_ALIGNAS(16) bool data[4]; } gated_active_t;
 typedef struct { SCALY_ALIGNAS(16) double data[4]; } gated_y_t;
-typedef struct { SCALY_ALIGNAS(16) unsigned char data[gated_SZ_W > 0 ? gated_SZ_W : 1]; } gated_workspace_t;
+void gated(const gated_x_t* x, const gated_k_t* k, const gated_active_t* active,
+           gated_y_t* y, gated_workspace_t* w);
 ```
 
-The workspace of such a function is a block of bytes that may hold temporaries
-of several types. Allocate it with `malloc`, for example
-`gated_workspace_t* workspace = malloc(sizeof *workspace)`. Memory from
-`malloc` has no declared type, so C's aliasing rules let the function store
-values of each type in it, which a stack or static `unsigned char` array does
-not allow. In C++ an array of `unsigned char` provides storage for other
-objects, so `gated::workspace_t` may live anywhere. A function whose inputs and
-outputs all have one floating type keeps its workspace in that type, and the
-stack and static structs shown earlier stay valid for it. Its temporaries of
-other types stay local arrays, so a large one takes stack space.
+The argument types do not determine the workspace layout. For example, a
+function with only float32 inputs and outputs can still have a `bool b[]`
+workspace member for a temporary mask. The header declares one array per
+type that needs scratch.
 
 !!! note "Solvers and CasADi stay float64"
     A module that calls a solver needs `float64` inputs and outputs in every
@@ -303,7 +277,7 @@ The main export choices are:
 | --------------------- | -------------------- | ----------------------------------------------------------- |
 | `lang="c"`            | `--lang c`           | C header with typed buffer structs, the default             |
 | `lang="cpp"`          | `--lang cpp`         | C++ header with buffer types and a namespace                |
-| `casadi=True`         | `--casadi`           | Metadata functions for compatible external-function loaders |
+| `casadi=True`         | `--casadi`           | CasADi entry and metadata queries |
 
 ## C++ buffers
 
@@ -345,11 +319,13 @@ Each function has its own namespace. For `energy`, the generated aliases are:
 ```cpp
 using x_t = Buffer<double, 3>;
 using energy__t = Buffer<double>;
-using workspace_t = Buffer<double, energy_SZ_W>;
+using workspace_t = ::energy_workspace_t;
 ```
 
 These aliases live inside `namespace energy`. The output alias contains two
 underscores for the same name-collision reason as the typed C struct.
+Use the `Buffer` aliases with `energy::call`. The typed C entry takes the
+same C structs declared in `energy.h`.
 A complete `main.cpp` using this header is:
 
 ```cpp
@@ -372,10 +348,9 @@ c++ -std=c++17 -Igenerated_cpp main.cpp energy.o -lm -o energy_cpp_demo
 ./energy_cpp_demo
 ```
 
-This prints `14`. The `energy::call` helper constructs pointer arrays and calls
-the C entry point, declared with `extern "C"` linkage. `Buffer` owns its data.
-To use arrays already owned by another library without copying them into a
-`Buffer`, call the pointer interface directly.
+This prints `14`. The `energy::call` helper forwards the buffers and workspace
+to the C implementation. `workspace_t` is the same struct used by the C
+header. For arrays owned by another library, use `energy::energy_abi`.
 
 ## Sparse output patterns
 
@@ -427,23 +402,18 @@ explains the layouts and the triangle choices for Hessians.
 
 ## CasADi-compatible exports
 
-The [pointer entry](#the-pointer-entry) takes the same five arguments, in the
-same order, as a function generated by CasADi 3.8, including its
-integer-workspace argument `iw` and its memory-handle argument `mem`. Scaly
-functions are stateless, so both are ignored. The one difference in the
-signature is `iw`, which Scaly declares as `int*` where CasADi uses
-`casadi_int*`. Because the entry never reads it, CasADi and acados can pass
-their own pointer unchanged. The signature alone does not tell a loader how many inputs a
-function has or how large its buffers are. `casadi=True` adds the metadata
-queries of CasADi's external-function interface:
+With `casadi=True`, the function's symbol takes the five arguments used by
+CasADi 3.8 external functions. The export also includes the metadata queries
+that describe its inputs, outputs, and scratch.
 
 ```python
 casadi_module = write_module(energy, Path("generated_casadi"), casadi=True)
 ```
 
-For this model, the additional header declarations include:
+For this model, the header declares:
 
 ```c
+int energy(const double** arg, double** res, casadi_int* iw, void* w, int mem);
 casadi_int energy_n_in(void);
 casadi_int energy_n_out(void);
 const char* energy_name_in(casadi_int i);
@@ -458,8 +428,13 @@ void energy_release(int mem);
 `energy_n_in()` and `energy_n_out()` both return one. The name queries return
 `"x"` and `"energy"` at index zero. The sparsity queries describe a dense
 three-by-one input and one-by-one output. `energy_work` returns the required
-pointer-array and workspace sizes. `energy_checkout()` returns zero and
-`energy_release` does nothing because scaly does not use memory handles.
+pointer-array sizes and the scratch capacity rounded up to a number of doubles.
+`energy_work_bytes` reports these sizes in bytes. The implementation reads and
+writes `w` as byte storage, so a caller can supply CasADi's double array or its
+own byte array. If the function calls separately compiled C, the adapter uses
+`malloc` to allocate typed buffers on each evaluation. Scaly renders the lane
+loops with scalar C in this mode. The entry ignores `iw` and `mem`,
+`energy_checkout()` returns zero, and `energy_release` does nothing.
 
 For example, on Linux this command builds a shared library for CasADi:
 
@@ -627,8 +602,8 @@ heap. Supply the target's math library for any libm calls it uses.
 
 The [embedded oracle example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/embedded_oracle.py)
 exports the nonlinear stages from the mapped-derivatives example and their sparse
-Jacobian in `float32`. The `.block()` hint forces a workspace for this check,
-and omitting it gives an object of 206 bytes with no workspace.
+Jacobian in `float32`. The `.block()` hint retains arrays so this build checks
+that they move into the caller's workspace.
 From a repository checkout, generate it with a zero frame
 budget and compile it with Zig:
 
@@ -654,15 +629,12 @@ its two libm functions in `examples/embedded/math.h`. An application can use
 its board toolchain's math header instead. This object needs only `sinf` and
 `cosf`, which the final application must link from a hard-float target libm.
 
-`frame_budget=0` in Python, or `--frame-budget 0` on the command line, sends
-every eligible temporary array to the caller's `w[]`. Allocate
-`embedded_oracle_SZ_W` floats for this example, plus eight input floats,
-eight output values and sixteen Jacobian values. These buffers may have
-static storage. The generated header describes the Jacobian's stored entries.
-This oracle has no integer or boolean temporary arrays. In a function whose
-inputs and outputs all have one floating type, temporary arrays of another
-type stay on the stack even at zero frame budget. Scalar locals, saved
-registers, return addresses and libm also need stack space.
+`frame_budget=0` in Python, or `--frame-budget 0` on the command line, puts all
+temporary arrays in the caller's `embedded_oracle_workspace_t`. Declare this
+workspace alongside the eight input floats, eight output values and sixteen
+Jacobian values. All of these buffers can have static storage. The generated
+header describes the Jacobian's stored entries. Scalar locals, saved registers,
+return addresses and libm still need stack space.
 
 The Linux `size` command reports the object sections. Flash usage is
 `text + data`, and static RAM is `data + bss`. Add the caller's input, output
@@ -828,26 +800,30 @@ from scaly.codegen import workspace_size
 print(workspace_size(energy))  # 0
 ```
 
-The number counts entries of `w`, doubles for a function whose inputs and
-outputs are all `float64`, floats when they are all `float32`, and bytes
-otherwise. It is not
-the total temporary memory.
-For an export with non-default options, use that module's `workspace_size` or
-its header's `<name>_SZ_W` constant. CasADi exports can require additional
-workspace to change dense matrix buffer order.
+The number is the scratch capacity in bytes, including padding. The generated
+header reports it as `<name>_WORKSPACE_BYTES`. Use the size from the same
+`CModule` or header as the source you compile.
 
-`frame_budget` limits the stack each generated C function is estimated to need,
-in bytes, and defaults to 65,536. Scaly adds up its temporary arrays, counting
-a called Function's arrays once for each call that can be inlined, plus 4,096
-bytes for scalars the C compiler keeps on the stack. While the total is over
-the budget, Scaly moves the largest eligible array into `w`, so a smaller budget
-raises `<name>_SZ_W`. `frame_budget=0`, or `--frame-budget 0`, moves every temporary
-array eligible for its [workspace dtype](#float32-and-integer-functions).
-The 4,096 bytes remain, so a budget below that behaves like zero.
+For a function with scratch, declare a `<name>_workspace_t` object. For several
+functions called in sequence, put their workspace types in a C union and pass
+the matching member to each entry. In C++, start the lifetime of the matching
+member with placement `new` before using it. For dynamic allocation in C11, use
+`aligned_alloc(_Alignof(f_workspace_t), sizeof(f_workspace_t))` for a function
+named `f`, and release it with `free`. An embedded application can put each
+function's workspace in a linker section.
+
+`frame_budget` defaults to 65,536 estimated stack bytes per generated C
+procedure. The estimate counts temporary arrays, including arrays from calls
+that can be inlined, and a 4,096-byte allowance for scalar spills. While the
+estimate exceeds the budget, Scaly moves the largest remaining temporary arrays
+into the caller's workspace, regardless of data type. Zero moves all temporary
+arrays and reports zero buffer bytes. The C compiler can still need stack space
+to call functions and save registers.
 
 `module.frame_bytes` and `<name>_FRAME_BYTES` give the largest estimate over the
-generated C functions. A function that is not inlined adds its own frame on top
-of its caller's, and that sum is not included. The estimate also excludes the
-stack used by external C functions and solver libraries.
-Check the compiled frames with `-Wframe-larger-than=<budget> -Werror` under the
-application's own compiler flags.
+generated C functions. At a zero frame budget, the estimate counts only arrays
+and omits the scalar-spill allowance. A non-inlined call adds its own frame to
+its caller's on the stack. The estimate excludes that sum and the frames of
+external C functions and solver libraries. To check compiled frames, use
+`-Wframe-larger-than=<stack-limit> -Werror` with the application's stack limit
+and compiler flags.

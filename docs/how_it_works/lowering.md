@@ -120,15 +120,19 @@ stage as a procedure with its own loop:
 
 ```
 prog.module {
-  prog.proc @stage(%x: memref<3xfloat64>, %y: memref<3xfloat64>) {
+  prog.proc @stage(%x: memref<3xfloat64>, %y: memref<3xfloat64>) {device=host, frame_bytes=4096, input_count=1, lowering="block", scalarize_mode="disabled", sz_w=0, workspace_layout=[]} {
     prog.for %i_y = 0 to 3 step 1 {kind=global} {
       %v0 = prog.assign prog.load %x[%i_y] : float64 {declare=True}
       prog.store prog.mul(prog.sin(%v0), %v0), %y[%i_y] : float64
     }
   }
-  prog.proc @horizon(%xs: memref<15xfloat64>, %ys: memref<15xfloat64>) {
-    prog.for %it_ys = 0 to 5 step 1 {kind=global} {
-      prog.call @stage(%xs[prog.mul(3, %it_ys)], %ys[prog.mul(%it_ys, 3)]) {callee_needs_w=False, n_in=1, n_out=1, w_self=0}
+  prog.proc @horizon(%xs: memref<15xfloat64>, %ys: memref<15xfloat64>) {device=host, frame_bytes=4216, input_count=1, lowering="auto", scalarize_mode="disabled", sz_w=0, workspace_layout=[]} {
+    %s0 = prog.buffer : memref<15xfloat64, private>
+    prog.for %it_t0 = 0 to 5 step 1 {kind=global} {
+      prog.call @stage(%xs[prog.mul(3, %it_t0)], %s0[prog.mul(%it_t0, 3)]) {n_in=1, n_out=1, workspace_offsets=[]}
+    }
+    prog.for %i_ys = 0 to 15 step 1 {kind=global} {
+      prog.store prog.load %s0[%i_ys], %ys[%i_ys] : float64
     }
   }
 }
@@ -405,27 +409,23 @@ A view such as a slice keeps the buffer it points into live until the view's
 last use.
 
 With the default frame budget, these slots stay local arrays. With
-`frame_budget=8192`, the largest slot moves to the caller's workspace `w`. The
-workspace has the type of the function's inputs and outputs when they are all
-`float64` or all `float32`, and only slots of that type can move there. A
-function whose inputs and outputs mix types has a workspace of bytes that takes
-slots of every type. Each slot starts at a multiple of 64 bytes:
+`frame_budget=8192`, the largest slot moves to the caller's workspace.
+Each dtype has its own array, and every spilled slot starts at a multiple
+of 64 bytes within that array. For this example the header declares:
 
 ```c
-double* s0 = w + 0;
-double s1[1];
-double s2[1];
+typedef struct {
+  SCALY_ALIGNAS(64) double f64[1600];
+} f_workspace_t;
+#define f_WORKSPACE_BYTES 12800
+#define f_FRAME_BYTES 4112
 ```
 
-For that budget, the header reports `#define f_SZ_W 1600`, where 3200 would be needed without
-sharing. It also reports `#define f_FRAME_BYTES 4112`, the estimated stack frame in bytes. The estimate
-counts local buffers, repeated inlined callees and a fixed scalar-spill allowance.
-A procedure's workspace requirement is its own slots plus the largest
-requirement among the procedures it calls, which reuse the space after the
-caller's own slots. In a workspace of bytes the procedures it calls get
-consecutive windows instead, so each byte holds values of one type during the
-call. [Working memory](../guide/codegen.md#working-memory) in the
-guide shows how to read the number.
+The shared slot needs space for 1,600 doubles. The frame estimate counts
+the two other slots and the fixed allowance for scalar spills. For each
+dtype, a procedure adds its own spills to the largest requirement among its
+callees. Calls reuse the part of each array after the caller's own spills.
+See [Working memory](../guide/codegen.md#working-memory) for sizing and allocation.
 
 ## Arithmetic semantics
 

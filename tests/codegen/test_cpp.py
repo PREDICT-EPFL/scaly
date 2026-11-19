@@ -38,12 +38,13 @@ def test_cpp_header_declares_namespace_buffers_and_constexpr_tables() -> None:
   header = module.header
   assert "#ifndef SCALY_BUFFER_HPP" in header
   assert "namespace roll {" in header
-  assert 'extern "C" int roll(const double** arg, double** res, int* iw, double* w, int mem);' in header
+  assert 'extern "C" void roll(const roll_traj_t* traj, roll_out_t* out, roll_workspace_t* w);' in header
   assert "using traj_t = Buffer<double, 3, 2>;" in header
   assert "using out_t = Buffer<double, 3, 2>;" in header
-  assert "using workspace_t = Buffer<double, roll_SZ_W>;" in header
+  assert "using workspace_t = ::roll_workspace_t;" in header
+  assert "roll_SZ_IW" not in header
   assert "inline int call(const traj_t& traj, out_t& out, workspace_t& workspace)" in header
-  assert "typedef struct" not in header and "roll_call" not in header
+  assert "roll_call" not in header
 
   spjac = render_c_module(_spjac(), lang="cpp").header
   assert "namespace spjac_y_x {" in spjac

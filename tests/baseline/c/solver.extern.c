@@ -57,8 +57,7 @@ static double scaly_clock_s(void) {
 #define SCALY_SOLVER_OPTION_DEFINED
 typedef struct { const char* name; int kind; int64_t integer; double number; const char* text; } scaly_solver_option;
 #endif
-static inline void corpus_qp_oracle_entry_raw(const double* mu, double* qp_P, double* qp_c, double* qp_x_lb, double* qp_x_ub, double* w) {
-  (void)w;
+static inline void corpus_qp_oracle_entry_raw(const double* mu, double* qp_P, double* qp_c, double* qp_x_lb, double* qp_x_ub) {
   *(double2*)(qp_P) = (double2){1.0, 0.0};
   *(double2*)(qp_P + 2) = (double2){0.0, 1.0};
   *(double2*)(qp_c) = (double2){(-mu[0]), (-mu[1])};
@@ -67,7 +66,7 @@ static inline void corpus_qp_oracle_entry_raw(const double* mu, double* qp_P, do
 }
 static scaly_solver_stats corpus_qp_stats_data;
 // PIQP 0.7.0 solver wrapper for corpus_qp (n=2, p=0, m=0, nnz P/A/G = 4/0/0).
-static void corpus_qp_raw(const double* in0, const double* in1, const double* in2, const double* in3, const double* in4, double* out0, double* out1, double* out2, double* out3, double* w, const scaly_solver_option* options) {
+static void corpus_qp_raw(const double* in0, const double* in1, const double* in2, const double* in3, const double* in4, double* out0, double* out1, double* out2, double* out3, const scaly_solver_option* options) {
   (void)in0;
   (void)in1;
   (void)in2;
@@ -78,7 +77,7 @@ static void corpus_qp_raw(const double* in0, const double* in1, const double* in
   static double xlb_buf[2];
   static double xub_buf[2];
   double fe_t0 = scaly_clock_s();
-  corpus_qp_oracle_entry_raw(in4, P_buf, c_buf, xlb_buf, xub_buf, w);
+  corpus_qp_oracle_entry_raw(in4, P_buf, c_buf, xlb_buf, xub_buf);
   for (int i = 0; i < 2; ++i) { if (isinf(xlb_buf[i]) && xlb_buf[i] < 0.0) xlb_buf[i] = -PIQP_INF; if (isinf(xub_buf[i]) && xub_buf[i] > 0.0) xub_buf[i] = PIQP_INF; }
   double stats_t_fe = scaly_clock_s() - fe_t0;
   static piqp_workspace* corpus_qp_ws = NULL;
@@ -185,6 +184,6 @@ int corpus_qp_stats(scaly_solver_stats* out) {
 }
 static const scaly_solver_option* corpus_qp_options;
 void corpus_qp_set_options(const scaly_solver_option* options) { corpus_qp_options = options; }
-void corpus_qp_solve(const double* in0, const double* in1, const double* in2, const double* in3, const double* in4, double* out0, double* out1, double* out2, double* out3, double* w) {
-  corpus_qp_raw(in0, in1, in2, in3, in4, out0, out1, out2, out3, w, corpus_qp_options);
+void corpus_qp_solve(const double* in0, const double* in1, const double* in2, const double* in3, const double* in4, double* out0, double* out1, double* out2, double* out3) {
+  corpus_qp_raw(in0, in1, in2, in3, in4, out0, out1, out2, out3, corpus_qp_options);
 }

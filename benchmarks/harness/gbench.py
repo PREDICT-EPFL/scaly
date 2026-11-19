@@ -237,6 +237,7 @@ def write_cpp(info: dict, out_dir: Path, input_paths: dict[str, Path], expected_
   """
   label = info["backend"]
   symbol = _kernel_symbol(info)
+  scaly = label == "scaly"
   n_rows, n_cols, nnz = int(info["n_rows"]), int(info["n_cols"]), int(info["nnz"])
   dense_size, w_size, iw_size = n_rows * n_cols, int(info["w_size"]), int(info.get("iw_size", 0))
   input_specs = _ordered_inputs(info)
@@ -268,6 +269,9 @@ def write_cpp(info: dict, out_dir: Path, input_paths: dict[str, Path], expected_
   if layout not in {"full", "lower", "upper"}:
     raise ValueError(f"unsupported benchmark layout {layout!r}")
   selected_buffer = output_buffers[output_index]
+  workspace = f"  static {symbol}_workspace_t w;" if scaly else f"  static std::array<double, {_array_size(w_size)}> w{{}};"
+  element = "void" if scaly else "double"
+  evaluate = f"{symbol}_abi(arg.data(), res.data(), &w)" if scaly else f"{symbol}(arg.data(), res.data(), iw.data(), w.data(), 0)"
   lines = [
     '#include "benchmark/benchmark.h"',
     "#include <array>",
@@ -310,17 +314,17 @@ def write_cpp(info: dict, out_dir: Path, input_paths: dict[str, Path], expected_
     "static int correctness_check() {",
     "  if (!load_sample_inputs()) return 1;",
     *([f"  static std::array<double, {_array_size(dense_size)}> dense{{}};"] if layout == "full" else []),
-    f"  static std::array<double, {_array_size(w_size)}> w{{}};",
+    workspace,
   ]
   if label.startswith("casadi"):
     lines.append(f"  static std::array<int, {_array_size(iw_size)}> iw{{}};")
   lines += [
-    f"  std::array<const double*, {_array_size(arg_size)}> arg{{}};",
+    f"  std::array<const {element}*, {_array_size(arg_size)}> arg{{}};",
     *[f"  arg[{i}] = g_{c_name}.data();" for i, (_, c_name, _) in enumerate(inputs)],
-    f"  std::array<double*, {_array_size(res_size)}> res{{}};",
+    f"  std::array<{element}*, {_array_size(res_size)}> res{{}};",
     "  res.fill(nullptr);",
     *[f"  res[{index}] = {output_buffers[index]}.data();" for index in requested_outputs],
-    f"  int rc = {symbol}(arg.data(), res.data(), " + ("iw.data(), w.data(), 0);" if label.startswith("casadi") else "nullptr, w.data(), 0);"),
+    f"  int rc = {evaluate};",
     f'  if (rc != 0) {{ std::fprintf(stderr, "{label} returned %d\\n", rc); return 1; }}',
   ]
   if layout in {"lower", "upper"}:
@@ -377,18 +381,18 @@ def write_cpp(info: dict, out_dir: Path, input_paths: dict[str, Path], expected_
     "}",
     "",
     f"static void {info['benchmark']}(benchmark::State& state) {{",
-    f"  static std::array<double, {_array_size(w_size)}> w{{}};",
+    workspace,
   ]
   if label.startswith("casadi"):
     lines.append(f"  static std::array<int, {_array_size(iw_size)}> iw{{}};")
   lines += [
-    f"  std::array<const double*, {_array_size(arg_size)}> arg{{}};",
+    f"  std::array<const {element}*, {_array_size(arg_size)}> arg{{}};",
     *[f"  arg[{i}] = g_{c_name}.data();" for i, (_, c_name, _) in enumerate(inputs)],
-    f"  std::array<double*, {_array_size(res_size)}> res{{}};",
+    f"  std::array<{element}*, {_array_size(res_size)}> res{{}};",
     "  for (auto _ : state) {",
     "    res.fill(nullptr);",
     *[f"    res[{index}] = {output_buffers[index]}.data();" for index in requested_outputs],
-    f"    int rc = {symbol}(arg.data(), res.data(), " + ("iw.data(), w.data(), 0);" if label.startswith("casadi") else "nullptr, w.data(), 0);"),
+    f"    int rc = {evaluate};",
     "    benchmark::DoNotOptimize(rc);",
     *[f"    benchmark::DoNotOptimize({output_buffers[index]}.data());" for index in requested_outputs],
     "  }",

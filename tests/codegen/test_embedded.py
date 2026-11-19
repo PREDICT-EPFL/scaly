@@ -75,7 +75,9 @@ def test_cortex_m_oracle_has_only_libm_symbols(tmp_path, cpu) -> None:
     pytest.skip("the Cortex-M check needs Linux, Zig and GNU binutils")
   module = write_module(oracle, tmp_path, dialect="c", lanes=1, frame_budget=0)
   assert module.workspace_size > 0
-  assert "const float** arg, float** res, int* iw, float* w" in module.header
+  assert "void embedded_oracle(const embedded_oracle_zs_t* zs, embedded_oracle_residuals_t* residuals," in module.header
+  assert "embedded_oracle_workspace_t* w);" in module.header
+  assert module.frame_bytes == 0
   local = [
     n
     for n in walk_program(module.program)
@@ -107,7 +109,7 @@ def test_cortex_m_oracle_has_only_libm_symbols(tmp_path, cpu) -> None:
   report = (
     f"## {cpu}\n\n```text\n{sizes}\n"
     f"Flash: {text + data} bytes; static RAM: {data + bss} bytes\n"
-    f"Caller workspace: {4 * module.workspace_size} bytes; inputs: {inputs} bytes; outputs: {outputs} bytes\n"
+    f"Caller workspace: {module.workspace_size} bytes; inputs: {inputs} bytes; outputs: {outputs} bytes\n"
     f"Undefined symbols: {', '.join(sorted(_undefined(obj)))}\n"
     "```\n\n"
     "Object text includes code and read-only data. Flash is text + data, static RAM is data + bss. "

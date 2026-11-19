@@ -27,8 +27,10 @@ def _compile(prog, tmp_path, *, dialect="gnu", compiler=None, vector_libm="none"
   source = "\n".join(
     [*_includes(dialect=dialect, prog=prog, vector_libm=vector_libm), *_render_raw_callee(prog.args[0], dialect=dialect, vector_libm=vector_libm)]
   )
-  workspace = int(prog.args[0].attrs.get("sz_w", 0))
-  source += f"\nvoid run(double *x, double *y) {{ double w[{max(workspace, 1)}]; kernel_raw(x, y, w); }}\n"
+  layout = dict(prog.args[0].attrs.get("workspace_layout", ()))
+  workspace = layout.get(dtypes.float64, 0)
+  tail = f"static double w[{workspace}]; kernel_raw(x, y, w);" if workspace else "kernel_raw(x, y);"
+  source += f"\nvoid run(double *x, double *y) {{ {tail} }}\n"
   return _compile_source(source, tmp_path, dialect=dialect, compiler=compiler, defines=defines)
 
 
@@ -302,11 +304,11 @@ def test_contiguous_output_axis_retains_inner_reduction(tmp_path, dialect):
 def test_lane_scratch_is_packed_for_selected_capacity(tmp_path, dialect, lanes):
   prog = pack_workspace(widen_ranges(_nested_program(count=17, size=1100), lanes=lanes), frame_budget=0)
   main = prog.args[-1]
-  assert main.attrs["sz_w"] == 1100 * lanes
+  assert main.attrs["workspace_layout"] == ((dtypes.float64, 1100 * lanes),)
   function, source = _compile(p.program([main]), tmp_path, dialect=dialect)
   values = np.arange(17 * 1100, dtype=np.float64)
   np.testing.assert_array_equal(_evaluate(function, values, 17)[:17], values.reshape(17, 1100).sum(axis=1) * 2)
-  assert "double* s0 = w + 0" in source
+  assert "double* s0 = SCALY_W_f64;" in source
   if dialect == "gnu":
     assert re.search(r"double \w+\[SCALY_WIDTH_\w+\];", source)
 
@@ -383,7 +385,8 @@ def test_scheduled_nonaffine_index_uses_gather(tmp_path, lanes):
 def _compile_module(module, tmp_path, dialect):
   source = (
     module.body
-    + f"\nvoid run(double *x, double *y) {{ const double *arg[] = {{x}}; double *res[] = {{y}}; double w[{max(1, module.workspace_size)}]; {module.fun.name}(arg, res, NULL, w, 0); }}\n"
+    + f"\nvoid run(double *x, double *y) {{ const void *arg[] = {{x}}; void *res[] = {{y}}; static {module.fun.name}_workspace_t w; "
+    + f"{module.fun.name}_abi(arg, res, &w); }}\n"
   )
   return _compile_source(source, tmp_path, dialect=dialect)
 
@@ -410,7 +413,7 @@ def test_call_jacobian_keeps_noinline_frame_in_c99(tmp_path, dialect):
   np.testing.assert_allclose(actual, expected, rtol=1e-15, atol=1e-15)
   if dialect == "c":
     assert "(*volatile inner_fwd" in source
-    assert "__attribute__" not in source
+    assert "__attribute__" not in source.replace("#define SCALY_ALIGNAS(n) __attribute__((aligned(n)))", "")
   else:
     assert "__attribute__((noinline))" in source
 
@@ -444,7 +447,7 @@ def test_public_mapped_block_matrix_promotes_lane_scratch(tmp_path, dialect):
   module = render_c_module(fn, lanes=4, dialect=dialect, frame_budget=16384)
   main = module.program.args[-1]
   assert any(n.attrs.get("vector_mapped") for n in walk_program(main))
-  assert module.workspace_size == size * stages
+  assert module.workspace_size == size * stages * dtypes.float64.itemsize
   assert any(n.op == ProgramOp.BUFFER and n.attrs["shape"] == (size * 4,) and "workspace_offset" not in n.attrs for n in walk_program(main))
   function, _ = _compile_module(module, tmp_path, dialect)
   values = np.linspace(-2, 3, size * stages)
@@ -518,7 +521,7 @@ def test_private_aliases_pack_active_lanes_with_tail(tmp_path, dialect, lanes):
   views = [n for n in nodes if n.op == ProgramOp.VIEW and n.attrs.get("lane_local")]
   assert views and all(any(v.op == ProgramOp.VAR and v.attrs["name"] == width for v in walk_program(n.args[0])) for n in views)
   packed = pack_workspace(widened, frame_budget=0)
-  assert packed.args[0].attrs["sz_w"] == 1100 * (8 if lanes == "auto" else lanes)
+  assert packed.args[0].attrs["workspace_layout"] == ((dtypes.float64, 1100 * (8 if lanes == "auto" else lanes)),)
   function, _ = _compile(packed, tmp_path, dialect=dialect, defines=("-DSCALY_LANES=8",) if lanes == "auto" else ())
   values = np.linspace(-2, 3, 51)
   expected = np.asarray([row[0] + (row[1] + row[2]) for row in values.reshape(17, 3)])
@@ -554,7 +557,7 @@ def test_private_slots_reused_by_helpers_with_different_widths(tmp_path, dialect
   caps = {n.attrs["lane_width"]: n.attrs["lane_caps"] for n in walk_program(widened) if n.op == ProgramOp.RANGE and "lane_caps" in n.attrs}
   assert sorted(caps.values()) == [(2,) * 4, (4,) * 4]
   packed = pack_workspace(widened, frame_budget=0)
-  assert packed.args[0].attrs["sz_w"] == 1100 * 4
+  assert packed.args[0].attrs["workspace_layout"] == ((dtypes.float64, 1100 * 4),)
   function, _ = _compile(packed, tmp_path, dialect=dialect, defines=("-DSCALY_LANES=8",))
   values = np.linspace(-2, 3, 4)
   actual = _evaluate(function, values, 6)

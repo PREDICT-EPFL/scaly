@@ -6,10 +6,12 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 from collections.abc import Callable, Mapping
 
-from scaly.codegen.abi import c_ident
+from scaly.codegen.abi import WORKSPACE_MEMBERS, c_ident
 from scaly.utils.names import NameScope
 from scaly.codegen.c import _c_reserved_names
 from scaly.ir.expr import Expr, callees_of, topo
+from scaly.ir.types import DType, dtypes
+from scaly.passes.program.pack_workspace import WorkspaceLayout
 from scaly.function.concrete import ConcreteFunction
 from scaly.function.extern import CLibrary, _Extern
 from scaly.solvers.model import _SolverLibrary
@@ -23,6 +25,11 @@ if TYPE_CHECKING:
 
 def _raw_symbol(fun: ConcreteFunction) -> str:
   return f"{c_ident(fun.name)}_raw"
+
+
+@dataclass(frozen=True, eq=False)
+class _SolverExtern(_Extern):
+  workspace_layout: WorkspaceLayout
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,11 +47,28 @@ class SolverWrapperCtx:
   raw_symbol: str
   stats_symbol: str
   function_symbols: Mapping[ConcreteFunction, str] = field(default_factory=dict)
+  oracle_layouts: Mapping[ConcreteFunction, WorkspaceLayout] = field(default_factory=dict)
+  workspace_layout: WorkspaceLayout = ()
 
   def raw_symbol_of(self, fun: ConcreteFunction | ExternalOracle) -> str:
     from scaly.solvers.model import ExternalOracle
 
     return fun.raw_symbol if isinstance(fun, ExternalOracle) else f"{self.function_symbols.get(fun, c_ident(fun.name))}_raw"
+
+  @property
+  def workspace_declarations(self) -> tuple[str, ...]:
+    return tuple(f"{dtype.c_type}* w_{WORKSPACE_MEMBERS[dtype]}" for dtype, _ in self.workspace_layout)
+
+  @property
+  def workspace_args(self) -> tuple[str, ...]:
+    return tuple(f"w_{WORKSPACE_MEMBERS[dtype]}" for dtype, _ in self.workspace_layout)
+
+  def oracle_workspace(self, fun: ConcreteFunction | ExternalOracle, *, prefix: str = "") -> tuple[str, ...]:
+    from scaly.solvers.model import ExternalOracle
+
+    if isinstance(fun, ExternalOracle):
+      return (f"{prefix}w_f64" if fun.workspace_size else "NULL",)
+    return tuple(f"{prefix}w_{WORKSPACE_MEMBERS[dtype]}" for dtype, _ in self.oracle_layouts.get(fun, ()))
 
 
 def solver_functions(fun: ConcreteFunction) -> tuple[ConcreteFunction, ...]:
@@ -82,7 +106,13 @@ def solver_stats_symbols(fun: ConcreteFunction) -> tuple[str, ...]:
 # ---------------------------------------------------------------------------
 
 
-def render_solver_raw(fun: ConcreteFunction, *, function_symbols: Mapping[ConcreteFunction, str] | None = None) -> list[str]:
+def render_solver_raw(
+  fun: ConcreteFunction,
+  *,
+  function_symbols: Mapping[ConcreteFunction, str] | None = None,
+  oracle_layouts: Mapping[ConcreteFunction, WorkspaceLayout] | None = None,
+  workspace_layout: WorkspaceLayout = (),
+) -> list[str]:
   """Frame a plugin-rendered wrapper body with the scaly-owned stats storage
   and the exported ``<symbol>_stats`` accessor. The body itself comes from the
   backend's ``render_wrapper`` hook."""
@@ -99,6 +129,8 @@ def render_solver_raw(fun: ConcreteFunction, *, function_symbols: Mapping[Concre
     raw_symbol=_raw_symbol(fun),
     stats_symbol=f"{symbol}_stats_data",
     function_symbols=function_symbols or {},
+    oracle_layouts=oracle_layouts or {},
+    workspace_layout=workspace_layout,
   )
   body = get_backend(desc.backend).render_wrapper(fun, ctx)
   return [
@@ -116,7 +148,6 @@ def render_solver_raw(fun: ConcreteFunction, *, function_symbols: Mapping[Concre
 
 def solver_extern(library: _SolverLibrary, recipe: BuildRecipe, prepare: Callable[[ConcreteFunction], ConcreteFunction]) -> _Extern:
   """Declare an external bridge with its wrapper and oracle C source."""
-  from scaly.function.extern import extern
   from scaly.function.tree import arg
   from scaly.passes.lowering import lower_function
   from scaly.codegen.c import _includes, _render_raw_callee, extern_declarations
@@ -158,8 +189,16 @@ def solver_extern(library: _SolverLibrary, recipe: BuildRecipe, prepare: Callabl
   count = int(prog.attrs["proc_count"])
   procs = prog.args[: count - 1]
   symbols = dict(prog.attrs["function_symbols"])
-  external_workspace = max((oracle.workspace_size for oracle in external_oracles(fun)), default=0)
-  workspace = max((external_workspace, *(int(proc.attrs.get("sz_w", 0)) for proc in procs)))
+  proc_layouts = {proc.attrs["name"]: proc.attrs["workspace_layout"] for proc in procs}
+  oracle_layouts = {oracle: proc_layouts[symbols[entry]] for oracle, entry in entries.items()}
+  counts: dict[DType, int] = {}
+  for layout in oracle_layouts.values():
+    for dtype, count in layout:
+      counts[dtype] = max(counts.get(dtype, 0), count)
+  for oracle in external_oracles(fun):
+    if oracle.workspace_size:
+      counts[dtypes.float64] = max(counts.get(dtypes.float64, 0), oracle.workspace_size)
+  workspace = tuple((dtype, counts[dtype]) for dtype in WORKSPACE_MEMBERS if dtype in counts)
   backend = get_backend(fun.descriptor.backend)
   symbol = c_ident(fun.name)
   lines = [
@@ -173,15 +212,25 @@ def solver_extern(library: _SolverLibrary, recipe: BuildRecipe, prepare: Callabl
   ]
   for proc in procs:
     lines.extend(_render_raw_callee(proc, reserved_names=_c_reserved_names(prog), dialect=recipe.dialect, vector_libm=recipe.vector_libm))
-  lines.extend(render_solver_raw(fun, function_symbols={oracle: symbols[entry] for oracle, entry in entries.items()}))
+  lines.extend(
+    render_solver_raw(
+      fun, function_symbols={oracle: symbols[entry] for oracle, entry in entries.items()}, oracle_layouts=oracle_layouts, workspace_layout=workspace
+    )
+  )
   ins = [f"const double* in{i}" for i in range(len(fun.inputs))]
   outs = [f"double* out{i}" for i in range(len(fun.outputs))]
-  args = [*(f"in{i}" for i in range(len(ins))), *(f"out{i}" for i in range(len(outs))), "w", f"{symbol}_options"]
+  scratch = [f"{dtype.c_type}* w_{WORKSPACE_MEMBERS[dtype]}" for dtype, _ in workspace]
+  args = [
+    *(f"in{i}" for i in range(len(ins))),
+    *(f"out{i}" for i in range(len(outs))),
+    *(f"w_{WORKSPACE_MEMBERS[dtype]}" for dtype, _ in workspace),
+    f"{symbol}_options",
+  ]
   lines.extend(
     [
       f"static const scaly_solver_option* {symbol}_options;",
       f"void {symbol}_set_options(const scaly_solver_option* options) {{ {symbol}_options = options; }}",
-      f"void {symbol}_solve({', '.join([*ins, *outs, 'double* w'])}) {{",
+      f"void {symbol}_solve({', '.join([*ins, *outs, *scratch])}) {{",
       f"  {symbol}_raw({', '.join(args)});",
       "}",
     ]
@@ -193,13 +242,7 @@ def solver_extern(library: _SolverLibrary, recipe: BuildRecipe, prepare: Callabl
     compile_flags=(*library.compile_flags, env("SCALY_CC_OPT") or "-O2", *recipe.cpu_flags, "-fno-math-errno"),
     link=(*library.link, *(flag[2:] for flag in recipe.link_flags)),
   )
-  return extern(
-    library,
-    f"{symbol}_solve",
-    inputs=tuple(arg(name, value.type) for name, value in zip(fun.input_names, fun.inputs)),
-    outputs=fun.output_tree,
-    workspace=workspace,
-  )
+  return _SolverExtern(library, f"{symbol}_solve", fun.input_tree, fun.output_tree, 0, workspace)
 
 
 def prepare_solver_calls(fun: ConcreteFunction, recipe: BuildRecipe) -> tuple[ConcreteFunction, tuple[CLibrary, ...]]:
@@ -293,16 +336,16 @@ def render_solver_defaults(fun: ConcreteFunction) -> list[str]:
   return lines
 
 
-def solver_options_declarations(fun: ConcreteFunction) -> list[str]:
+def solver_options_declarations(fun: ConcreteFunction, *, casadi: bool = False) -> list[str]:
   """Declare the runtime entry, default option accessors and option-array indices."""
-  from .abi import c_api_signature
+  from .abi import pointer_signature
 
   solvers = solver_functions(fun)
   if not solvers:
     return []
   symbol = c_ident(fun.name)
   return [
-    c_api_signature(fun, f"{symbol}_with_options", solver_options=True) + ";",
+    pointer_signature(fun, casadi=casadi, solver_options=True) + ";",
     f"#define {symbol}_N_SOLVERS {len(solvers)}",
     *(f"#define {symbol}_OPTIONS_{c_ident(fn.name)} {i}" for i, fn in enumerate(solvers)),
     *(f"const scaly_solver_option* {c_ident(fn.name)}_default_options(void);" for fn in solvers),

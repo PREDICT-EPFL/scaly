@@ -41,11 +41,34 @@ static inline __attribute__((always_inline, unused)) void lanes_4_4_4_4_vec_st(d
   else for (long long i = 0; i < n; ++i) p[i] = v[i];
 }
 
+#include <stdbool.h>
+#ifndef SCALY_ALIGNAS
+#ifdef __cplusplus
+#define SCALY_ALIGNAS(n) alignas(n)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define SCALY_ALIGNAS(n) _Alignas(n)
+#elif defined(__GNUC__)
+#define SCALY_ALIGNAS(n) __attribute__((aligned(n)))
+#else
+#define SCALY_ALIGNAS(n)
+#endif
+#endif
+#ifndef SCALY_TYPES_shooting
+#define SCALY_TYPES_shooting
+typedef struct { SCALY_ALIGNAS(16) double data[16]; } shooting_z_t;
+typedef struct { SCALY_ALIGNAS(16) double data[6]; } shooting_u_t;
+typedef struct { SCALY_ALIGNAS(16) double data[12]; } shooting_eq_t;
+typedef struct {
+  unsigned char unused;
+} shooting_workspace_t;
+#endif
+
 #define SCALY_SUCCESS 0
 #define SCALY_ERR_NULL_ABI 1
 #define SCALY_ERR_NULL_WORK 2
 #define SCALY_ERR_NULL_RESULT 3
 #define SCALY_ERR_NULL_INPUT 4
+#define SCALY_ERR_ALLOC_WORK 5
 
 #ifdef __cplusplus
 extern "C" {
@@ -108,21 +131,28 @@ static inline __attribute__((always_inline)) void lanes_1(long long i, long long
   lanes_4_4_4_4_vec r_4 = ((v3 + (b_5 * (l_9 - (v5 * v3)))) - l_10);
   for (long long k = 0; k < n; ++k) eq[((3 + (4 * ((i + k) < 2 ? (i + k) : 2)))) + 0] = r_4[k];
 }
-int shooting(const double** arg, double** res, int* iw, double* w, int mem) {
-  (void)iw;
-  (void)mem;
+static inline void SCALY_KERNEL_shooting(const double* z, const double* u, double* eq) {
+  for (long long v0_start = 0; v0_start <= 3 - SCALY_WIDTH_4_4_4_4; v0_start += SCALY_WIDTH_4_4_4_4) {
+    lanes_1(v0_start, SCALY_WIDTH_4_4_4_4, eq, u, z);
+  }
+#if (3 % SCALY_WIDTH_4_4_4_4) != 0
+  lanes_1(3 - 3 % SCALY_WIDTH_4_4_4_4, 3 % SCALY_WIDTH_4_4_4_4, eq, u, z);
+#endif
+}
+
+int shooting_abi(const void* const* arg, void* const* res, shooting_workspace_t* w) {
   if (!arg || !res) return SCALY_ERR_NULL_ABI;
   (void)w;
   if (!arg[0]) return SCALY_ERR_NULL_INPUT;
   if (!arg[1]) return SCALY_ERR_NULL_INPUT;
   if (!res[0]) return SCALY_ERR_NULL_RESULT;
-  for (long long v0_start = 0; v0_start <= 3 - SCALY_WIDTH_4_4_4_4; v0_start += SCALY_WIDTH_4_4_4_4) {
-    lanes_1(v0_start, SCALY_WIDTH_4_4_4_4, res[0], arg[1], arg[0]);
-  }
-#if (3 % SCALY_WIDTH_4_4_4_4) != 0
-  lanes_1(3 - 3 % SCALY_WIDTH_4_4_4_4, 3 % SCALY_WIDTH_4_4_4_4, res[0], arg[1], arg[0]);
-#endif
+  SCALY_KERNEL_shooting((const double*)arg[0], (const double*)arg[1], (double*)res[0]);
   return SCALY_SUCCESS;
+}
+
+void shooting(const shooting_z_t* z, const shooting_u_t* u, shooting_eq_t* eq, shooting_workspace_t* w) {
+  (void)w;
+  SCALY_KERNEL_shooting((const double*)z->data, (const double*)u->data, (double*)eq->data);
 }
 
 #ifdef __cplusplus

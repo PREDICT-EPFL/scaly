@@ -158,7 +158,7 @@ def test_vmap_hessian_index_tables_do_not_grow_with_the_trip_count() -> None:
       mapped = _mapped_call(_stage, length, [(z, 0, 2)])
       return sc.hessian((mapped * mapped).sum(), z)
 
-    return render_c_source(fun)
+    return render_c_source(fun).split(f"\nint {fun.name}_abi(", 1)[0]
 
   small, large = rendered(8), rendered(64)
   assert _index_table_bytes(small) == _index_table_bytes(large)

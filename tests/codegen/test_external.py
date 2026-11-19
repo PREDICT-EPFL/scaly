@@ -83,7 +83,7 @@ def test_manifest_consumer_compiles_each_translation_unit_and_links(tmp_path):
   exports = []
   if sys.platform == "win32":
     definitions = tmp_path / "exports.def"
-    definitions.write_text(f"EXPORTS\n{module.fun.name}\n")
+    definitions.write_text(f"EXPORTS\n{module.fun.name}_abi\n")
     exports.append(str(definitions))
   subprocess.run(
     [
@@ -101,12 +101,13 @@ def test_manifest_consumer_compiles_each_translation_unit_and_links(tmp_path):
     check=True,
     capture_output=True,
   )
-  entry = getattr(ctypes.CDLL(str(output)), module.fun.name)
+  entry = getattr(ctypes.CDLL(str(output)), f"{module.fun.name}_abi")
   pointer = ctypes.POINTER(ctypes.c_double)
-  entry.argtypes = [ctypes.POINTER(pointer), ctypes.POINTER(pointer), ctypes.POINTER(ctypes.c_int), pointer, ctypes.c_int]
+  entry.argtypes = [ctypes.POINTER(pointer), ctypes.POINTER(pointer), ctypes.c_void_p]
   x, y = ctypes.c_double(3), ctypes.c_double()
-  workspace = (ctypes.c_double * max(module.workspace_size, 1))()
-  assert entry((pointer * 1)(ctypes.pointer(x)), (pointer * 1)(ctypes.pointer(y)), None, workspace, 0) == 0
+  scratch = np.empty(module.workspace_size + 63, dtype=np.uint8)
+  workspace = ctypes.c_void_p((scratch.ctypes.data + 63) & ~63)
+  assert entry((pointer * 1)(ctypes.pointer(x)), (pointer * 1)(ctypes.pointer(y)), workspace) == 0
   assert y.value == 15
 
 

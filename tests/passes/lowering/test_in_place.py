@@ -36,7 +36,7 @@ def test_last_use():
   assert _inout(fn)
   proc = next(proc for proc in lower_function(fn).args if proc.attrs.get("inout_carries"))
   assert proc.attrs["param_count"] == proc.attrs["input_count"] == 1
-  assert "_inplace_raw(double* carry, double* w)" in render_c_source(fn)
+  assert "_inplace_raw(double* carry)" in render_c_source(fn)
 
 
 def test_same_runtime_index():

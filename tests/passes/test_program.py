@@ -305,7 +305,7 @@ def test_packing_reuses_slots_and_spills() -> None:
     return c + d
 
   assert _sz_w(f) == 0
-  assert _sz_w(f, frame_budget=8192) == 1600
+  assert _sz_w(f, frame_budget=8192) == 1600 * 8
 
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler for mapped workspace lifetimes")
@@ -350,7 +350,7 @@ def test_mapped_workspace_reuses_temporaries_but_preserves_inputs_and_live_outpu
   assert len(slots) == (4 if per_call else 6)
   source = "\n".join([*_includes(prog=packed), *_render_raw_callee(packed.args[0])])
   path, library = tmp_path / "mapped.c", tmp_path / ("mapped" + shared_lib_ext())
-  path.write_text(source + "\nvoid run(double *x, double *y) { root_raw(x, y, NULL); }\n")
+  path.write_text(source + "\nvoid run(double *x, double *y) { root_raw(x, y); }\n")
   subprocess.run([*c_compiler(), "-O2", "-fPIC", shared_lib_flag(), str(path), "-lm", "-o", str(library)], check=True)
   run = ctypes.CDLL(str(library)).run
   ptr = ctypes.POINTER(ctypes.c_double)
@@ -489,7 +489,7 @@ def test_spilled_function_matches_numpy(isolated_cache) -> None:
     A, B = inputs
     return ((A @ B) + (B @ A)).sum()
 
-  assert _sz_w(f) >= 10000
+  assert _sz_w(f) >= 10000 * 8
   render_c_source(f, lanes=1)  # loud coverage gate
   f.recompile()
   rng = np.random.default_rng(0)
@@ -792,7 +792,7 @@ def test_hoist_keeps_scalar_assignments_with_their_readers(tmp_path, case):
   verify_program(hoisted)
   source = "\n".join([*_includes(prog=hoisted), *(line for proc in hoisted.args for line in _render_raw_callee(proc))])
   path, library = tmp_path / "hoisted.c", tmp_path / ("hoisted" + shared_lib_ext())
-  path.write_text(source + "\nvoid run(double *xs, double *weight, double *ys) { root_raw(xs, weight, ys, NULL); }\n")
+  path.write_text(source + "\nvoid run(double *xs, double *weight, double *ys) { root_raw(xs, weight, ys); }\n")
   subprocess.run([*c_compiler(), "-O2", "-fPIC", shared_lib_flag(), str(path), "-lm", "-o", str(library)], check=True)
   run = ctypes.CDLL(str(library)).run
   ptr = ctypes.POINTER(ctypes.c_double)
