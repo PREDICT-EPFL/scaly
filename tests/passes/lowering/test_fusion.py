@@ -327,6 +327,45 @@ def test_sparse_fusion_keeps_sampled_product_conditions() -> None:
   assert len([buf for buf in _privates(proc) if buf.dtype == sc.dtypes.float64]) == 1
 
 
+@needs_cc
+def test_sparse_fusion_keeps_the_read_before_an_overwriting_scatter() -> None:
+  pattern = _SPARSE_FUSION_PATTERN
+
+  @sc.function(sc.arg("x", pattern.nnz), outputs=_sparse_leaf("y", pattern), name="sparse_read_before_scatter")
+  def fn(x):
+    base = x * 1.5
+    before = sc.pack(base, pattern).sin()
+    updated = sc.scatter(base, np.arange(pattern.nnz), sc.const(np.full(pattern.nnz, 10.0)))
+    return ((before * 2.0) * sc.pack(updated, pattern)).block()
+
+  x = np.linspace(-1.0, 1.0, pattern.nnz)
+  base = 1.5 * x
+  actual = fn(x).toarray()[pattern.rows, pattern.cols]
+  np.testing.assert_allclose(actual, 2 * np.sin(base) * (base + 10))
+
+
+@needs_cc
+def test_sparse_fusion_preserves_scalarized_known_zeros_with_infinity() -> None:
+  pattern = _SPARSE_FUSION_PATTERN
+  mask = np.ones(pattern.nnz)
+  mask[3] = 0
+  scale = np.ones(pattern.nnz)
+  scale[3] = np.inf
+
+  @sc.function(_sparse_leaf("x", pattern), _sparse_leaf("w", pattern), outputs=_sparse_leaf("y", pattern), name="sparse_known_zero_stage")
+  def stage(x, w):
+    return ((x * sc.pack(mask, pattern)) * sc.pack(scale, pattern) + w).scalar()
+
+  @sc.function(_sparse_leaf("x", pattern), _sparse_leaf("w", pattern), outputs=_sparse_leaf("y", pattern), name="sparse_known_zero_call")
+  def fn(x, w):
+    return stage(x, w)
+
+  x, w = np.linspace(1.0, 2.0, pattern.nnz), np.arange(pattern.nnz, dtype=float)
+  expected = x + w
+  expected[3] = w[3]
+  np.testing.assert_array_equal(fn(x, w).toarray()[pattern.rows, pattern.cols], expected)
+
+
 def test_sampled_product_counts_its_condition_read() -> None:
   a = CanonicalPattern((3, 3), (0, 1, 1, 2), (0, 0, 2, 1))
   b = CanonicalPattern((3, 3), (0, 0, 1, 2), (0, 2, 1, 2))
@@ -523,6 +562,27 @@ def test_a_carried_range_is_never_merged_split_or_reordered() -> None:
 def _carried_loop(proc: ProgramNode) -> ProgramNode:
   (loop,) = [s for s in proc.args if s.op == ProgramOp.FOR and s.args[0].attrs.get("carried")]
   return loop
+
+
+def test_sparse_fusion_leaves_shared_work_hoistable_in_a_carried_body() -> None:
+  pattern = _SPARSE_FUSION_PATTERN
+
+  @sc.function(_sparse_leaf("c", pattern), _sparse_leaf("w", pattern), outputs=_sparse_leaf("cn", pattern), name="sparse_shared_step")
+  def step(c, w):
+    return (c * w.sin()).tanh().block()
+
+  @sc.function(_sparse_leaf("c0", pattern), _sparse_leaf("w", pattern), outputs=_sparse_leaf("y", pattern), name="sparse_shared_loop")
+  def fn(c0, w):
+    return sc.scan(step, c0, (sc.broadcast(w),), length=4)[0].block()
+
+  program = lower_function(fn)
+  root = main_proc(program)
+  calls = [stmt for stmt in root.args if stmt.op == ProgramOp.CALL]
+  assert len(calls) == 1, "the sine of the broadcast input needs a call outside the carried loop"
+  (shared,) = calls
+  shared_proc = next(proc for proc in program.args if proc.attrs["name"] == shared.attrs["callee"])
+  assert _work(shared_proc, ProgramOp.SIN) == pattern.nnz
+  assert root.args.index(shared) < root.args.index(_carried_loop(root))
 
 
 @needs_cc
