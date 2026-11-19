@@ -156,14 +156,19 @@ static inline __attribute__((always_inline)) void lanes_1(long long i, long long
   lanes_4_4_4_4_vec r_12 = (b_18 - (b_19 * ((lane_v4 * lane_v2) + lane_v3)));
   for (long long k = 0; k < n; ++k) s0[(((((i + k) < 2 ? (i + k) : 2) * 12) + 11)) + 0] = r_12[k];
 }
-static inline __attribute__((always_inline)) void lanes_2(long long i, long long n, const int64_t* k1, const double* k8, const double* s1, double* spjac_eq_z) {
+static inline __attribute__((always_inline)) void lanes_2(long long i, long long n, double* s1) {
+  lanes_8_8_8_8_vec b;
+  for (int k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) b[k] = 0.0;
+  lanes_8_8_8_8_vec_st(&s1[(i) + 0], b, n);
+}
+static inline __attribute__((always_inline)) void lanes_3(long long i, long long n, const int64_t* k1, const double* k7, const double* s1, double* spjac_eq_z) {
   int64_t v0[SCALY_WIDTH_8_8_8_8];
   for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) v0[k] = k1[((i + k) < 35 ? (i + k) : 35)];
   double ls[SCALY_WIDTH_8_8_8_8];
   for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) ls[k] = s1[v0[k]];
   lanes_8_8_8_8_vec l = *(const lanes_8_8_8_8_vec_mem*)ls;
   double l_2s[SCALY_WIDTH_8_8_8_8];
-  for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l_2s[k] = k8[v0[k]];
+  for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l_2s[k] = k7[v0[k]];
   lanes_8_8_8_8_vec l_2 = *(const lanes_8_8_8_8_vec_mem*)l_2s;
   lanes_8_8_8_8_vec_st(&spjac_eq_z[(i) + 0], (l - l_2), n);
 }
@@ -172,27 +177,29 @@ static inline void SCALY_KERNEL_shooting_spjac_eq_z(const double* z, const doubl
   static const int64_t k1[36] = {0, 1, 12, 14, 15, 25, 26, 27, 24, 28, 13, 17, 2, 4, 6, 7, 39, 41, 42, 43, 16, 20, 5, 9, 30, 32, 34, 35, 19, 21, 22, 23, 8, 33, 10, 11};
   double s0[36];
   double s1[48];
-  static const int64_t k4[12] = {2, 5, 8, 10, 11, 13, 16, 19, 24, 30, 33, 39};
-  static const int64_t k5[24] = {0, 1, 4, 6, 7, 9, 12, 14, 15, 17, 20, 21, 22, 23, 25, 26, 27, 28, 32, 34, 35, 41, 42, 43};
-  static const int64_t k6[24] = {0, 1, 16, 18, 19, 25, 4, 6, 7, 13, 24, 33, 34, 35, 9, 10, 11, 12, 28, 30, 31, 21, 22, 23};
-  static const double k8[48] = {0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0};
+  static const int64_t k4[24] = {0, 1, 4, 6, 7, 9, 12, 14, 15, 17, 20, 21, 22, 23, 25, 26, 27, 28, 32, 34, 35, 41, 42, 43};
+  static const int64_t k5[24] = {0, 1, 16, 18, 19, 25, 4, 6, 7, 13, 24, 33, 34, 35, 9, 10, 11, 12, 28, 30, 31, 21, 22, 23};
+  static const double k7[48] = {0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0};
   for (long long it_t2_start = 0; it_t2_start <= 3 - SCALY_WIDTH_4_4_4_4; it_t2_start += SCALY_WIDTH_4_4_4_4) {
     lanes_1(it_t2_start, SCALY_WIDTH_4_4_4_4, s0, z);
   }
 #if (3 % SCALY_WIDTH_4_4_4_4) != 0
   lanes_1(3 - 3 % SCALY_WIDTH_4_4_4_4, 3 % SCALY_WIDTH_4_4_4_4, s0, z);
 #endif
-  for (long long z_t3 = 0; z_t3 < 12; ++z_t3) {
-    s1[k4[z_t3]] = 0.0;
+  for (long long z_t3_start = 0; z_t3_start <= 48 - SCALY_WIDTH_8_8_8_8; z_t3_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_2(z_t3_start, SCALY_WIDTH_8_8_8_8, s1);
   }
+#if (48 % SCALY_WIDTH_8_8_8_8) != 0
+  lanes_2(48 - 48 % SCALY_WIDTH_8_8_8_8, 48 % SCALY_WIDTH_8_8_8_8, s1);
+#endif
   for (long long i_t3 = 0; i_t3 < 24; ++i_t3) {
-    s1[k5[i_t3]] = s0[k6[i_t3]];
+    s1[k4[i_t3]] = s0[k5[i_t3]];
   }
   for (long long i_spjac_eq_z_start = 0; i_spjac_eq_z_start <= 36 - SCALY_WIDTH_8_8_8_8; i_spjac_eq_z_start += SCALY_WIDTH_8_8_8_8) {
-    lanes_2(i_spjac_eq_z_start, SCALY_WIDTH_8_8_8_8, k1, k8, s1, spjac_eq_z);
+    lanes_3(i_spjac_eq_z_start, SCALY_WIDTH_8_8_8_8, k1, k7, s1, spjac_eq_z);
   }
 #if (36 % SCALY_WIDTH_8_8_8_8) != 0
-  lanes_2(36 - 36 % SCALY_WIDTH_8_8_8_8, 36 % SCALY_WIDTH_8_8_8_8, k1, k8, s1, spjac_eq_z);
+  lanes_3(36 - 36 % SCALY_WIDTH_8_8_8_8, 36 % SCALY_WIDTH_8_8_8_8, k1, k7, s1, spjac_eq_z);
 #endif
 }
 

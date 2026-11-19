@@ -12,7 +12,7 @@ from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.types import dtypes
 from ..arith import constant
 from .ctx import LowerCtx, lowers, _size_of, _flat_coordinates
-from .demand import cheap, placed_lanes
+from .demand import affine, placed_lanes
 from .fusion import scatter_targets
 from .plans import lower_movement
 from .in_place import fused_value, scatter_reuse
@@ -143,10 +143,9 @@ def lower_scatter_sum(ctx: LowerCtx, node: Expr, scatters: Sequence[Expr]) -> No
   """Zero ``node``'s buffer once, then let each scatter store into it, or accumulate when it repeats
   an index or follows another scatter.
 
-  Where the consumers read only some entries, a scatter stores only the values that land on them when
-  that skips enough to pay for a table (``placed_lanes``), and only the entries written and not
-  overwritten by the first scatter's stores are zeroed, unless a table of them costs more than
-  zeroing the whole buffer."""
+  Where the consumers read only some entries, a scatter may store only the values that land on them
+  (``placed_lanes``), and the entries written and not overwritten by the first scatter's stores are
+  zeroed alone when they are evenly spaced."""
   out = ctx.alloc_tmp(node)
   entries = ctx.domains.get(node.id)
   writes = [scatter_targets(leaf) for leaf in scatters]
@@ -156,7 +155,7 @@ def lower_scatter_sum(ctx: LowerCtx, node: Expr, scatters: Sequence[Expr]) -> No
     first = writes[0][lanes[0]]
     written = np.union1d(entries, np.concatenate([idx[kept] for idx, kept in zip(writes, lanes, strict=True)]))
     zeros = written if len(np.unique(first)) != len(first) else np.setdiff1d(written, first)
-    zeros = zeros if cheap(zeros, node.size) else None
+    zeros = zeros if affine(zeros) else None
   if zeros is None or len(zeros):
     zname = ctx.names.allocate(f"z_{out.attrs['name']}")
     zrng = p.range_(zname, 0, _size_of(node.shape) if zeros is None else len(zeros), kind=RangeKind.GLOBAL)

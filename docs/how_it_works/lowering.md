@@ -81,6 +81,55 @@ input and output leaves of a function must be `float64`. An unsupported case
 raises `LoweringError`. A solver call is not lowered at all. Its plugin renders
 the wrapper, and only the oracles it calls go through this page's pipeline.
 
+## Entries no reader uses
+
+A stored value is computed only at the entries its readers use. Lowering walks
+back from the outputs and collects, for each value, the entries that the
+operations reading it will load. A sparse derivative's recovery is the common
+case: a gather picks the nonzeros of a dense product and leaves the rest. Here
+a gather keeps one column of a product:
+
+```python
+@sc.function(sc.arg("a", (4, 3)), sc.arg("b", (3, 5)), outputs=sc.arg("out"))
+def column(a: sc.Expr, b: sc.Expr):
+    return sc.gather(a @ b, [2, 7, 12, 17])
+```
+
+```
+prog.module {
+  prog.proc @column(%a: memref<4x3xfloat64>, %b: memref<3x5xfloat64>, %out: memref<4xfloat64>) {
+    %t0 = prog.buffer : memref<4x5xfloat64, private>
+    prog.for %i_t0 = 0 to 4 step 1 {kind=global} {
+      prog.store 0, %t0[prog.add(2, prog.mul(%i_t0, 5))] : float64
+    }
+    prog.for %k_t0 = 0 to 3 step 1 {kind=reduce} {
+      prog.for %i_t0 = 0 to 4 step 1 {kind=global} {
+        prog.store prog.add(prog.load %t0[prog.add(2, prog.mul(%i_t0, 5))], prog.mul(prog.load %a[prog.add(prog.mul(%i_t0, 3), %k_t0)], prog.load %b[prog.add(2, prog.mul(%k_t0, 5))])), %t0[prog.add(2, prog.mul(%i_t0, 5))] : float64
+      }
+    }
+    prog.for %i_out = 0 to 4 step 1 {kind=global} {
+      prog.store prog.load %t0[prog.add(2, prog.mul(%i_out, 5))], %out[%i_out] : float64
+    }
+  }
+}
+```
+
+The product does 12 multiplications instead of 60. The buffer keeps the
+product's full shape, and the entries nobody reads are never written. The same
+walk runs through transposes, slices, sums, concatenations and scatters, so a
+gather at the end of a chain reaches back to the values it needs.
+
+When the entries used are not evenly spaced, the loop reads them from a table,
+which costs a load per entry and stops the compiler from vectorizing the loop.
+A product or a reduction is still computed only where it is read, since each
+entry it skips saves more than that load. An elementwise operation is computed
+only where it is read when that skips at least a third of its entries, or when
+the entries are evenly spaced. A copy or a scatter does no more than a load and
+a store per entry, so it is narrowed only when it needs no table it did not
+already need. Anything else is computed whole in one contiguous loop. A known
+zero in a dense value is not skipped: `x * sc.const([1.0, 0.0])` still
+multiplies both entries when both are read.
+
 ## Loops or scalar code
 
 A small stage function is usually faster as straight-line scalar code than as a

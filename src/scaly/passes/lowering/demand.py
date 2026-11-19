@@ -35,7 +35,7 @@ def plan_demand(
     computed: Entries = None
     if want is not None and node.type.pattern is None:
       entries = np.flatnonzero(want)
-      if node.id in in_place or narrows(node, entries):
+      if len(entries) < node.size and (node.id in in_place or narrows(node, entries)):
         computed = domains[node.id] = entries
     for arg, entries in zip(node.args, operand_entries(node, computed, placeholder=node.id in in_place), strict=True):
       if arg.id in wanted and wanted[arg.id] is None:
@@ -106,13 +106,13 @@ def is_placement(node: Expr) -> bool:
 
 def placed_lanes(node: Expr, entries: Entries) -> np.ndarray:
   """The values of a placement stored when its consumers read ``entries``: those landing there, when
-  skipping the others pays for a table, else all of them."""
+  that needs no index table a loop over all of them does not, else all of them."""
   targets = scatter_targets(node)
   every = np.arange(len(targets), dtype=np.int64)
   if entries is None:
     return every
   lanes = np.flatnonzero(np.isin(targets, entries))
-  return lanes if cheap(lanes, len(targets)) else every
+  return lanes if affine(lanes) and (affine(targets[lanes]) or not affine(targets)) else every
 
 
 def parts(node: Expr, entries: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -148,6 +148,11 @@ def matmul_entries(node: Expr, entries: np.ndarray) -> tuple[np.ndarray, np.ndar
 
 
 def cheap(entries: np.ndarray, size: int) -> bool:
-  """Whether a loop over ``entries`` costs less than one over all ``size``: an affine run needs no
+  """Whether computing at ``entries`` costs less than computing all ``size``: an affine run needs no
   table, and a table pays when it skips more than a third of the work."""
-  return 3 * len(entries) <= 2 * size or len(affine_index_map(entries).residual) == 1
+  return 3 * len(entries) <= 2 * size or affine(entries)
+
+
+def affine(entries: np.ndarray) -> bool:
+  """Whether a loop reaches ``entries`` by arithmetic on its index, without a table."""
+  return len(affine_index_map(entries).residual) <= 1
