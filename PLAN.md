@@ -14,10 +14,10 @@ define the generated C interface.
   and the C, C++ and CasADi guide examples. Regenerate the local snapshots.
 - [x] Measure source size, generation, compile time, workspace and frame bytes. See
   `benchmarks/results/workspace-372/{before,after}/measurements.json`.
-- [x] Pass the detached pre-merge checks on la015. Pytest reported 5,206 passed and 16 skipped.
-  See `benchmarks/results/workspace-372/pre-layer3-rerun.log`.
-- [ ] Have Opus review the public interface and snapshot diff. Check any fixes at low effort.
-- [ ] Stop with the branch local until #69 layer 3 merges.
+- [x] Pass the detached pre-merge checks on la015. Pytest reported 5,207 passed and 16 skipped.
+  See `benchmarks/results/workspace-372/pre-layer3-review-fixes.log`.
+- [x] Have Opus review the public interface and snapshot diff. Check the fixes at low effort.
+- [x] Leave the branch local, ready and waiting for #69 layer 3.
 - [ ] On the coordinator's signal, rebase onto main, regenerate and remeasure the snapshots, rerun
   the full checks, and confirm the review delta. Remove this plan, publish the branch, open and link
   the pull request, and record the handoff on #372.
@@ -28,5 +28,9 @@ obsolete workspace metadata remain with [#474](https://github.com/PREDICT-EPFL/s
 Opus 5.5 (high) checked the public interface and every changed snapshot hunk. Verdict: changes
 needed. The fixes update the Program IR and build-recipe docs, explain the frame estimate at zero,
 document the CasADi heap staging and C++ leaf types, and remove the obsolete integer-workspace
-macro from the default header. The conditional regression passes both branches against NumPy and fails at 0 caller bytes
-when IF traversal is removed. The requested comparison measures generation and compilation only.
+macro from the default header. The conditional regression passes both branches against NumPy and
+fails at 0 caller bytes when IF traversal is removed. The timing comparison covers generation and
+C compilation.
+
+Reviewed by claude-opus-5-5 (high). Fixes approved by claude-opus-5-5 (low). The remaining extern
+lowering cleanup is tracked in #474.
