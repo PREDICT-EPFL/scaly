@@ -43,8 +43,6 @@ interfaces for inspecting or extending the compiler.
 
 ## Functions
 
-<!-- The curated entries below exclude CLibrary and extern until interface review. -->
-
 ::: scaly.function.model.Function
     options:
       show_source: false
@@ -63,6 +61,19 @@ expression graph for inspection and export.
         - "!^_"
         - "!^with_device$"
         - "!^role$"
+
+## External C functions
+
+The [code generation guide](../guide/codegen.md#external-c-functions) shows how to call C code
+from a `Function`.
+
+::: scaly.function.extern.CLibrary
+    options:
+      show_source: false
+
+::: scaly.function.extern.extern
+    options:
+      show_source: false
 
 
 ## Types
