@@ -21,7 +21,7 @@ from .plans import compact_reads
 
 ALIASES = frozenset({ExprOp.RESHAPE, ExprOp.STOP_GRADIENT, ExprOp.PACK, ExprOp.VALUES})
 MOVEMENT = ALIASES | {ExprOp.TRANSPOSE, ExprOp.SLICE, ExprOp.GATHER, ExprOp.CONST}
-_ONCE, _MANY, _BUFFER = 0, 1, 2
+_ONCE, _STRIDED, _MANY, _BUFFER = 0, 1, 2, 3
 
 
 @dataclass(frozen=True)
@@ -139,10 +139,10 @@ def product_outputs(roots: Sequence[Expr], outputs: dict[int, str]) -> dict[int,
 
 def _reads(node: Expr) -> list[tuple[Expr, int]]:
   """How ``node`` reads each argument: each element once, some elements several times, or only whole
-  from a buffer, as calls, prints and sparse plans do."""
+  from a buffer. A mixed sparse product reads its dense argument through strided accesses."""
   op = ExprOp(node.op)
   if op == ExprOp.MATMUL and len(node.args) == 2 and sum(a.type.pattern is not None for a in node.args) == 1:
-    return [(a, _MANY if a.type.pattern is None else _BUFFER) for a in node.args]
+    return [(a, _STRIDED if a.type.pattern is None else _BUFFER) for a in node.args]
   if node.type.pattern is not None or any(a.type.pattern is not None for a in node.args):
     return [(a, _BUFFER) for a in node.args]
   if op in ELEMENTWISE:
@@ -274,7 +274,7 @@ def plan_fusion(
       and op in MOVEMENT
       and (node.op != ExprOp.GATHER or node.args[1].value is not None and node.attrs["mode"] != "fill")
       and (len(edges) <= 1 or _free(node) or not any(a.id in inline_costly for a in node.args))
-      and all(k == _ONCE or k == _MANY and (_free(node) or op == ExprOp.TRANSPOSE) for _, k, _ in edges)
+      and all(k == _ONCE or k != _BUFFER and _free(node) or k == _STRIDED and op == ExprOp.TRANSPOSE for _, k, _ in edges)
       and not any(crosses_write(node.id, consumer) for consumer, _, _ in edges)
     ):
       deferred.add(node.id)
