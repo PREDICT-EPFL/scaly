@@ -135,7 +135,7 @@ it on Linux and macOS, as [Installation](installation.md#compiler-selection)
 explains. With the `zig-bin` package, `uv run zig cc` takes the place of `cc` in
 these commands.
 
-### Calling with existing buffers
+### The pointer entry
 
 The typed entry expects pointers to the structs in the header. To pass
 buffers owned by another library, use the pointer-array entry:
@@ -430,7 +430,8 @@ pointer-array sizes and the scratch capacity rounded up to a number of doubles.
 `energy_work_bytes` reports these sizes in bytes. The implementation reads and
 writes `w` as byte storage, so a caller can supply CasADi's double array or its
 own byte array. If the function calls separately compiled C, the CasADi adapter
-allocates typed staging for that call. The entry ignores `iw` and `mem`,
+allocates typed staging for that call. CasADi exports use scalar operations
+inside the lane loops. The entry ignores `iw` and `mem`,
 `energy_checkout()` returns zero, and `energy_release` does nothing.
 
 For example, on Linux this command builds a shared library for CasADi:

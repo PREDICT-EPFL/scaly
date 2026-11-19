@@ -1,17 +1,4 @@
-"""Render a lowered Program IR ``PROGRAM`` to standalone scalar C — rendering only, no lowering
-decisions of its own.
-
-This is the renderer half of the Program-IR architecture (``docs/how_it_works/architecture.md``):
-``passes.lowering.lower_function`` produces the Program IR; this module turns it into a
-translation unit exposing the pointer ABI (``<symbol>(arg,res,iw,w,mem)``) so
-``codegen.jit.CompiledFunction`` dispatches it unchanged. ``codegen/aot.py`` also uses its procedure and entry renderers to add solver option entries.
-
-There is **no silent fallback**: a function outside the lowered subset raises
-``LoweringError`` loudly. Workspace lifetime/spill packing is a Program-IR pass
-(``passes/program/pack_workspace.py``); the renderer just honors the ``sz_w`` / ``workspace_offset`` it sets.
-Scalar emission spells elementwise ops as the table in ``ad/rules.py`` says — the lowerer
-(``passes/lowering/``) holds the extensible ``ExprOp``-keyed registry.
-"""
+"""Render lowered Program IR to standalone C with typed or CasADi-compatible entry points."""
 
 from __future__ import annotations
 
@@ -141,8 +128,7 @@ _VECTOR_TYPEDEF = "typedef double double2 __attribute__((vector_size(16), aligne
 def render_program_c(
   prog: ProgramNode, fun: ConcreteFunction, *, casadi: bool = False, dialect: CDialect = "gnu", vector_libm: VectorLibm = "none"
 ) -> str:
-  """Render ``fun``'s lowered PROGRAM to a standalone pointer-ABI translation unit. ``casadi`` adds
-  the CasADi query functions (``codegen/casadi.py``)."""
+  """Render ``fun``'s lowered PROGRAM to a standalone translation unit."""
   proc = main_proc(prog)
   pc = int(prog.attrs.get("proc_count", 1))
   callees = list(prog.args[: pc - 1])
@@ -302,9 +288,7 @@ def _render_entry(
   entry_setup: Sequence[str] = (),
   external_staging: int = 0,
 ) -> list[str]:
-  """Emit the pointer-ABI entry ``<symbol>(arg,res,iw,w,mem)`` with ``fun``'s main PROC body
-  inlined. ``codegen/aot.py`` reuses this for solver-bearing functions, so the top function's body
-  lowers through Program IR exactly like any other host function."""
+  """Emit the root kernel and its pointer-array entry, or emit the CasADi byte kernel."""
   param_count = int(proc.attrs["param_count"])
   body = list(proc.args[param_count:])
   sz_w = int(proc.attrs.get("sz_w", 0))  # set by passes/program/pack_workspace.py
@@ -362,12 +346,10 @@ def _render_raw_callee(
   staging: bool = False,
   name: str | None = None,
 ) -> list[str]:
-  """A callee renders as ``static inline void <name>_raw(const <dtype>* p0, ..., <unit>* w)`` — a
-  pointer per param plus the workspace tail (spilled slots index into ``w``; ``call`` sites pass
-  the caller's ``w`` advanced past its own spill window). ``w`` points to ``unit``, the
-  program's workspace dtype, and is ``void*`` for a byte workspace. The leading ``input_count`` params are
-  inputs and are ``const``-qualified except for explicit ``inout`` parameters, so a solver wrapper can pass
-  its ``const double*`` arguments without discarding qualifiers. No ABI wrapper.
+  """Render a private procedure with a pointer per leaf and per workspace array.
+
+  Inputs are const-qualified unless they are explicitly inout. In CasADi mode
+  the pointers address bytes and loads and stores copy the element representations.
 
   Callees stay inline unless lowering marks them ``noinline``, which it does for forward-AD helpers;
   see internal/notes/macos_clang_call_miscompile.md.

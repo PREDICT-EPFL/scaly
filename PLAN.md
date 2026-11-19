@@ -14,7 +14,8 @@ define the generated C interface.
   and the C, C++ and CasADi guide examples. Regenerate the local snapshots.
 - [x] Measure source size, generation, compile time, workspace and frame bytes. See
   `benchmarks/results/workspace-372/{before,after}/measurements.json`.
-- [ ] Pass the detached pre-merge checks on la015.
+- [x] Pass the detached pre-merge checks on la015. Pytest reported 5,206 passed and 16 skipped.
+  See `benchmarks/results/workspace-372/pre-layer3-rerun.log`.
 - [ ] Have Opus review the public interface and snapshot diff. Check any fixes at low effort.
 - [ ] Stop with the branch local until #69 layer 3 merges.
 - [ ] On the coordinator's signal, rebase onto main, regenerate and remeasure the snapshots, rerun
