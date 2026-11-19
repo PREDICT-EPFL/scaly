@@ -161,7 +161,7 @@ def test_cortex_a53_executable_matches_numpy_under_qemu(tmp_path, name) -> None:
   case = CASES[name]()
   module = _write(case, tmp_path)
   prefix = module.header_name.removesuffix(".h")
-  assert f"const {case.ctype}** arg" in module.header
+  assert f"{case.ctype} data[" in module.header
   main, exe = tmp_path / "main.c", tmp_path / "main"
   main.write_text(_main(case, prefix))
   command = ["zig", "cc", "-target", "aarch64-linux-musl", "-mcpu=cortex_a53", "-O2", "-std=c11", "-static"]
