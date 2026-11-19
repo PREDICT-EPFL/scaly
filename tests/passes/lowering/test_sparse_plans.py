@@ -32,10 +32,10 @@ def test_sparse_select_constant_regions_read_only_the_chosen_branch(monkeypatch,
   captured = []
   emit = plans.emit_map
 
-  def observe(ctx, node, reads, body, **kwargs):
+  def observe(ctx, node, reads, **kwargs):
     if node.op == ExprOp.SELECT:
       captured.append(reads)
-    return emit(ctx, node, reads, body, **kwargs)
+    return emit(ctx, node, reads, **kwargs)
 
   monkeypatch.setattr(plans, "emit_map", observe)
 

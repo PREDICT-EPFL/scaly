@@ -20,7 +20,7 @@ def _lower_elementwise(ctx: LowerCtx, node: Expr) -> None:
   nests (#71). An operand read through a transpose makes the loop a nest over the output, merged where
   contiguous, so the remap divides only on the axes a reshape merges."""
   if node.type.pattern is not None:
-    lower_elementwise(ctx, node, ELEMENTWISE[ExprOp(node.op)].program)
+    lower_elementwise(ctx, node)
     return
   if (scatters := ctx.sums.get(node.id)) is not None:
     lower_scatter_sum(ctx, node, scatters)

@@ -111,6 +111,7 @@ def plan_fusion(
   seed_pairs: bool,
   support_of: Callable[[Expr], Support],
   reads_at: Callable[[Expr, ProgramNode], Sequence[tuple[Expr, ProgramNode]]],
+  shares_traversal: Callable[[Expr, Expr], bool],
 ) -> tuple[frozenset[int], dict[int, tuple[Expr, ...]], dict[int, tuple[Expr, ...]]]:
   """The deferred node ids, scatter sums keyed by their output id, and consumer loop groups keyed
   by each member id.
@@ -122,8 +123,8 @@ def plan_fusion(
   consumer reads each of its elements once, through any chain of deferred movement ops; one that holds a libm call is deferred only into a
   single read, so the call is not duplicated. Agreeing reads can share a deferred value and merge
   independent consumer loops over the same domain. Everything else is stored: reductions, products,
-  scatters, concatenations, calls, outputs and sparse values. A read stays before a scatter that
-  may overwrite its source.
+  scatters, concatenations, calls and outputs. A sparse compact map can defer into its sole reader
+  when their traversals agree. A read stays before a scatter that may overwrite its source.
 
   ``invariant`` holds, for a function mapped or run as a loop body, the input positions each map or
   loop holds the same at every trip. The trip is a range that a node depending only on those inputs
@@ -289,6 +290,19 @@ def plan_fusion(
     lambda node, consumer: hoistable(node.id, consumer) or crosses_write(node.id, consumer),
     keep_zeros,
   )
+  sparse_terminals: dict[int, int] = {}
+  for node in reversed(nodes):
+    uses = readers.get(node.id, ())
+    if node.type.pattern is None or node.id in outputs or len(uses) != 1:
+      continue
+    consumer = uses[0][0]
+    terminal_id = sparse_terminals.get(consumer.id, consumer.id)
+    if hoistable(node.id, terminal_id) or crosses_write(node.id, terminal_id) or not shares_traversal(node, consumer):
+      continue
+    if scalar and (support := support_of(node)) is not None and len(support) < node.type.storage_size:
+      continue
+    deferred.add(node.id)
+    sparse_terminals[node.id] = terminal_id
   return frozenset(deferred), sums, groups
 
 
