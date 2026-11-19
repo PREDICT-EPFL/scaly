@@ -44,7 +44,7 @@ def compact_reads(node: Expr) -> tuple[np.ndarray, ...]:
   logical = stored_indices(node.type)
   if node.op in ELEMENTWISE:
     reads = [stored_slots(arg.type, project_entries(logical, arg.shape, node.shape)) for arg in node.args]
-    if node.op == ExprOp.SELECT and (chosen := _constant_condition(node.args[0], logical, node.shape)) is not None:
+    if ELEMENTWISE[ExprOp(node.op)].program == ProgramOp.SELECT and (chosen := _constant_condition(node.args[0], logical, node.shape)) is not None:
       reads[1] = np.where(chosen, reads[1], -1)
       reads[2] = np.where(chosen, -1, reads[2])
     return tuple(reads)
