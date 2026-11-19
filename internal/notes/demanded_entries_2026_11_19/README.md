@@ -2,16 +2,24 @@
 
 The base is main after #505 (`5242034b`). Lowering walks back from the
 outputs and records, for each value, the entries its readers load. A value
-evaluated where it is read is computed at exactly those entries. A stored value
-is computed only there when the narrowed loop pays for itself: always for a
-product or an axis reduction, for an elementwise operation when it skips a
-third of the entries or they are evenly spaced, and for a copy or a placement
-(a scatter into zeros, or a sum of them) only when it needs no index table that
-the whole loop did not already need. A sum of placements also zeroes only the
-read entries that its first placement does not overwrite, when those are evenly
-spaced. Paths that already compute a known support (stored patterns, forward
-helpers specialized to seed supports, reductions over a known support) keep
-computing all of it. Both choices are posted on #75.
+evaluated where it is read is computed at exactly those entries. A stored dense
+value is computed only there when the narrowed loop pays for itself: always for
+an axis reduction and a product with a vector operand, for an elementwise value
+that calls libm when it skips a third of its entries, and for anything else,
+matrix-matrix products and scatters included, only when the narrowed loop needs
+no index table the whole loop did not already need. A sum of scatters into
+zeros also zeroes only the read entries that its first scatter does not
+overwrite, when those need no table. Sparse values and forward helpers that
+plan by seed support keep computing all they store. Both open choices are
+posted on #75.
+
+The first cost rule narrowed every product and every elementwise value under
+two thirds of its entries. The code review timed it on la015 (indicative, not
+a benchmark study): a table-driven 4 x 3 by 3 x 246 product was 3.2 times
+slower than computing it whole at 527 of 984 entries and 1.36 times faster at
+10%, and `a*b + a` was 1.5 to 2.1 times slower at 30% to 60%, while a narrowed
+row sum and a matrix-vector product were about 4 times faster at 54%. The rule
+above follows those numbers.
 
 A selected concatenation (layer 4 of #69) now reads a computed part from
 storage instead of evaluating it at every gathered entry, which is devrush's
@@ -41,16 +49,16 @@ chain's sparse Jacobian and the KKT fixture are byte-identical to main. The
 #69 gates hold: chain M=5 below 100,000 doubles, race-car `SZ_W` zero, the
 neural MPC Jacobian at zero for N=6 and N=100.
 
-`narrowed.json` counts the stored values computed at fewer than all their
-entries. In chain M=5 they are ten sums of placements (13,548 of 25,626
-entries) and one placement (3 of 504). The dense Hessian assembly zeroes 3
-entries instead of 23,544, since its first placement stores every other
-read entry, and the objective's diagonal placement stores 3 of its 72 values.
-In npmpc 100, two sums of placements (5,011 of 9,835 entries) and two matrix
-products (2 of 8 entries). The other placements' read values sit at irregular
-places, so storing only them would need a table, and they stay whole. Removing
-that work needs the reader to take the placed values directly, without the
-dense buffer, which is a follow-up.
+`narrowed.json` counts, per kernel, the stored values given a narrowed
+domain and the size of that domain. For a sum of scatters the domain bounds
+which values it stores and which entries it zeroes, and leaves the code as it
+was when both would need a table, as in race_cars 5. In chain M=5 the dense
+Hessian assembly zeroes 3 entries instead of 23,544, since its first scatter
+stores every other read entry, and the objective's diagonal scatter stores 3 of
+its 72 values. In npmpc 100 two products with a vector operand compute 2 of
+their 8 entries. The other scattered values reach the read entries at irregular
+places, so they stay whole. Removing that work needs the reader to take the
+scattered values directly, without the dense buffer, which is a follow-up.
 
 A first version narrowed placements and copies under the two-thirds rule. It
 grew chain M=5 to 972,999 bytes (three new index tables, 28,203 entries) and
@@ -61,28 +69,32 @@ That is why copies and placements now narrow only without new tables.
 
 `uv run python -m tests.test_c_snapshot` regenerated the 21-file corpus.
 `snapshot-audit.json` records both digests of every file: all are
-byte-identical to main. An earlier version changed `spjac.c` by zeroing the
+byte-identical to main. An earlier version changed `spjac.c` by zeroing a
 sum through a 12-entry table, which the final rule rejects.
 
 ## Tests and perturbations
 
-`tests/passes/lowering/test_demand.py` compares compiled C with NumPy and
+`tests/passes/lowering/test_demand.py` compares compiled C with NumPy,
 counts floating-point operations on the lowered program, each once per loop
-trip. All 13 cases fail on main on their counts (for example 2,952 multiplies
-where 527 x 3 are expected in devrush's 984-versus-527 case, and 24 sines where
-4 are expected behind a repeating gather), and pass here.
+trip, and runs the lowered program's index arithmetic to check that no load
+reads an entry no store wrote, including loads a select discards. All 16 cases
+fail on main on their counts (for example 1,581 multiplies expected where main
+runs 2,952 in devrush's 984-versus-527 case, and 4 sines where main runs 24
+behind a repeating gather), and pass here.
 
 `prove.py` applies one perturbation at a time to a copy of `src/`.
 `perturbations.json` holds every outcome.
 
 | Perturbation | Fails |
 |---|---|
-| Never narrow a stored value | 12 of 13 on their counts. The concatenation guard keeps its part whole either way |
+| Never narrow a stored value | 15 of 16 on their counts. The concatenation guard keeps its part whole either way |
 | Map a transpose's demand through its own axes | the transpose family, on values |
-| Demand a scatter's values that miss the read entries | the scatter family, on values |
-| Demand the wrong columns of a product | the sampled-adjoint case, on values |
+| Demand a scatter's values that miss the read entries | the scatter family and the sum-of-scatters case, on values and unwritten loads |
+| Demand the wrong columns of a product | the one-column product, on values |
 | Evaluate a computed part inside a selected concatenation | the concatenation guard |
 | Narrow an elementwise value through any table | the concatenation guard |
+| Read an unselected concatenation part at entry zero | the concatenation family, on an unwritten load |
+| Skip the zeros under a narrowed sum of scatters | the scatter family and the sum-of-scatters case |
 | Let a repeating gather read a sum in place | the repeating-gather guard |
 
 ## Reproduction

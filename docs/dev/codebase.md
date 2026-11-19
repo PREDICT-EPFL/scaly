@@ -191,6 +191,11 @@ Every expression op also needs a support classification in `OP_INFO`: reuse its 
 or set `support_rule`. For deliberately unknown support, add the op to the unknown set in
 `tests/test_op_coverage.py`.
 
+A lowering rule may load from an operand only the entries `operand_entries` in
+`passes/lowering/demand.py` gives for it, since an operand can be computed only at those. A rule
+that reads more widens what `operand_entries` returns for its op. An op it does not name is read
+whole.
+
 | To add | Touch |
 | --- | --- |
 | A scalar math op | `ExprOp`, `OP_INFO` and the `COMMON_ELEMENTWISE_UNARY` or `_BINARY` set in `ir/expr.py`; a matching `ProgramOp` in `ir/program.py` and its category set; a row in `ELEMENTWISE` in `ad/rules.py` giving its partials, NumPy fold, program op, C spelling and whether it is an expensive libm call. Verification, both AD modes, constant folding, lowering, C rendering and fusion read these |

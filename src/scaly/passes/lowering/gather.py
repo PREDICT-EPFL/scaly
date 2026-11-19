@@ -12,7 +12,7 @@ from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.types import dtypes
 from ..arith import constant
 from .ctx import LowerCtx, lowers, _size_of, _flat_coordinates
-from .demand import affine, placed_lanes
+from .demand import affine, scattered_values
 from .fusion import scatter_targets
 from .plans import lower_movement
 from .in_place import fused_value, scatter_reuse
@@ -144,12 +144,12 @@ def lower_scatter_sum(ctx: LowerCtx, node: Expr, scatters: Sequence[Expr]) -> No
   an index or follows another scatter.
 
   Where the consumers read only some entries, a scatter may store only the values that land on them
-  (``placed_lanes``), and the entries written and not overwritten by the first scatter's stores are
+  (``scattered_values``), and the entries written and not overwritten by the first scatter's stores are
   zeroed alone when they are evenly spaced."""
   out = ctx.alloc_tmp(node)
   entries = ctx.domains.get(node.id)
   writes = [scatter_targets(leaf) for leaf in scatters]
-  lanes = [placed_lanes(leaf, entries) for leaf in scatters]
+  lanes = [scattered_values(leaf, entries) for leaf in scatters]
   zeros = None
   if entries is not None:
     first = writes[0][lanes[0]]
@@ -161,14 +161,14 @@ def lower_scatter_sum(ctx: LowerCtx, node: Expr, scatters: Sequence[Expr]) -> No
     zrng = p.range_(zname, 0, _size_of(node.shape) if zeros is None else len(zeros), kind=RangeKind.GLOBAL)
     z = p.var(zname) if zeros is None else ctx.index_at(zeros, p.var(zname), shared=True)
     ctx.statements.append(p.for_(zrng, [p.store(p.view(out, [z]), constant(0, node.type.dtype))]))
-  for k, (leaf, idx, lanes) in enumerate(zip(scatters, writes, lanes, strict=True)):
-    idx = idx[lanes]
+  for k, (leaf, targets, kept) in enumerate(zip(scatters, writes, lanes, strict=True)):
+    idx = targets[kept]
     iname = ctx.names.allocate(f"i_{out.attrs['name']}")
     repeated = len(set(idx.tolist())) != len(idx)
     irng = p.range_(iname, 0, len(idx), kind=RangeKind.REDUCE if repeated else RangeKind.GLOBAL)
     i = p.var(iname)
     target = p.view(out, [ctx.index_at(idx, i)])
-    value = ctx.read_stored(leaf.args[2], lanes, i)
+    value = ctx.read_stored(leaf.args[2], kept, i)
     stmt = p.store(target, p.add(p.load(target), value) if repeated or k else value)
     if leaf.id in ctx.permutes:
       ctx.emit([irng], [stmt], delinearize=True)

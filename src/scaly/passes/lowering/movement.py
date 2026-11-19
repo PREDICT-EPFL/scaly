@@ -120,7 +120,7 @@ def _demanded_parts(ctx: LowerCtx, node: Expr) -> bool:
       continue
     ranges, (k,) = ctx.nest((int(np.count_nonzero(selected)),), f"j_{out.attrs['name']}_{i}")
     value = ctx.read_flat(src, ctx.index_at(place[selected], k, shared=True))
-    ctx.emit(ranges, [p.store(p.view(out, [ctx.index_at(entries[selected], k, shared=True)]), value)])
+    ctx.emit(ranges, [p.store(p.view(out, [ctx.index_at(entries[selected], k, shared=True)]), value)], delinearize=node.id in ctx.permutes)
   return True
 
 

@@ -18,6 +18,8 @@ PERTURBATIONS = {
   "demand the wrong columns of a product": ("demand.py", "np.arange(inner) * width + columns[:, None] % width", "np.arange(inner) * width + columns[:, None] // width"),
   "evaluate a computed part inside a selected concat": ("fusion.py", "      kinds = dict.fromkeys(kinds, _MANY)\n", "      pass\n"),
   "narrow through any table": ("demand.py", "return 3 * len(entries) <= 2 * size or", "return True or"),
+  "read an unselected part at entry zero": ("ctx.py", "p.const_int(0 if computed is None or not len(computed) else int(computed[0]))", "p.const_int(0)"),
+  "skip the zeros under a narrowed sum of scatters": ("gather.py", "  if zeros is None or len(zeros):", "  if zeros is None:"),
   "distribute a repeating gather": ("fusion.py", "_ONCE if len(np.unique(indices)) == len(indices) else _MANY)]", "_ONCE)]"),
 }
 

@@ -7,28 +7,26 @@ from collections.abc import Callable, Sequence
 import numpy as np
 
 from ...ad.rules import ELEMENTWISE
-from ...ir.expr import Expr, ExprOp, _index_values
+from ...ir.expr import Expr, ExprOp, _index_values, topo
 from ...ir.support import project_entries, reduce_entries, slice_indices, transpose_entries
 from ..affine import affine_index_map
-from .fusion import ALIASES, scatter_targets
+from .fusion import ALIASES, adds_into_zeros, scatter_targets
 
 Entries = np.ndarray | None
 
 
-def plan_demand(
-  nodes: Sequence[Expr], roots: Sequence[Expr], in_place: frozenset[int], narrows: Callable[[Expr, np.ndarray], bool]
-) -> dict[int, np.ndarray]:
+def plan_demand(roots: Sequence[Expr], in_place: frozenset[int], narrows: Callable[[Expr, np.ndarray], bool]) -> dict[int, np.ndarray]:
   """The entries each node is computed at, for the nodes computed at fewer than all of them.
 
   Walking from the outputs, a node's demanded entries are the union of the entries its consumers
   read. A node in ``in_place`` is evaluated where it is read, so it is computed at exactly its
   demanded entries. A stored node is computed there when ``narrows`` accepts them, and at every
-  entry otherwise. A node's operands are then demanded at the entries its computation reads.
-  ``nodes`` is in topological order."""
+  entry otherwise. A node's operands are then demanded at the entries its computation reads, which
+  every lowering rule must not exceed."""
   # Each read node's demanded entries as a mask, None when all of them.
   wanted: dict[int, np.ndarray | None] = {root.id: None for root in roots}
   domains: dict[int, np.ndarray] = {}
-  for node in reversed(nodes):
+  for node in reversed(topo(roots)):
     if node.id not in wanted:
       continue
     want = wanted.pop(node.id)
@@ -37,16 +35,16 @@ def plan_demand(
       entries = np.flatnonzero(want)
       if len(entries) < node.size and (node.id in in_place or narrows(node, entries)):
         computed = domains[node.id] = entries
-    for arg, entries in zip(node.args, operand_entries(node, computed, placeholder=node.id in in_place), strict=True):
+    for arg, read in zip(node.args, operand_entries(node, computed, placeholder=node.id in in_place), strict=True):
       if arg.id in wanted and wanted[arg.id] is None:
         continue
-      if entries is None or arg.type.pattern is not None or not arg.size:
+      if read is None or arg.type.pattern is not None or not arg.size:
         wanted[arg.id] = None
         continue
       mask = wanted.get(arg.id)
       if mask is None:
         mask = wanted[arg.id] = np.zeros(arg.size, dtype=bool)
-      mask[entries] = True
+      mask[read] = True
   return domains
 
 
@@ -65,11 +63,10 @@ def operand_entries(node: Expr, entries: Entries, *, placeholder: bool = False) 
       return everything
     picked = _index_values(node).reshape(-1)
     picked = picked if entries is None else picked[entries]
-    size = node.args[0].size
-    picked = np.clip(picked, 0, size - 1) if node.attrs["mode"] == "fill" else picked[(picked >= 0) & (picked < size)]
-    return (picked, None)
+    # A filling gather loads a clamped index for an entry out of range, then discards it.
+    return (np.clip(picked, 0, node.args[0].size - 1) if node.attrs["mode"] == "fill" else picked, None)
   if op == ExprOp.SLICE:
-    return (slice_indices(node.args[0].shape, node.attrs["index"], np.arange(node.size) if entries is None else entries).reshape(-1),)
+    return (slice_indices(node.args[0].shape, node.attrs["index"], entries).reshape(-1),)
   if entries is None:
     return everything
   if op in ELEMENTWISE:
@@ -83,8 +80,8 @@ def operand_entries(node: Expr, entries: Entries, *, placeholder: bool = False) 
     owner, place = parts(node, entries)
     picked = [place[owner == k] for k in range(len(node.args))]
     return tuple(np.zeros(1, dtype=np.int64) if placeholder and arg.size and not len(p) else p for p, arg in zip(picked, node.args, strict=True))
-  if op == ExprOp.SCATTER and is_placement(node):
-    return (None, None, placed_lanes(node, entries))
+  if op == ExprOp.SCATTER and adds_into_zeros(node):
+    return (None, None, scattered_values(node, entries))
   if op == ExprOp.REDUCE:
     src = node.args[0]
     return (np.flatnonzero(np.isin(reduce_entries(np.arange(src.size), src.shape, node.attrs["axes"]), entries)),)
@@ -93,20 +90,9 @@ def operand_entries(node: Expr, entries: Entries, *, placeholder: bool = False) 
   return everything
 
 
-def is_placement(node: Expr) -> bool:
-  """A dense scatter that adds a static table of values into zeros."""
-  return (
-    node.type.pattern is None
-    and node.args[0].support == frozenset()
-    and node.args[1].value is not None
-    and node.attrs["combine"] == "add"
-    and node.attrs["mode"] != "fill"
-  )
-
-
-def placed_lanes(node: Expr, entries: Entries) -> np.ndarray:
-  """The values of a placement stored when its consumers read ``entries``: those landing there, when
-  that needs no index table a loop over all of them does not, else all of them."""
+def scattered_values(node: Expr, entries: Entries) -> np.ndarray:
+  """The values a scatter into zeros stores when its consumers read ``entries``: those landing there,
+  when that needs no index table a loop over all of them does not, else all of them."""
   targets = scatter_targets(node)
   every = np.arange(len(targets), dtype=np.int64)
   if entries is None:
@@ -149,7 +135,7 @@ def matmul_entries(node: Expr, entries: np.ndarray) -> tuple[np.ndarray, np.ndar
 
 def cheap(entries: np.ndarray, size: int) -> bool:
   """Whether computing at ``entries`` costs less than computing all ``size``: an affine run needs no
-  table, and a table pays when it skips more than a third of the work."""
+  table, and a table pays when it skips at least a third of the work."""
   return 3 * len(entries) <= 2 * size or affine(entries)
 
 
