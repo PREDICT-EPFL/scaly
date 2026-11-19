@@ -31,8 +31,8 @@ mode reserves two 768-double buffers in place of two 1,024-double buffers.
 
 The probes record identical mapped lane capacities on both revisions for
 each horizon and lane request. The root declaration counts exclude constants,
-callee frames, lane-helper scratch and compiler-managed registers. Caller workspace includes the typed
-workspace capacity of the root and its callees. Both are reported separately.
+callee frames, lane-helper scratch and compiler-managed registers. Caller
+workspace includes the typed capacity of the root and its callees.
 The horizon 6 case with four requested lanes already uses a scalar call for
 the six trips and keeps no full hidden-layer array in the root. #71 owns
 reuse inside nested loops and packing of the remaining live temporaries.
