@@ -19,13 +19,13 @@ INCLUDE = Path(__file__).resolve().parents[2] / "examples" / "embedded"
 LIBM = {"sinf", "cosf"}
 
 
-def _undefined(obj: Path) -> set[str]:
+def undefined_symbols(obj: Path) -> set[str]:
   output = subprocess.run(["nm", "--undefined-only", "--format=posix", str(obj)], check=True, capture_output=True, text=True).stdout
   return {line.split()[0] for line in output.splitlines() if line.strip()}
 
 
 def _check_symbols(obj: Path) -> None:
-  unexpected = _undefined(obj) - LIBM
+  unexpected = undefined_symbols(obj) - LIBM
   assert not unexpected, f"symbols outside target libm: {sorted(unexpected)}"
 
 
@@ -54,14 +54,20 @@ def _compile(source: Path, obj: Path, cpu: str) -> None:
   )
 
 
+def oracle_reference(z: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+  """The embedded oracle's residuals and dense Jacobian, computed with NumPy."""
+  pairs = z.reshape(4, 2)
+  expected = np.stack([np.sin(pairs[:, 0]) * pairs[:, 1], pairs[:, 0] + pairs[:, 1] ** 2], axis=1).ravel()
+  dense = np.zeros((8, 8), dtype=z.dtype)
+  for i, (a, b) in enumerate(pairs):
+    dense[2 * i : 2 * i + 2, 2 * i : 2 * i + 2] = [[np.cos(a) * b, np.sin(a)], [1.0, 2.0 * b]]
+  return expected, dense
+
+
 def test_embedded_values_and_jacobian_match_numpy() -> None:
   z = np.linspace(-0.7, 0.8, 8, dtype=np.float32)
   values, jac = oracle(z)
-  pairs = z.reshape(4, 2)
-  expected = np.stack([np.sin(pairs[:, 0]) * pairs[:, 1], pairs[:, 0] + pairs[:, 1] ** 2], axis=1).ravel()
-  dense = np.zeros((8, 8), dtype=np.float32)
-  for i, (a, b) in enumerate(pairs):
-    dense[2 * i : 2 * i + 2, 2 * i : 2 * i + 2] = [[np.cos(a) * b, np.sin(a)], [1.0, 2.0 * b]]
+  expected, dense = oracle_reference(z)
   pattern = oracle.sparsity(of="spjac_residuals_zs")
   assert pattern is not None
   assert values.dtype == jac.dtype == np.float32
@@ -91,7 +97,7 @@ def test_cortex_m_oracle_has_only_libm_symbols(tmp_path, cpu) -> None:
   assert "Tag_ABI_VFP_args: VFP registers" in attributes
   assert "Tag_ABI_HardFP_use: SP only" in attributes
   _check_symbols(obj)
-  assert _undefined(obj) == LIBM
+  assert undefined_symbols(obj) == LIBM
 
   @sc.function(sc.arg("x", sc.TensorType((), dtype=sc.dtypes.float32)), outputs=sc.arg("y"))
   def diagnostic(x: sc.Expr) -> sc.Expr:
@@ -110,7 +116,7 @@ def test_cortex_m_oracle_has_only_libm_symbols(tmp_path, cpu) -> None:
     f"## {cpu}\n\n```text\n{sizes}\n"
     f"Flash: {text + data} bytes; static RAM: {data + bss} bytes\n"
     f"Caller workspace: {module.workspace_size} bytes; inputs: {inputs} bytes; outputs: {outputs} bytes\n"
-    f"Undefined symbols: {', '.join(sorted(_undefined(obj)))}\n"
+    f"Undefined symbols: {', '.join(sorted(undefined_symbols(obj)))}\n"
     "```\n\n"
     "Object text includes code and read-only data. Flash is text + data, static RAM is data + bss. "
     "Caller buffers are additional RAM. Target libm, startup code and application stack are excluded.\n"
