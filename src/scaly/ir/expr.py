@@ -754,13 +754,18 @@ class Expr:
     """Average over the chosen axes, counting structural zeros in sparse inputs.
 
     Axes and ``keepdims`` follow ``sum``. An empty reduction domain returns NaN.
+    Integer and bool inputs return float64, and floating inputs keep their dtype.
+    Integer sums keep their accumulator dtype, bool sums use int64, and the sum
+    is cast to float64 before division.
     """
-    result = _reduce(self, "add", axis)
+    result = _reduce(cast(self, dtypes.int64) if self.type.dtype.is_bool else self, "add", axis)
     count = int(np.prod([self.shape[i] for i in result.attrs["axes"]], dtype=np.int64))
     if keepdims:
       result = result.reshape(tuple(1 if i in result.attrs["axes"] else n for i, n in enumerate(self.shape)))
+    if not result.type.dtype.is_floating:
+      result = cast(result, dtypes.float64)
     if count == 0:
-      return _uniform(np.nan, result.shape, dtype=self.type.dtype, lowering=self.lowering)
+      return _uniform(np.nan, result.shape, dtype=result.type.dtype, lowering=self.lowering)
     if result.type.pattern is not None:
       return pack(values(result) / count, result.type.pattern, shape=result.shape)
     return result / count

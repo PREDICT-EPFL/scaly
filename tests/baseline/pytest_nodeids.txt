@@ -4315,6 +4315,10 @@ tests/passes/lowering/test_reduce.py::test_internal_extrema_every_axis_subset[sc
 tests/passes/lowering/test_reduce.py::test_internal_extrema_every_axis_subset[scalar-min-shape0]
 tests/passes/lowering/test_reduce.py::test_internal_extrema_every_axis_subset[scalar-min-shape1]
 tests/passes/lowering/test_reduce.py::test_internal_extrema_every_axis_subset[scalar-min-shape2]
+tests/passes/lowering/test_reduce.py::test_mean_dtype_matches_numpy[bool]
+tests/passes/lowering/test_reduce.py::test_mean_dtype_matches_numpy[float32]
+tests/passes/lowering/test_reduce.py::test_mean_dtype_matches_numpy[int32]
+tests/passes/lowering/test_reduce.py::test_mean_dtype_matches_numpy[int64]
 tests/passes/lowering/test_reduce.py::test_no_axis_sum_keeps_numpy_signed_zero
 tests/passes/lowering/test_reduce.py::test_reverse_broadcast_evaluates_only_the_known_support
 tests/passes/lowering/test_reduce.py::test_sparse_extrema_full_partial_and_absent_rows[block]
