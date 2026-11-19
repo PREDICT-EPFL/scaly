@@ -93,7 +93,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   lines.append("typedef struct {")
   for i in range(param_count):
     lines.append(f"  const double* p{i};")
-  lines.append("  double* w;")
+  lines.extend(f"  {declaration};" for declaration in ctx.workspace_declarations)
   lines.append("  double t_fe;")
   lines.append("  int32_t n_eval_f, n_eval_grad_f, n_eval_g, n_eval_jac_g, n_eval_h, iter;")
   lines.append("  double inf_pr, step_inf, alpha;")
@@ -118,7 +118,8 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   lines.append(f"  {symbol}_ctx_t* ctx = ({symbol}_ctx_t*)ud;")
   lines.append("  double fe_t0 = scaly_clock_s();")
   lines.append("  double f_buf[1];")
-  lines.append(f"  {base_raw}(x, {', '.join([*param_args, 'f_buf', *([f'{symbol}_g_scratch'] if m else [])])}, ctx->w);")
+  base_work = ctx.oracle_workspace(base, prefix="ctx->")
+  lines.append(f"  {base_raw}({', '.join(['x', *param_args, 'f_buf', *([f'{symbol}_g_scratch'] if m else []), *base_work])});")
   lines.append("  ctx->t_fe += scaly_clock_s() - fe_t0;")
   lines.append("  ctx->n_eval_f += 1;")
   lines.append("  obj_value[0] = f_buf[0];")
@@ -130,7 +131,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   lines.append("  (void)N; (void)new_x;")
   lines.append(f"  {symbol}_ctx_t* ctx = ({symbol}_ctx_t*)ud;")
   lines.append("  double fe_t0 = scaly_clock_s();")
-  lines.append(f"  {grad_raw}(x, {', '.join([*param_args, 'grad_f'])}, ctx->w);")
+  lines.append(f"  {grad_raw}({', '.join(['x', *param_args, 'grad_f', *ctx.oracle_workspace(grad, prefix='ctx->')])});")
   lines.append("  ctx->t_fe += scaly_clock_s() - fe_t0;")
   lines.append("  ctx->n_eval_grad_f += 1;")
   lines.append("  return true;")
@@ -146,7 +147,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     lines.append(f"  {symbol}_ctx_t* ctx = ({symbol}_ctx_t*)ud;")
     lines.append("  double fe_t0 = scaly_clock_s();")
     lines.append("  double f_buf[1];")
-    lines.append(f"  {base_raw}(x, {', '.join([*param_args, 'f_buf', 'g'])}, ctx->w);")
+    lines.append(f"  {base_raw}({', '.join(['x', *param_args, 'f_buf', 'g', *base_work])});")
     lines.append("  ctx->t_fe += scaly_clock_s() - fe_t0;")
     lines.append("  ctx->n_eval_g += 1;")
     lines.append("  return true;")
@@ -167,8 +168,9 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     lines.append(f"    for (int k = 0; k < {nnz_jac}; ++k) {{ iRow[k] = {symbol}_jac_rows[k]; jCol[k] = {symbol}_jac_cols[k]; }}")
     lines.append("  } else {")
     assert jac_raw is not None
+    assert jac is not None
     lines.append("    double fe_t0 = scaly_clock_s();")
-    lines.append(f"    {jac_raw}(x, {', '.join([*param_args, 'values'])}, ctx->w);")
+    lines.append(f"    {jac_raw}({', '.join(['x', *param_args, 'values', *ctx.oracle_workspace(jac, prefix='ctx->')])});")
     lines.append("    ctx->t_fe += scaly_clock_s() - fe_t0;")
     lines.append("    ctx->n_eval_jac_g += 1;")
     lines.append("  }")
@@ -196,7 +198,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     if m:
       hess_args.append("lambda")
     hess_args.append("values")
-    lines.append(f"    {hess_raw}({', '.join(hess_args)}, ctx->w);")
+    lines.append(f"    {hess_raw}({', '.join([*hess_args, *ctx.oracle_workspace(hess, prefix='ctx->')])});")
     lines.append("    ctx->t_fe += scaly_clock_s() - fe_t0;")
     lines.append("    ctx->n_eval_h += 1;")
     lines.append("  }")
@@ -228,13 +230,13 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   # Wrapper body.
   c_inputs = [f"const double* in{i}" for i in range(len(desc.input_signature))]
   c_outputs = [f"double* out{i}" for i in range(len(desc.output_signature))]
-  params = [*c_inputs, *c_outputs, "double* w", "const scaly_solver_option* options"]
+  params = [*c_inputs, *c_outputs, *ctx.workspace_declarations, "const scaly_solver_option* options"]
   lines.append(f"static void {raw}({', '.join(params)}) {{")
   lines.append("  double stats_t0 = scaly_clock_s();")
   # Stash params + workspace in the static context, reset per-solve stats.
   for i in range(param_count):
     lines.append(f"  {symbol}_ctx.p{i} = in{param_start + i};")
-  lines.append(f"  {symbol}_ctx.w = w;")
+  lines.extend(f"  {symbol}_ctx.{name} = {name};" for name in ctx.workspace_args)
   lines.append(f"  {symbol}_ctx.t_fe = 0.0;")
   lines.append(f"  {symbol}_ctx.n_eval_f = 0; {symbol}_ctx.n_eval_grad_f = 0; {symbol}_ctx.n_eval_g = 0;")
   lines.append(f"  {symbol}_ctx.n_eval_jac_g = 0; {symbol}_ctx.n_eval_h = 0; {symbol}_ctx.iter = 0;")
@@ -248,9 +250,9 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   bounds_outs = ["x_L", "x_U"]
   if n_g:
     bounds_outs.extend(["l_in", "u_in"])
-  bounds_call = ", ".join([*[f"in{param_start + i}" for i in range(param_count)], *bounds_outs])
+  bounds_call = ", ".join([*[f"in{param_start + i}" for i in range(param_count)], *bounds_outs, *ctx.oracle_workspace(bounds)])
   lines.append("  double bounds_t0 = scaly_clock_s();")
-  lines.append(f"  {bounds_raw}({bounds_call}, w);")
+  lines.append(f"  {bounds_raw}({bounds_call});")
   lines.append(f"  {symbol}_ctx.t_fe += scaly_clock_s() - bounds_t0;")
   lines.append(f"  for (int i = 0; i < {n}; ++i) {{")
   lines.append(f"    if (!(x_L[i] > -{_IPOPT_INF})) x_L[i] = -{_IPOPT_INF};")

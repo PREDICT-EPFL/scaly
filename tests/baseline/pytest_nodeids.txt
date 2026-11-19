@@ -2533,6 +2533,7 @@ tests/codegen/test_carried_ranges.py::test_carried_recurrence_and_trip_count_mat
 tests/codegen/test_carried_ranges.py::test_carried_recurrence_and_trip_count_match_numpy[6-6-True-gnu-2-True]
 tests/codegen/test_carried_ranges.py::test_nested_exit_variable_shadows_the_outer_loop_index[False]
 tests/codegen/test_carried_ranges.py::test_nested_exit_variable_shadows_the_outer_loop_index[True]
+tests/codegen/test_casadi.py::test_casadi_byte_workspace_under_strict_aliasing
 tests/codegen/test_casadi.py::test_casadi_column_major_cpp_buffer_indexing
 tests/codegen/test_casadi.py::test_casadi_cpp_rejects_a_function_named_like_the_column_major_template
 tests/codegen/test_casadi.py::test_casadi_dense_matrices_match_numpy[shape0-c]
@@ -2721,6 +2722,7 @@ tests/codegen/test_frame_budget.py::test_generated_frames_fit_and_match_numpy[81
 tests/codegen/test_frame_budget.py::test_invalid_frame_budget[-1]
 tests/codegen/test_frame_budget.py::test_invalid_frame_budget[1.5]
 tests/codegen/test_frame_budget.py::test_invalid_frame_budget[True]
+tests/codegen/test_frame_budget.py::test_zero_frame_budget_spills_bool_mask_with_float32_leaves
 tests/codegen/test_integer_arithmetic.py::test_constant_integer_data_keeps_wrapping_in_scheduled_assignments
 tests/codegen/test_integer_arithmetic.py::test_hoisted_sparse_indices_keep_float64_c_spelling[c]
 tests/codegen/test_integer_arithmetic.py::test_hoisted_sparse_indices_keep_float64_c_spelling[gnu]
@@ -2975,9 +2977,6 @@ tests/codegen/test_toolchain.py::test_vector_libm_flags_select_libmvec_for_clang
 tests/codegen/test_toolchain.py::test_vector_libm_flags_select_libmvec_for_clang[gcc]
 tests/codegen/test_toolchain.py::test_windows_solver_link_flags_omit_rpath[libpiqpc.dll]
 tests/codegen/test_toolchain.py::test_windows_solver_link_flags_omit_rpath[piqpc.dll]
-tests/codegen/test_typed_entry.py::test_byte_workspace_gives_sibling_callees_disjoint_windows
-tests/codegen/test_typed_entry.py::test_byte_workspace_is_correct_under_strict_aliasing[c]
-tests/codegen/test_typed_entry.py::test_byte_workspace_is_correct_under_strict_aliasing[cpp]
 tests/codegen/test_typed_entry.py::test_casadi_layer_stays_float64
 tests/codegen/test_typed_entry.py::test_each_leaf_dtype_matches_numpy_through_the_typed_headers[bool-c]
 tests/codegen/test_typed_entry.py::test_each_leaf_dtype_matches_numpy_through_the_typed_headers[bool-cpp]
@@ -2990,7 +2989,7 @@ tests/codegen/test_typed_entry.py::test_each_leaf_dtype_matches_numpy_through_th
 tests/codegen/test_typed_entry.py::test_each_leaf_dtype_matches_numpy_through_the_typed_headers[int64-c]
 tests/codegen/test_typed_entry.py::test_each_leaf_dtype_matches_numpy_through_the_typed_headers[int64-cpp]
 tests/codegen/test_typed_entry.py::test_every_elementwise_op_runs_with_float32_leaves
-tests/codegen/test_typed_entry.py::test_external_functions_take_a_double_workspace_inside_a_byte_one
+tests/codegen/test_typed_entry.py::test_external_functions_take_the_double_workspace_member
 tests/codegen/test_typed_entry.py::test_float32_broadcast_map_gradient
 tests/codegen/test_typed_entry.py::test_float32_column_major_and_pattern_hole_leaves_round_once
 tests/codegen/test_typed_entry.py::test_float32_derivatives_match_float64_with_float32_leaves[ABS]
@@ -3033,14 +3032,17 @@ tests/codegen/test_typed_entry.py::test_mapped_gradients_of_mixed_dtype_formals
 tests/codegen/test_typed_entry.py::test_mixed_leaves_match_numpy_through_the_jit
 tests/codegen/test_typed_entry.py::test_mixed_leaves_match_numpy_through_the_typed_headers[c]
 tests/codegen/test_typed_entry.py::test_mixed_leaves_match_numpy_through_the_typed_headers[cpp]
-tests/codegen/test_typed_entry.py::test_signature_follows_the_leaf_dtypes[fn0-int {}(const double** arg, double** res, int* iw, double* w, int mem)]
-tests/codegen/test_typed_entry.py::test_signature_follows_the_leaf_dtypes[fn1-int {}(const float** arg, float** res, int* iw, float* w, int mem)]
-tests/codegen/test_typed_entry.py::test_signature_follows_the_leaf_dtypes[fn2-int {}(const void** arg, void** res, int* iw, void* w, int mem)]
+tests/codegen/test_typed_entry.py::test_sibling_callees_share_their_caller_array_by_dtype
+tests/codegen/test_typed_entry.py::test_signature_takes_one_typed_pointer_per_leaf_and_workspace[fn0-void {0}(const {0}_x_t* x, {0}_y_t* y, {0}_workspace_t* w)]
+tests/codegen/test_typed_entry.py::test_signature_takes_one_typed_pointer_per_leaf_and_workspace[fn1-void {0}(const {0}_x_t* x, {0}_y_t* y, {0}_workspace_t* w)]
+tests/codegen/test_typed_entry.py::test_signature_takes_one_typed_pointer_per_leaf_and_workspace[fn2-void {0}(const {0}_x_t* x, const {0}_i_t* i, const {0}_m_t* m, {0}_y_t* y, {0}_k_t* k, {0}_b_t* b, {0}_workspace_t* w)]
 tests/codegen/test_typed_entry.py::test_solver_graphs_stay_float64
 tests/codegen/test_typed_entry.py::test_sparse_float32_leaves_keep_their_dtype_through_the_jit[csc]
 tests/codegen/test_typed_entry.py::test_sparse_float32_leaves_keep_their_dtype_through_the_jit[csr]
 tests/codegen/test_typed_entry.py::test_spilled_slots_of_mixed_dtypes_start_at_64_byte_offsets
 tests/codegen/test_typed_entry.py::test_verifier_rejects_a_call_whose_argument_dtype_differs_from_the_callee
+tests/codegen/test_typed_entry.py::test_workspace_is_correct_under_strict_aliasing[c]
+tests/codegen/test_typed_entry.py::test_workspace_is_correct_under_strict_aliasing[cpp]
 tests/codegen/test_vectors.py::test_auto_width_override_and_tail[1]
 tests/codegen/test_vectors.py::test_auto_width_override_and_tail[2]
 tests/codegen/test_vectors.py::test_auto_width_override_and_tail[4]
@@ -4749,15 +4751,15 @@ tests/passes/test_fold_tiles.py::test_signed_zero_tiles_and_uniform_folding_pres
 tests/passes/test_fold_tiles.py::test_storage_escapes_keep_original_table[alias]
 tests/passes/test_fold_tiles.py::test_storage_escapes_keep_original_table[call]
 tests/passes/test_fold_tiles.py::test_storage_escapes_keep_original_table[store]
-tests/passes/test_frame_budget.py::test_byte_workspace_spills_the_largest_slot_in_bytes_first
 tests/passes/test_frame_budget.py::test_frame_counts_each_inline_call_and_spills_callee_buffers
 tests/passes/test_frame_budget.py::test_many_small_buffers_spill_largest_first
 tests/passes/test_frame_budget.py::test_noinline_callee_has_its_own_frame_budget
-tests/passes/test_frame_budget.py::test_non_float64_buffers_stay_local_and_count_toward_frame[dtype0]
-tests/passes/test_frame_budget.py::test_non_float64_buffers_stay_local_and_count_toward_frame[dtype1]
-tests/passes/test_frame_budget.py::test_non_float64_buffers_stay_local_and_count_toward_frame[dtype2]
 tests/passes/test_frame_budget.py::test_repeated_calls_inside_loop_are_counted_separately
-tests/passes/test_frame_budget.py::test_zero_budget_spills_all_float64_buffers
+tests/passes/test_frame_budget.py::test_workspace_spills_the_largest_slot_in_bytes_first
+tests/passes/test_frame_budget.py::test_zero_budget_spills_every_buffer[dtype0]
+tests/passes/test_frame_budget.py::test_zero_budget_spills_every_buffer[dtype1]
+tests/passes/test_frame_budget.py::test_zero_budget_spills_every_buffer[dtype2]
+tests/passes/test_frame_budget.py::test_zero_budget_spills_every_buffer[dtype3]
 tests/passes/test_fuse_ranges.py::test_assembly_rewrite_folds_shared_scalar_graph_once
 tests/passes/test_fuse_ranges.py::test_call_escape_keeps_producer_storage
 tests/passes/test_fuse_ranges.py::test_chained_mapped_stages_share_their_scalar_values
@@ -4976,6 +4978,7 @@ tests/passes/test_widen_ranges.py::test_store_schedule_refuses_alias_reads_and_m
 tests/solvers/test_codegen.py::test_exported_solver_accepts_runtime_options[c]
 tests/solvers/test_codegen.py::test_exported_solver_accepts_runtime_options[cpp]
 tests/solvers/test_codegen.py::test_missing_solver_library_keeps_the_solver_diagnostic
+tests/solvers/test_codegen.py::test_solver_bridge_compiles_with_typed_where_scratch
 tests/solvers/test_codegen.py::test_solver_interface_is_static[piqp]
 tests/solvers/test_codegen.py::test_solver_interface_is_static[sqp]
 tests/solvers/test_codegen.py::test_solver_manifest_builds_without_backend_flags[ipopt]

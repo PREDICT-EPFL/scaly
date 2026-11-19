@@ -118,7 +118,7 @@ def test_nested_block_keeps_integer_wrapping(tmp_path) -> None:
 #include <stdio.h>
 int main(void) {{
   int64_t x = {info.max}, y = 0;
-  block_wrap_raw(&x, &y, NULL);
+  block_wrap_raw(&x, &y);
   printf("%lld\\n", (long long)y);
   return 0;
 }}
@@ -147,10 +147,11 @@ def _assert_compiled_result(tmp_path: Path, module: CModule, inputs: np.ndarray,
 #include <stdio.h>
 int main(void) {{
   double x[] = {{{", ".join(repr(v) for v in inputs.reshape(-1).tolist())}}};
-  double out[{size}], w[{max(1, module.workspace_size)}];
-  const double *arg[] = {{x}};
-  double *res[] = {{out}};
-  int status = {module.fun.name}(arg, res, NULL, w, 0);
+  double out[{size}];
+  static {module.fun.name}_workspace_t w;
+  const void *arg[] = {{x}};
+  void *res[] = {{out}};
+  int status = {module.fun.name}_abi(arg, res, &w);
   if (status) return status;
   for (int k = 0; k < {size}; ++k) printf("%.17g\\n", out[k]);
   return 0;

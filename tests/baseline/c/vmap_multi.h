@@ -25,39 +25,49 @@
 #ifndef SCALY_ERR_NULL_INPUT
 #define SCALY_ERR_NULL_INPUT 4
 #endif
+#ifndef SCALY_ERR_ALLOC_WORK
+#define SCALY_ERR_ALLOC_WORK 5
+#endif
 
 #ifndef SCALY_ALIGNAS
 #ifdef __cplusplus
 #define SCALY_ALIGNAS(n) alignas(n)
 #elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 #define SCALY_ALIGNAS(n) _Alignas(n)
+#elif defined(__GNUC__)
+#define SCALY_ALIGNAS(n) __attribute__((aligned(n)))
 #else
 #define SCALY_ALIGNAS(n)
 #endif
 #endif
 
+#ifndef SCALY_TYPES_multi_output
+#define SCALY_TYPES_multi_output
+typedef struct { SCALY_ALIGNAS(16) double data[10]; } multi_output_xs_t;
+typedef struct { SCALY_ALIGNAS(16) double data[10]; } multi_output_vectors_t;
+typedef struct { SCALY_ALIGNAS(16) double data[5]; } multi_output_totals_t;
+typedef struct {
+  unsigned char unused;
+} multi_output_workspace_t;
+#endif
+
 #define multi_output_SZ_ARG 1
 #define multi_output_SZ_RES 2
 #define multi_output_SZ_IW 0
-#define multi_output_SZ_W 0
+#define multi_output_WORKSPACE_BYTES 0
 #define multi_output_FRAME_BYTES 4176
 
-// The pointer ABI for multi_output.
 #ifdef __cplusplus
 extern "C" {
 #endif
-int multi_output(const double** arg, double** res, int* iw, double* w, int mem);
+void multi_output(const multi_output_xs_t* xs, multi_output_vectors_t* vectors, multi_output_totals_t* totals, multi_output_workspace_t* w);
+int multi_output_abi(const void* const* arg, void* const* res, multi_output_workspace_t* w);
 #ifdef __cplusplus
 }
 #endif
 
-// Typed buffers: one struct per input and output, and the caller-owned workspace.
-typedef struct { SCALY_ALIGNAS(16) double data[10]; } multi_output_xs_t;
-typedef struct { SCALY_ALIGNAS(16) double data[10]; } multi_output_vectors_t;
-typedef struct { SCALY_ALIGNAS(16) double data[5]; } multi_output_totals_t;
-typedef struct { SCALY_ALIGNAS(16) double data[multi_output_SZ_W > 0 ? multi_output_SZ_W : 1]; } multi_output_workspace_t;
 static inline int multi_output_call(const multi_output_xs_t* xs, multi_output_vectors_t* vectors, multi_output_totals_t* totals, multi_output_workspace_t* workspace) {
-  const double* arg[multi_output_SZ_ARG > 0 ? multi_output_SZ_ARG : 1] = {xs->data};
-  double* res[multi_output_SZ_RES > 0 ? multi_output_SZ_RES : 1] = {vectors->data, totals->data};
-  return multi_output(arg, res, NULL, workspace ? workspace->data : NULL, 0);
+  const void* arg[multi_output_SZ_ARG > 0 ? multi_output_SZ_ARG : 1] = {xs->data};
+  void* res[multi_output_SZ_RES > 0 ? multi_output_SZ_RES : 1] = {vectors->data, totals->data};
+  return multi_output_abi(arg, res, workspace);
 }

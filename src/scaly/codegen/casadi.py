@@ -128,8 +128,9 @@ def _c_string(text: str) -> str:
 
 
 def render_casadi_queries(fun: ConcreteFunction, sz_w: int) -> list[str]:
-  """Definitions of the query functions for the translation unit. ``sz_w`` is the ``SZ_W`` the header quotes."""
+  """Definitions of the query functions for the translation unit. ``sz_w`` counts bytes."""
   symbol = c_ident(fun.name)
+  work = f"({sz_w} + sizeof(casadi_real) - 1) / sizeof(casadi_real)"
   n_in, n_out = len(fun.inputs), len(fun.outputs)
   tables: list[str] = []
   names_in: list[str] = []
@@ -156,14 +157,14 @@ def render_casadi_queries(fun: ConcreteFunction, sz_w: int) -> list[str]:
     f"  if (sz_arg) *sz_arg = {n_in};",
     f"  if (sz_res) *sz_res = {n_out};",
     "  if (sz_iw) *sz_iw = 0;",
-    f"  if (sz_w) *sz_w = {sz_w};",
+    f"  if (sz_w) *sz_w = {work};",
     "  return 0;",
     "}",
     f"int {symbol}_work_bytes(casadi_int* sz_arg, casadi_int* sz_res, casadi_int* sz_iw, casadi_int* sz_w) {{",
     f"  if (sz_arg) *sz_arg = {n_in} * sizeof(const casadi_real*);",
     f"  if (sz_res) *sz_res = {n_out} * sizeof(casadi_real*);",
     "  if (sz_iw) *sz_iw = 0;",
-    f"  if (sz_w) *sz_w = {sz_w} * sizeof(casadi_real);",
+    f"  if (sz_w) *sz_w = ({work}) * sizeof(casadi_real);",
     "  return 0;",
     "}",
     f"int {symbol}_checkout(void) {{ return 0; }}",

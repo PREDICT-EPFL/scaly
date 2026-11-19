@@ -519,7 +519,7 @@ def _race_cars_scaly(workload: str, size: int, out_dir: Path) -> dict:
     benchmark,
     coloring_width=coloring_width,
     layout="lower" if _kernel_kind(workload) == "hess" else "full",
-    w_size=module.workspace_size,
+    w_size=module.workspace_size // 8,
     callable=kernel,
   )
 
@@ -546,7 +546,7 @@ def _chain_scaly(workload: str, size: int, out_dir: Path) -> dict:
     benchmark,
     coloring_width=coloring_width,
     layout="lower" if _kernel_kind(workload) == "hess" else "full",
-    w_size=module.workspace_size,
+    w_size=module.workspace_size // 8,
     callable=kernel,
   )
 
@@ -574,7 +574,7 @@ def _unbumpercars_scaly(size: int, out_dir: Path) -> dict:
     f"BM_ScalyUnbumpercarsLagHessC{size}",
     coloring_width=coloring_width,
     layout="lower",
-    w_size=module.workspace_size,
+    w_size=module.workspace_size // 8,
     callable=kernel,
   )
 
@@ -623,7 +623,7 @@ def _npmpc_scaly(workload: str, size: int, out_dir: Path) -> dict:
     benchmark,
     coloring_width=coloring_width,
     layout="lower" if _kernel_kind(workload) == "hess" else "full",
-    w_size=module.workspace_size,
+    w_size=module.workspace_size // 8,
     callable=built,
   )
 

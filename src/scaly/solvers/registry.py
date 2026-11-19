@@ -29,7 +29,7 @@ if TYPE_CHECKING:
   from scaly.codegen.solver import SolverWrapperCtx
   from scaly.function.concrete import ConcreteFunction
 
-SOLVER_PLUGIN_PROTOCOL_VERSION = 9
+SOLVER_PLUGIN_PROTOCOL_VERSION = 10
 ENTRY_POINT_GROUP = "scaly.solvers"
 
 

@@ -48,11 +48,34 @@ static inline __attribute__((always_inline, unused)) void lanes_4_4_4_4_vec_st(d
   else for (long long i = 0; i < n; ++i) p[i] = v[i];
 }
 
+#include <stdbool.h>
+#ifndef SCALY_ALIGNAS
+#ifdef __cplusplus
+#define SCALY_ALIGNAS(n) alignas(n)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define SCALY_ALIGNAS(n) _Alignas(n)
+#elif defined(__GNUC__)
+#define SCALY_ALIGNAS(n) __attribute__((aligned(n)))
+#else
+#define SCALY_ALIGNAS(n)
+#endif
+#endif
+#ifndef SCALY_TYPES_shooting_spjac_eq_z
+#define SCALY_TYPES_shooting_spjac_eq_z
+typedef struct { SCALY_ALIGNAS(16) double data[16]; } shooting_spjac_eq_z_z_t;
+typedef struct { SCALY_ALIGNAS(16) double data[6]; } shooting_spjac_eq_z_u_t;
+typedef struct { SCALY_ALIGNAS(16) double data[36]; } shooting_spjac_eq_z_spjac_eq_z_t;
+typedef struct {
+  unsigned char unused;
+} shooting_spjac_eq_z_workspace_t;
+#endif
+
 #define SCALY_SUCCESS 0
 #define SCALY_ERR_NULL_ABI 1
 #define SCALY_ERR_NULL_WORK 2
 #define SCALY_ERR_NULL_RESULT 3
 #define SCALY_ERR_NULL_INPUT 4
+#define SCALY_ERR_ALLOC_WORK 5
 
 #ifdef __cplusplus
 extern "C" {
@@ -149,14 +172,8 @@ static inline __attribute__((always_inline)) void lanes_3(long long i, long long
   lanes_8_8_8_8_vec l_2 = *(const lanes_8_8_8_8_vec_mem*)l_2s;
   lanes_8_8_8_8_vec_st(&spjac_eq_z[(i) + 0], (l - l_2), n);
 }
-int shooting_spjac_eq_z(const double** arg, double** res, int* iw, double* w, int mem) {
-  (void)iw;
-  (void)mem;
-  if (!arg || !res) return SCALY_ERR_NULL_ABI;
-  (void)w;
-  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
-  if (!arg[1]) return SCALY_ERR_NULL_INPUT;
-  if (!res[0]) return SCALY_ERR_NULL_RESULT;
+static inline void SCALY_KERNEL_shooting_spjac_eq_z(const double* z, const double* u, double* spjac_eq_z) {
+  (void)u;
   static const int64_t k1[36] = {0, 1, 12, 14, 15, 25, 26, 27, 24, 28, 13, 17, 2, 4, 6, 7, 39, 41, 42, 43, 16, 20, 5, 9, 30, 32, 34, 35, 19, 21, 22, 23, 8, 33, 10, 11};
   double s0[36];
   double s1[48];
@@ -164,10 +181,10 @@ int shooting_spjac_eq_z(const double** arg, double** res, int* iw, double* w, in
   static const int64_t k5[24] = {0, 1, 16, 18, 19, 25, 4, 6, 7, 13, 24, 33, 34, 35, 9, 10, 11, 12, 28, 30, 31, 21, 22, 23};
   static const double k7[48] = {0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0};
   for (long long it_t2_start = 0; it_t2_start <= 3 - SCALY_WIDTH_4_4_4_4; it_t2_start += SCALY_WIDTH_4_4_4_4) {
-    lanes_1(it_t2_start, SCALY_WIDTH_4_4_4_4, s0, arg[0]);
+    lanes_1(it_t2_start, SCALY_WIDTH_4_4_4_4, s0, z);
   }
 #if (3 % SCALY_WIDTH_4_4_4_4) != 0
-  lanes_1(3 - 3 % SCALY_WIDTH_4_4_4_4, 3 % SCALY_WIDTH_4_4_4_4, s0, arg[0]);
+  lanes_1(3 - 3 % SCALY_WIDTH_4_4_4_4, 3 % SCALY_WIDTH_4_4_4_4, s0, z);
 #endif
   for (long long z_t3_start = 0; z_t3_start <= 48 - SCALY_WIDTH_8_8_8_8; z_t3_start += SCALY_WIDTH_8_8_8_8) {
     lanes_2(z_t3_start, SCALY_WIDTH_8_8_8_8, s1);
@@ -179,12 +196,26 @@ int shooting_spjac_eq_z(const double** arg, double** res, int* iw, double* w, in
     s1[k4[i_t3]] = s0[k5[i_t3]];
   }
   for (long long i_spjac_eq_z_start = 0; i_spjac_eq_z_start <= 36 - SCALY_WIDTH_8_8_8_8; i_spjac_eq_z_start += SCALY_WIDTH_8_8_8_8) {
-    lanes_3(i_spjac_eq_z_start, SCALY_WIDTH_8_8_8_8, k1, k7, s1, res[0]);
+    lanes_3(i_spjac_eq_z_start, SCALY_WIDTH_8_8_8_8, k1, k7, s1, spjac_eq_z);
   }
 #if (36 % SCALY_WIDTH_8_8_8_8) != 0
-  lanes_3(36 - 36 % SCALY_WIDTH_8_8_8_8, 36 % SCALY_WIDTH_8_8_8_8, k1, k7, s1, res[0]);
+  lanes_3(36 - 36 % SCALY_WIDTH_8_8_8_8, 36 % SCALY_WIDTH_8_8_8_8, k1, k7, s1, spjac_eq_z);
 #endif
+}
+
+int shooting_spjac_eq_z_abi(const void* const* arg, void* const* res, shooting_spjac_eq_z_workspace_t* w) {
+  if (!arg || !res) return SCALY_ERR_NULL_ABI;
+  (void)w;
+  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
+  if (!arg[1]) return SCALY_ERR_NULL_INPUT;
+  if (!res[0]) return SCALY_ERR_NULL_RESULT;
+  SCALY_KERNEL_shooting_spjac_eq_z((const double*)arg[0], (const double*)arg[1], (double*)res[0]);
   return SCALY_SUCCESS;
+}
+
+void shooting_spjac_eq_z(const shooting_spjac_eq_z_z_t* z, const shooting_spjac_eq_z_u_t* u, shooting_spjac_eq_z_spjac_eq_z_t* spjac_eq_z, shooting_spjac_eq_z_workspace_t* w) {
+  (void)w;
+  SCALY_KERNEL_shooting_spjac_eq_z((const double*)z->data, (const double*)u->data, (double*)spjac_eq_z->data);
 }
 
 #ifdef __cplusplus

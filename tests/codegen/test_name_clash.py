@@ -88,18 +88,18 @@ def test_repeated_local_buffers_and_scalar_updates_are_not_redeclarations(tmp_pa
 @pytest.mark.parametrize("kind", ["exit", "buffer", "assign"])
 def test_local_declarations_cannot_redefine_a_buffer_parameter(tmp_path, kind):
   if kind == "exit":
-    local = p.for_(p.range_("w", 0, 4, carried=True), [], exit_var=True)
+    local = p.for_(p.range_("value", 0, 4, carried=True), [], exit_var=True)
   elif kind == "buffer":
-    local = p.buffer("w", dtypes.float64, (1,))
+    local = p.buffer("value", dtypes.float64, (1,))
   else:
-    local = p.assign("w", p.const_float(0), declare=True)
-  proc = p.proc("parameter", [], [local])
+    local = p.assign("value", p.const_float(0), declare=True)
+  proc = p.proc("parameter", [p.buffer("value", dtypes.float64, (1,))], [local])
   prog = p.program([proc])
   path = tmp_path / "parameter.c"
   path.write_text("\n".join([*_includes(dialect="c", prog=prog), *_render_raw_callee(proc, dialect="c")]))
   result = check_c_syntax(path)
   assert result.returncode != 0
-  with pytest.raises(VerifyError, match="duplicate C identifier 'w'"):
+  with pytest.raises(VerifyError, match="duplicate C identifier 'value'"):
     verify_program(prog)
 
 

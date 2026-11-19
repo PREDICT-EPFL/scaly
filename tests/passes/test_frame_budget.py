@@ -28,7 +28,7 @@ def test_many_small_buffers_spill_largest_first():
   slots = _slots(proc)
   assert sum("workspace_offset" in n.attrs for n in slots) == 2
   assert all(n.attrs["shape"] == (900,) for n in slots if "workspace_offset" in n.attrs)
-  assert proc.attrs["sz_w"] == 2 * 904  # each spilled slot starts 64 bytes after the last
+  assert proc.attrs["workspace_layout"] == ((dtypes.float64, 2 * 904),)
   assert proc.attrs["frame_bytes"] == 4096 + (8 * 900 + 400) * 8
   assert proc.attrs["frame_bytes"] <= 65536
 
@@ -38,8 +38,8 @@ def test_frame_counts_each_inline_call_and_spills_callee_buffers():
   middle = _procedure("middle", [], ["leaf"] * 3)
   root = _procedure("root", [500], ["middle"] * 3)
   packed = pack_workspace(p.program([leaf, middle, root]))
-  assert packed.args[0].attrs["sz_w"] == 904
-  assert packed.args[-1].attrs["sz_w"] == 904
+  assert packed.args[0].attrs["workspace_layout"] == ((dtypes.float64, 904),)
+  assert packed.args[-1].attrs["workspace_layout"] == ((dtypes.float64, 904),)
   assert packed.args[-1].attrs["frame_bytes"] == 4096 + 500 * 8
   assert "workspace_offset" not in _slots(packed.args[-1])[0].attrs
 
@@ -57,26 +57,22 @@ def test_repeated_calls_inside_loop_are_counted_separately():
   pc = root.attrs["param_count"]
   root = p.proc("root", root.args[:pc], [p.for_(p.range_("i", 0, 2), root.args[pc:])])
   packed = pack_workspace(p.program([leaf, root]))
-  assert packed.args[0].attrs["sz_w"] == 904
+  assert packed.args[0].attrs["workspace_layout"] == ((dtypes.float64, 904),)
   assert packed.args[-1].attrs["frame_bytes"] == 4096
 
 
-def test_zero_budget_spills_all_float64_buffers():
-  proc = pack_workspace(p.program([_procedure("f", [900, 1])]), frame_budget=0).args[0]
-  assert proc.attrs["sz_w"] == 904 + 8
-  assert all("workspace_offset" in n.attrs for n in _slots(proc))
-  assert proc.attrs["frame_bytes"] == 4096
-
-
-@pytest.mark.parametrize("dtype", [dtypes.float32, dtypes.int64, dtypes.bool_])
-def test_non_float64_buffers_stay_local_and_count_toward_frame(dtype):
+@pytest.mark.parametrize("dtype", [dtypes.float64, dtypes.float32, dtypes.int64, dtypes.bool_])
+def test_zero_budget_spills_every_buffer(dtype):
   proc = pack_workspace(p.program([_procedure("f", [900, 1], dtype=dtype)]), frame_budget=0).args[0]
-  assert proc.attrs["sz_w"] == 0
-  assert all("workspace_offset" not in n.attrs for n in _slots(proc))
-  assert proc.attrs["frame_bytes"] == 4096 + 901 * dtype.itemsize
+  slots = sorted(_slots(proc), key=lambda n: n.attrs["workspace_offset"])
+  first, second = slots
+  assert first.attrs["workspace_offset"] == 0
+  assert second.attrs["workspace_offset"] * dtype.itemsize % 64 == 0
+  assert second.attrs["workspace_offset"] >= 900
+  assert proc.attrs["frame_bytes"] == 0
 
 
-def test_byte_workspace_spills_the_largest_slot_in_bytes_first():
+def test_workspace_spills_the_largest_slot_in_bytes_first():
   out = p.buffer("out", dtypes.float64, (1,))
   buffers = [
     p.buffer(f"t{i}", dtype, (size,), address_space="private")
@@ -90,7 +86,6 @@ def test_byte_workspace_spills_the_largest_slot_in_bytes_first():
   body = [*buffers, *(p.store(p.view(b, [p.const_int(0)]), z) for b, z in zip(buffers, zero, strict=True))]
   body.append(p.store(p.view(out, [p.const_int(0)]), p.load(p.view(buffers[0], [p.const_int(0)]))))
   prog = p.program([p.proc("f", [out], body)])
-  prog = ProgramNode(prog.op, prog.args, {**prog.attrs, "workspace_dtype": dtypes.uint8}, dtype=prog.dtype)
   proc = pack_workspace(prog, frame_budget=8196).args[0]
   assert [n.dtype for n in _slots(proc) if "workspace_offset" in n.attrs] == [dtypes.float64]
   assert proc.attrs["sz_w"] == 7232 and proc.attrs["frame_bytes"] == 4096 + 4000 + 12

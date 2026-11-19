@@ -25,39 +25,49 @@
 #ifndef SCALY_ERR_NULL_INPUT
 #define SCALY_ERR_NULL_INPUT 4
 #endif
+#ifndef SCALY_ERR_ALLOC_WORK
+#define SCALY_ERR_ALLOC_WORK 5
+#endif
 
 #ifndef SCALY_ALIGNAS
 #ifdef __cplusplus
 #define SCALY_ALIGNAS(n) alignas(n)
 #elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 #define SCALY_ALIGNAS(n) _Alignas(n)
+#elif defined(__GNUC__)
+#define SCALY_ALIGNAS(n) __attribute__((aligned(n)))
 #else
 #define SCALY_ALIGNAS(n)
 #endif
 #endif
 
+#ifndef SCALY_TYPES_shooting
+#define SCALY_TYPES_shooting
+typedef struct { SCALY_ALIGNAS(16) double data[16]; } shooting_z_t;
+typedef struct { SCALY_ALIGNAS(16) double data[6]; } shooting_u_t;
+typedef struct { SCALY_ALIGNAS(16) double data[12]; } shooting_eq_t;
+typedef struct {
+  unsigned char unused;
+} shooting_workspace_t;
+#endif
+
 #define shooting_SZ_ARG 2
 #define shooting_SZ_RES 1
 #define shooting_SZ_IW 0
-#define shooting_SZ_W 0
+#define shooting_WORKSPACE_BYTES 0
 #define shooting_FRAME_BYTES 4096
 
-// The pointer ABI for shooting.
 #ifdef __cplusplus
 extern "C" {
 #endif
-int shooting(const double** arg, double** res, int* iw, double* w, int mem);
+void shooting(const shooting_z_t* z, const shooting_u_t* u, shooting_eq_t* eq, shooting_workspace_t* w);
+int shooting_abi(const void* const* arg, void* const* res, shooting_workspace_t* w);
 #ifdef __cplusplus
 }
 #endif
 
-// Typed buffers: one struct per input and output, and the caller-owned workspace.
-typedef struct { SCALY_ALIGNAS(16) double data[16]; } shooting_z_t;
-typedef struct { SCALY_ALIGNAS(16) double data[6]; } shooting_u_t;
-typedef struct { SCALY_ALIGNAS(16) double data[12]; } shooting_eq_t;
-typedef struct { SCALY_ALIGNAS(16) double data[shooting_SZ_W > 0 ? shooting_SZ_W : 1]; } shooting_workspace_t;
 static inline int shooting_call(const shooting_z_t* z, const shooting_u_t* u, shooting_eq_t* eq, shooting_workspace_t* workspace) {
-  const double* arg[shooting_SZ_ARG > 0 ? shooting_SZ_ARG : 1] = {z->data, u->data};
-  double* res[shooting_SZ_RES > 0 ? shooting_SZ_RES : 1] = {eq->data};
-  return shooting(arg, res, NULL, workspace ? workspace->data : NULL, 0);
+  const void* arg[shooting_SZ_ARG > 0 ? shooting_SZ_ARG : 1] = {z->data, u->data};
+  void* res[shooting_SZ_RES > 0 ? shooting_SZ_RES : 1] = {eq->data};
+  return shooting_abi(arg, res, workspace);
 }

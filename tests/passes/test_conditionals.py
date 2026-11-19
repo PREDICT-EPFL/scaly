@@ -47,7 +47,7 @@ def test_each_pass_preserves_both_branches(tmp_path, name, transform):
   assert any(node.op == ProgramOp.IF for node in walk_program(prog))
   source = "\n".join([*_includes(dialect="c", prog=prog), *_render_raw_callee(prog.args[-1], dialect="c")])
   path, library = tmp_path / "branch.c", tmp_path / "branch.so"
-  path.write_text(source + "\nvoid run(double *x, double *y) { branch_raw(x, y, NULL); }\n")
+  path.write_text(source + "\nvoid run(double *x, double *y) { branch_raw(x, y); }\n")
   subprocess.run([*c_compiler(), "-shared", "-fPIC", "-std=c99", str(path), "-lm", "-o", str(library)], check=True, capture_output=True)
   run = ctypes.CDLL(str(library)).run
   pointer = ctypes.POINTER(ctypes.c_double)

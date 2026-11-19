@@ -11,11 +11,33 @@
 #include <stdint.h>
 typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 
+#include <stdbool.h>
+#ifndef SCALY_ALIGNAS
+#ifdef __cplusplus
+#define SCALY_ALIGNAS(n) alignas(n)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define SCALY_ALIGNAS(n) _Alignas(n)
+#elif defined(__GNUC__)
+#define SCALY_ALIGNAS(n) __attribute__((aligned(n)))
+#else
+#define SCALY_ALIGNAS(n)
+#endif
+#endif
+#ifndef SCALY_TYPES_qp_host
+#define SCALY_TYPES_qp_host
+typedef struct { SCALY_ALIGNAS(16) double data[2]; } qp_host_mu_t;
+typedef struct { SCALY_ALIGNAS(16) double data[1]; } qp_host_cost_t;
+typedef struct {
+  unsigned char unused;
+} qp_host_workspace_t;
+#endif
+
 #define SCALY_SUCCESS 0
 #define SCALY_ERR_NULL_ABI 1
 #define SCALY_ERR_NULL_WORK 2
 #define SCALY_ERR_NULL_RESULT 3
 #define SCALY_ERR_NULL_INPUT 4
+#define SCALY_ERR_ALLOC_WORK 5
 
 #ifndef SCALY_SOLVER_STATS_DEFINED
 #define SCALY_SOLVER_STATS_DEFINED
@@ -63,18 +85,31 @@ typedef struct { const char* name; int kind; int64_t integer; double number; con
 extern "C" {
 #endif
 
-void corpus_qp_solve(const double*, const double*, const double*, const double*, const double*, double*, double*, double*, double*, double*);
+void corpus_qp_solve(const double*, const double*, const double*, const double*, const double*, double*, double*, double*, double*);
 
 void corpus_qp_set_options(const scaly_solver_option* options);
 int corpus_qp_stats(scaly_solver_stats* out);
-static inline void corpus_qp_support_raw(const double* decision, const double* lam_decision, const double* lam_eq, const double* lam_ineq, const double* mu, double* decision_2, double* lam_decision_2, double* lam_eq_2, double* lam_ineq_2, double* w) {
-  (void)w;
-  corpus_qp_solve(decision, lam_decision, lam_eq, lam_ineq, mu, decision_2, lam_decision_2, lam_eq_2, lam_ineq_2, NULL);
+static inline void corpus_qp_support_raw(const double* decision, const double* lam_decision, const double* lam_eq, const double* lam_ineq, const double* mu, double* decision_2, double* lam_decision_2, double* lam_eq_2, double* lam_ineq_2) {
+  corpus_qp_solve(decision, lam_decision, lam_eq, lam_ineq, mu, decision_2, lam_decision_2, lam_eq_2, lam_ineq_2);
 }
 
-int qp_host_with_options(const double** arg, double** res, int* iw, double* w, int mem, const scaly_solver_option* const* solver_options) {
-  (void)iw;
-  (void)mem;
+static inline void SCALY_KERNEL_qp_host(const double* mu, double* cost) {
+  static const double k0[2] = {0, 0};
+  static const double k1[1] = {};
+  double s0[2];
+  double s1[2];
+  double s2[1];
+  double s3[1];
+  corpus_qp_support_raw(k0, k0, k1, k1, mu, s0, s1, s2, s3);
+  double acc_cost = 0.0;
+  for (long long i_cost = 0; i_cost < 2; ++i_cost) {
+    double v0 = s0[i_cost];
+    acc_cost = (acc_cost + (v0 * v0));
+  }
+  cost[0] = acc_cost;
+}
+
+int qp_host_abi_with_options(const void* const* arg, void* const* res, qp_host_workspace_t* w, const scaly_solver_option* const* solver_options) {
   if (!arg || !res) return SCALY_ERR_NULL_ABI;
   (void)w;
   if (!solver_options) return SCALY_ERR_NULL_INPUT;
@@ -82,19 +117,7 @@ int qp_host_with_options(const double** arg, double** res, int* iw, double* w, i
   if (!arg[0]) return SCALY_ERR_NULL_INPUT;
   if (!res[0]) return SCALY_ERR_NULL_RESULT;
   corpus_qp_set_options(solver_options[0]);
-  static const double k0[2] = {0, 0};
-  static const double k1[1] = {};
-  double s0[2];
-  double s1[2];
-  double s2[1];
-  double s3[1];
-  corpus_qp_support_raw(k0, k0, k1, k1, arg[0], s0, s1, s2, s3, NULL);
-  double acc_cost = 0.0;
-  for (long long i_cost = 0; i_cost < 2; ++i_cost) {
-    double v0 = s0[i_cost];
-    acc_cost = (acc_cost + (v0 * v0));
-  }
-  res[0][0] = acc_cost;
+  SCALY_KERNEL_qp_host((const double*)arg[0], (double*)res[0]);
   return SCALY_SUCCESS;
 }
 
@@ -106,9 +129,15 @@ const scaly_solver_option* corpus_qp_default_options(void) {
   return options;
 }
 
-int qp_host(const double** arg, double** res, int* iw, double* w, int mem) {
+int qp_host_abi(const void* const* arg, void* const* res, qp_host_workspace_t* w) {
   const scaly_solver_option* options[] = { corpus_qp_default_options() };
-  return qp_host_with_options(arg, res, iw, w, mem, options);
+  return qp_host_abi_with_options(arg, res, w, options);
+}
+
+void qp_host(const qp_host_mu_t* mu, qp_host_cost_t* cost, qp_host_workspace_t* w) {
+  (void)w;
+  corpus_qp_set_options(corpus_qp_default_options());
+  SCALY_KERNEL_qp_host((const double*)mu->data, (double*)cost->data);
 }
 
 #ifdef __cplusplus

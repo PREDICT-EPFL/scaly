@@ -34,7 +34,7 @@ def test_lane_varying_word_matches_numpy(tmp_path, dialect, lanes):
 
   source = "\n".join([*_includes(dialect=dialect, prog=prog), *_render_raw_callee(prog.args[0], dialect=dialect)])
   assert "uint64_t" not in source
-  source += "\nvoid run(double *x, double *y) { double w[1]; kernel_raw(x, y, w); }\n"
+  source += "\nvoid run(double *x, double *y) { kernel_raw(x, y); }\n"
   path, library = tmp_path / "kernel.c", tmp_path / "kernel.so"
   path.write_text(source)
   subprocess.run(

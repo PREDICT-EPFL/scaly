@@ -405,27 +405,23 @@ A view such as a slice keeps the buffer it points into live until the view's
 last use.
 
 With the default frame budget, these slots stay local arrays. With
-`frame_budget=8192`, the largest slot moves to the caller's workspace `w`. The
-workspace has the type of the function's inputs and outputs when they are all
-`float64` or all `float32`, and only slots of that type can move there. A
-function whose inputs and outputs mix types has a workspace of bytes that takes
-slots of every type. Each slot starts at a multiple of 64 bytes:
+`frame_budget=8192`, the largest slot moves to the caller's workspace.
+Each dtype has its own array, and every spilled slot starts at a multiple
+of 64 bytes within that array. For this example the header declares:
 
 ```c
-double* s0 = w + 0;
-double s1[1];
-double s2[1];
+typedef struct {
+  SCALY_ALIGNAS(64) double f64[1600];
+} f_workspace_t;
+#define f_WORKSPACE_BYTES 12800
+#define f_FRAME_BYTES 4112
 ```
 
-For that budget, the header reports `#define f_SZ_W 1600`, where 3200 would be needed without
-sharing. It also reports `#define f_FRAME_BYTES 4112`, the estimated stack frame in bytes. The estimate
-counts local buffers, repeated inlined callees and a fixed scalar-spill allowance.
-A procedure's workspace requirement is its own slots plus the largest
-requirement among the procedures it calls, which reuse the space after the
-caller's own slots. In a workspace of bytes the procedures it calls get
-consecutive windows instead, so each byte holds values of one type during the
-call. [Working memory](../guide/codegen.md#working-memory) in the
-guide shows how to read the number.
+The shared slot needs space for 1,600 doubles. The frame estimate counts
+the two other slots and the fixed allowance for scalar spills. For each
+dtype, a procedure adds its own spills to the largest requirement among its
+callees. Calls reuse the part of each array after the caller's own spills.
+See [Working memory](../guide/codegen.md#working-memory) for sizing and allocation.
 
 ## Arithmetic semantics
 

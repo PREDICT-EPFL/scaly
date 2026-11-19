@@ -22,4 +22,4 @@ oracle = stages.factory("embedded_oracle", ["zs"], ["residuals", sc.factory.SpJa
 
 if __name__ == "__main__":
   module = write_module(oracle, Path(__file__).parent / "generated" / "embedded", dialect="c", lanes=1, frame_budget=0)
-  print(f"Caller workspace: {4 * module.workspace_size} bytes")
+  print(f"Caller workspace: {module.workspace_size} bytes")

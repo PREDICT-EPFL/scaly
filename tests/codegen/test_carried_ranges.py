@@ -30,7 +30,7 @@ def test_nested_exit_variable_shadows_the_outer_loop_index(tmp_path, outer_exit)
   verify_program(prog)
   source = "\n".join([*_includes(dialect="c", prog=prog), *_render_raw_callee(proc, dialect="c")])
   path, library = tmp_path / "shadow.c", tmp_path / "shadow.so"
-  path.write_text(source + "\nvoid run(uint8_t *flags, int64_t *count) { shadow_raw(flags, count, NULL); }\n")
+  path.write_text(source + "\nvoid run(uint8_t *flags, int64_t *count) { shadow_raw(flags, count); }\n")
   subprocess.run([*c_compiler(), "-shared", "-fPIC", "-std=c99", str(path), "-o", str(library)], check=True, capture_output=True)
   run = ctypes.CDLL(str(library)).run
   run.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_int64)]
@@ -74,9 +74,7 @@ def test_carried_recurrence_and_trip_count_match_numpy(tmp_path, dialect, lanes,
   assert "long long i = 0;\n  for (i = 0;" in source
   assert "if (flags[i]) break;" in source
   path, library = tmp_path / "recurrence.c", tmp_path / "recurrence.so"
-  path.write_text(
-    source + "\nvoid run(uint8_t *flags, int64_t *trip, double *out, int64_t *count) { recurrence_raw(flags, trip, out, count, NULL); }\n"
-  )
+  path.write_text(source + "\nvoid run(uint8_t *flags, int64_t *trip, double *out, int64_t *count) { recurrence_raw(flags, trip, out, count); }\n")
   subprocess.run(
     [*c_compiler(), "-shared", "-fPIC", "-std=c99", "-O2", "-Werror=incompatible-pointer-types", str(path), "-lm", "-o", str(library)],
     check=True,

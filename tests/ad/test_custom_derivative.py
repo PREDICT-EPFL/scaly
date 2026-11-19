@@ -742,7 +742,7 @@ def test_a_solver_oracle_with_rules_keeps_the_signature_its_solver_calls() -> No
     module = render_c_module(outer)
     source = "\n".join(text for library in module._libraries for _, text in library.sources)
     signature = next(line for line in source.splitlines() if f"void {base.name}_entry_raw(" in line)
-    assert signature.count("double*") == len(base.inputs) + len(base.outputs) + 1
+    assert signature.count("double*") == len(base.inputs) + len(base.outputs)
 
   residual = base._call(solver.inputs[:1])[1]
   outer = ConcreteFunction._from_exprs("outer", solver.inputs, [solver._call(solver.inputs)[0], residual], solver.input_names, ["y", "r"])

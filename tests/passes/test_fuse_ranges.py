@@ -533,12 +533,12 @@ def test_position_dependent_cells_fold_and_fuse(tmp_path, case):
   library = tmp_path / ("cells" + shared_lib_ext())
   source.write_text(render_program_c(optimized, signature))
   subprocess.run([*c_compiler(), "-O2", "-fPIC", shared_lib_flag(), str(source), "-lm", "-o", str(library)], check=True)
-  entry = ctypes.CDLL(str(library)).root
+  entry = ctypes.CDLL(str(library)).root_abi
   ptr = ctypes.POINTER(ctypes.c_double)
-  entry.argtypes = [ctypes.POINTER(ptr), ctypes.POINTER(ptr), ctypes.POINTER(ctypes.c_int), ptr, ctypes.c_int]
+  entry.argtypes = [ctypes.POINTER(ptr), ctypes.POINTER(ptr), ctypes.c_void_p]
   entry.restype = ctypes.c_int
   data, out = np.linspace(-0.7, 0.8, length), np.empty(length)
-  assert entry((ptr * 1)(data.ctypes.data_as(ptr)), (ptr * 1)(out.ctypes.data_as(ptr)), None, None, 0) == 0
+  assert entry((ptr * 1)(data.ctypes.data_as(ptr)), (ptr * 1)(out.ctypes.data_as(ptr)), None) == 0
   expected = data.copy()
   if case == "few_indices":
     expected += data[np.arange(length) // 4]

@@ -7,14 +7,15 @@ from __future__ import annotations
 
 
 from .abi import (
-  ENTRY_C_TYPES,
+  ALIGNAS,
   abi_status_defines,
   buffer_idents,
+  buffer_structs,
   c_api_signature,
   c_ident,
   leaf_c_type,
+  pointer_signature,
   sparse_layout_tables,
-  workspace_c_type,
   wrapper_param_idents,
 )
 from .casadi import CASADI_QUERIES, casadi_declarations, casadi_defines
@@ -22,7 +23,7 @@ from .solver import solver_stats_symbols, solver_options_c_defs, solver_options_
 from ..function.concrete import ConcreteFunction
 from ..ir.layout import DenseLayout, LeafLayout, SparseLayout
 from ..ir.types import DType
-from ..passes.lowering import workspace_dtype
+from ..passes.program.pack_workspace import WorkspaceLayout
 from ..solvers.stats import stats_c_defs
 from ..utils.names import NameScope
 
@@ -90,7 +91,7 @@ def _std_array(name: str, values: tuple[int, ...], size: str) -> str:
   return f"constexpr std::array<int, {size}> {name} = {{{', '.join(str(v) for v in values)}}};"
 
 
-def render_cpp_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, frame_bytes: int, *, casadi: bool) -> str:
+def render_cpp_header(fun: ConcreteFunction, backends: tuple[str, ...], layout: WorkspaceLayout, sz_w: int, frame_bytes: int, *, casadi: bool) -> str:
   """The ``.hpp`` for ``fun``. The kernel symbols are declared ``extern "C"`` inside the function's
   namespace, since a namespace and a function cannot share the global name. C linkage keeps the
   symbol unmangled, so ``f::f`` is the same entry a C caller reaches as ``f``."""
@@ -107,15 +108,15 @@ def render_cpp_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: in
   )
   arg_init = ", ".join(f"{p}.ptr()" for p in input_params) or "nullptr"
   res_init = ", ".join(f"{p}.ptr()" for p in output_params) or "nullptr"
-  pointee = ENTRY_C_TYPES[workspace_dtype(fun)]
-  integers = any(leaf.type.dtype.is_integer for leaf in (*fun.inputs, *fun.outputs))
+  pointee = "double" if casadi else "void"
+  integers = any(leaf.type.dtype.is_integer for leaf in (*fun.inputs, *fun.outputs)) or any(dtype.is_integer for dtype, _ in layout)
   lines = [
     "#pragma once",
     "",
     "#include <array>",
     "#include <cassert>",
     "#include <cstddef>",
-    *(["#include <cstdint>"] if integers else []),
+    *(["#include <stdint.h>"] if integers else []),
     *(["#include <cstdint>", "", *stats_c_defs(), *solver_options_c_defs()] if backends else []),
     "",
     *abi_status_defines(guarded=True),
@@ -124,16 +125,19 @@ def render_cpp_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: in
     f"#define {symbol}_SZ_ARG {len(fun.inputs)}",
     f"#define {symbol}_SZ_RES {len(fun.outputs)}",
     f"#define {symbol}_SZ_IW 0",
-    f"#define {symbol}_SZ_W {sz_w}",
+    f"#define {symbol}_WORKSPACE_BYTES {sz_w}",
     f"#define {symbol}_FRAME_BYTES {frame_bytes}",
+    "",
+    *ALIGNAS,
+    *buffer_structs(fun, layout),
     "",
     BUFFER_TEMPLATE,
     *(["", COLUMN_MAJOR_BUFFER_TEMPLATE] if column_major else []),
     "",
     f"namespace {symbol} {{",
-    f"// The pointer ABI for {fun.name}; the same C symbols the C header declares.",
-    'extern "C" ' + c_api_signature(fun) + ";",
-    *(decl if decl.startswith("#") else 'extern "C" ' + decl for decl in solver_options_declarations(fun)),
+    *([] if casadi else ['extern "C" ' + c_api_signature(fun) + ";"]),
+    'extern "C" ' + pointer_signature(fun, casadi=casadi) + ";",
+    *(decl if decl.startswith("#") else 'extern "C" ' + decl for decl in solver_options_declarations(fun, casadi=casadi)),
     *(f'extern "C" int {s}_stats(scaly_solver_stats* out);' for s in solver_stats_symbols(fun)),
     *(f'extern "C" {decl}' for decl in (casadi_declarations(symbol) if casadi else [])),
     "",
@@ -146,21 +150,23 @@ def render_cpp_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: in
     *(
       _buffer_alias(o, e.type.dtype, e.type.storage_shape, layout) for o, e, layout in zip(outputs, fun.outputs, fun.output_tree.layouts, strict=True)
     ),
-    f"using workspace_t = Buffer<{workspace_c_type(fun)}, {symbol}_SZ_W>;",
+    f"using workspace_t = ::{symbol}_workspace_t;",
     f"constexpr int sz_arg = {symbol}_SZ_ARG;",
     f"constexpr int sz_res = {symbol}_SZ_RES;",
     f"constexpr int sz_iw = {symbol}_SZ_IW;",
-    f"constexpr int sz_w = {symbol}_SZ_W;",
+    f"constexpr std::size_t workspace_bytes = {symbol}_WORKSPACE_BYTES;",
     "",
   ]
   for runtime in (False, True) if backends else (False,):
     suffix = "_with_options" if runtime else ""
+    entry = f"{symbol}{suffix}" if casadi else f"{symbol}_abi{suffix}"
+    tail = f"nullptr, &{workspace}, 0" if casadi else f"&{workspace}"
     call_params = [*params, *(("const scaly_solver_option* const* solver_options",) if runtime else ())]
     lines += [
       f"inline int call({', '.join(call_params)}) {{",
       f"  const {pointee}* arg[sz_arg > 0 ? sz_arg : 1] = {{{arg_init}}};",
       f"  {pointee}* res[sz_res > 0 ? sz_res : 1] = {{{res_init}}};",
-      f"  return {symbol}{suffix}(arg, res, nullptr, sz_w ? {workspace}.ptr() : nullptr, 0{', solver_options' if runtime else ''});",
+      f"  return {entry}(arg, res, {tail}{', solver_options' if runtime else ''});",
       "}",
     ]
   names = NameScope(
@@ -172,30 +178,31 @@ def render_cpp_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: in
       "sz_arg",
       "sz_res",
       "sz_iw",
-      "sz_w",
+      "workspace_bytes",
       *(f"{n}_t" for n in (*inputs, *outputs)),
       *(f"{symbol}_{query}" for query in CASADI_QUERIES if casadi),
-      *((f"{symbol}_with_options",) if backends else ()),
+      f"{symbol}_abi",
+      *((f"{symbol}_with_options", f"{symbol}_abi_with_options") if backends else ()),
       *(f"{s}_{suffix}" for s in solver_stats_symbols(fun) for suffix in ("stats", "default_options")),
     ),
     header=True,
   )
-  names.occupied.add(f"{symbol}_FRAME_BYTES")
-  for ident, type_, layout in zip(
+  names.occupied.update((f"{symbol}_FRAME_BYTES", f"{symbol}_WORKSPACE_BYTES"))
+  for ident, type_, leaf_layout in zip(
     (*inputs, *outputs), (*fun.input_tree.types, *fun.output_tree.types), (*fun.input_tree.layouts, *fun.output_tree.layouts), strict=True
   ):
-    if not isinstance(layout, SparseLayout):
+    if not isinstance(leaf_layout, SparseLayout):
       continue
     lines += [
       "",
       f"namespace {names.allocate(ident + '_' if names.contains(ident) else ident)} {{",
-      f"constexpr int nrow = {layout.pattern.shape[0]};",
-      f"constexpr int ncol = {layout.pattern.shape[1]};",
-      f"constexpr int nnz = {layout.pattern.nnz};",
+      f"constexpr int nrow = {leaf_layout.pattern.shape[0]};",
+      f"constexpr int ncol = {leaf_layout.pattern.shape[1]};",
+      f"constexpr int nnz = {leaf_layout.pattern.nnz};",
       f"constexpr int ndim = {type_.ndim};",
       f"constexpr std::size_t storage_size = {type_.storage_size};",
       _std_array("shape", type_.shape, "ndim"),
-      *(_std_array(name, values, str(len(values))) for name, values in sparse_layout_tables(layout)),
+      *(_std_array(name, values, str(len(values))) for name, values in sparse_layout_tables(leaf_layout)),
       "}",
     ]
   lines += [f"}}  // namespace {symbol}"]

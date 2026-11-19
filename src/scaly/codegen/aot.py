@@ -14,23 +14,26 @@ from scaly.codegen.external import LibraryBuild, export_libraries, libraries_of,
 from scaly.function.extern import CLibrary
 from scaly.codegen.toolchain import find_c_compiler, BuildRecipe, CPU_LEVELS, CDialect, CpuLevel, LaneCount, VectorLibm
 from scaly.codegen.abi import (
-  ENTRY_C_TYPES,
+  ALIGNAS,
   abi_status_defines,
   buffer_idents,
+  buffer_structs,
   c_api_signature,
   c_ident,
-  leaf_c_type,
+  pointer_signature,
   sparse_layout_tables,
-  workspace_c_type,
   wrapper_param_idents,
 )
 from scaly.codegen.c import (
+  casadi_extern_adapters,
+  entry_types,
   extern_declarations,
   _c_reserved_names,
   _includes,
   _render_entry,
   _render_raw_callee,
   render_program_c,
+  render_typed_entry,
 )
 from scaly.codegen.casadi import (
   casadi_declarations,
@@ -50,8 +53,9 @@ from scaly.codegen.solver import (
 from scaly.ir.layout import DenseLayout, SparseLayout
 from scaly.function.concrete import ConcreteFunction
 from scaly.function.model import Function, as_concrete
-from scaly.passes.lowering import lower_function, main_proc, workspace_dtype
+from scaly.passes.lowering import lower_function, main_proc
 from scaly.passes.program import ProgramObserver
+from scaly.passes.program.pack_workspace import WorkspaceLayout
 from scaly.solvers.graph import solver_backends_used
 from scaly.solvers.solver import Solver
 from scaly.solvers.stats import stats_c_defs
@@ -66,9 +70,9 @@ if TYPE_CHECKING:
 class CModule:
   """One rendered function: the header and the ``.c`` to write, plus what a consumer needs to
   compile and call them. ``body`` is the translation unit. ``program`` is the optimized Program IR
-  that produced it. ``workspace_size`` is the entry's ``w[]`` length, and ``backends`` lists the
+  that produced it. ``workspace_size`` is the caller's scratch capacity in bytes, and ``backends`` lists the
   solver plugins that the function calls. ``lang`` picks the header language (``"c"`` or
-  ``"cpp"``), and ``casadi`` adds the CasADi-compatible symbols.
+  ``"cpp"``), and ``casadi`` selects the CasADi-compatible interface.
 
   ``header``, ``source`` and ``link_flags`` are rendered on first access. The JIT compiles ``body``
   and asks for none of them. For a big sparse function the header alone is larger than the source.
@@ -107,7 +111,13 @@ class CModule:
   @cached_property
   def header(self) -> str:
     return self.recipe.comment(self.source_name) + _render_header(
-      self.fun, self.backends, self.workspace_size, self.frame_bytes, lang=self.lang, casadi=self.casadi
+      self.fun,
+      self.backends,
+      main_proc(self.program).attrs["workspace_layout"],
+      self.workspace_size,
+      self.frame_bytes,
+      lang=self.lang,
+      casadi=self.casadi,
     )
 
   @cached_property
@@ -168,11 +178,13 @@ def _lower(
   *,
   recipe: BuildRecipe = BuildRecipe(),
 ) -> _RenderCtx:
-  """Lower ``fun`` once. ``workspace_size`` is the scratch it needs in ``w[]``, in ``w``'s units — the
-  packed ``sz_w`` from ``passes.pack_workspace``, which also accounts for a solver wrapper passing
-  its ``w`` straight to the oracle."""
+  """Lower ``fun`` once and record its packed scratch capacity in bytes."""
   backends = solver_backends_used(fun)
-  reserved = tuple(f"{c_ident(fn.name)}_{suffix}" for fn in solver_functions(fun) for suffix in ("solve", "stats", "set_options", "default_options"))
+  symbol = c_ident(fun.name)
+  reserved = (
+    *(f"{symbol}_{suffix}" for suffix in ("abi", "abi_with_options", "WORKSPACE_BYTES")),
+    *(f"{c_ident(fn.name)}_{suffix}" for fn in solver_functions(fun) for suffix in ("solve", "stats", "set_options", "default_options")),
+  )
   prepared, libraries = prepare_solver_calls(fun, recipe) if backends else (fun, libraries_of(fun))
   prog = lower_function(
     prepared,
@@ -190,47 +202,32 @@ def _c_array(values: tuple[int, ...]) -> str:
   return "{" + ", ".join(str(v) for v in values) + "}"
 
 
-_ALIGNAS = [
-  "#ifndef SCALY_ALIGNAS",
-  "#ifdef __cplusplus",
-  "#define SCALY_ALIGNAS(n) alignas(n)",
-  "#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L",
-  "#define SCALY_ALIGNAS(n) _Alignas(n)",
-  "#else",
-  "#define SCALY_ALIGNAS(n)",
-  "#endif",
-  "#endif",
-]
-
-
-def _typed_buffers(fun: ConcreteFunction, symbol: str) -> list[str]:
-  """One struct per input and output, the caller-owned workspace struct, and a
-  ``_call`` wrapper that builds the pointer arrays. C11 and C++ align to 16 bytes; C99 uses natural alignment."""
+def _typed_wrappers(fun: ConcreteFunction, symbol: str, *, casadi: bool) -> list[str]:
+  """Typed wrappers that return the status from the pointer entry."""
   params: list[str] = []
   arg_values: list[str] = []
   res_values: list[str] = []
-  lines = ["", "// Typed buffers: one struct per input and output, and the caller-owned workspace."]
+  lines = [""]
   inputs, outputs = buffer_idents(fun)
   input_params, output_params, workspace = wrapper_param_idents(symbol, inputs, outputs, type_prefix=f"{symbol}_")
-  for ident, param, expr in zip(inputs, input_params, fun.inputs, strict=True):
-    lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) {leaf_c_type(expr.type.dtype)} data[{max(expr.type.storage_size, 1)}]; }} {symbol}_{ident}_t;")
+  for ident, param in zip(inputs, input_params, strict=True):
     params.append(f"const {symbol}_{ident}_t* {param}")
     arg_values.append(f"{param}->data")
-  for ident, param, expr in zip(outputs, output_params, fun.outputs, strict=True):
-    lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) {leaf_c_type(expr.type.dtype)} data[{max(expr.type.storage_size, 1)}]; }} {symbol}_{ident}_t;")
+  for ident, param in zip(outputs, output_params, strict=True):
     params.append(f"{symbol}_{ident}_t* {param}")
     res_values.append(f"{param}->data")
   params.append(f"{symbol}_workspace_t* {workspace}")
-  lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) {workspace_c_type(fun)} data[{symbol}_SZ_W > 0 ? {symbol}_SZ_W : 1]; }} {symbol}_workspace_t;")
-  pointee = ENTRY_C_TYPES[workspace_dtype(fun)]
+  pointee = "double" if casadi else "void"
   for runtime in (False, True) if solver_backends_used(fun) else (False,):
     suffix = "_with_options" if runtime else ""
+    entry = f"{symbol}{suffix}" if casadi else f"{symbol}_abi{suffix}"
+    tail = f"NULL, {workspace}, 0" if casadi else workspace
     call_params = [*params, *(("const scaly_solver_option* const* solver_options",) if runtime else ())]
     lines += [
       f"static inline int {symbol}_call{suffix}({', '.join(call_params)}) {{",
       f"  const {pointee}* arg[{symbol}_SZ_ARG > 0 ? {symbol}_SZ_ARG : 1] = {{{', '.join(arg_values) or 'NULL'}}};",
       f"  {pointee}* res[{symbol}_SZ_RES > 0 ? {symbol}_SZ_RES : 1] = {{{', '.join(res_values) or 'NULL'}}};",
-      f"  return {symbol}{suffix}(arg, res, NULL, {workspace} ? {workspace}->data : NULL, 0{', solver_options' if runtime else ''});",
+      f"  return {entry}(arg, res, {tail}{', solver_options' if runtime else ''});",
       "}",
     ]
   return lines
@@ -269,43 +266,47 @@ def _frame_bytes(prog: ProgramNode) -> int:
   return max((int(pr.attrs["frame_bytes"]) for pr in prog.args), default=0)
 
 
-def _render_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, frame_bytes: int, *, lang: str, casadi: bool) -> str:
+def _render_header(
+  fun: ConcreteFunction, backends: tuple[str, ...], layout: WorkspaceLayout, sz_w: int, frame_bytes: int, *, lang: str, casadi: bool
+) -> str:
   if lang == "cpp":
-    return render_cpp_header(fun, backends, sz_w, frame_bytes, casadi=casadi)
+    return render_cpp_header(fun, backends, layout, sz_w, frame_bytes, casadi=casadi)
   symbol = c_ident(fun.name)
-  leaf_dtypes = {leaf.type.dtype for leaf in (*fun.inputs, *fun.outputs)}
+  used_dtypes = {leaf.type.dtype for leaf in (*fun.inputs, *fun.outputs)} | {dtype for dtype, _ in layout}
   lines = [
     "#pragma once",
     "",
-    *(["#include <stdbool.h>"] if any(dtype.is_bool for dtype in leaf_dtypes) else []),
+    *(["#include <stdbool.h>"] if any(dtype.is_bool for dtype in used_dtypes) else []),
     "#include <stddef.h>",
-    *(["#include <stdint.h>"] if any(dtype.is_integer for dtype in leaf_dtypes) else []),
+    *(["#include <stdint.h>"] if any(dtype.is_integer for dtype in used_dtypes) and not backends else []),
     *(["#include <stdint.h>", "", *stats_c_defs(), *solver_options_c_defs()] if backends else []),
     "",
     *abi_status_defines(guarded=True),
     *(["", *casadi_defines()] if casadi else []),
     "",
-    *_ALIGNAS,
+    *ALIGNAS,
+    "",
+    *buffer_structs(fun, layout),
     "",
     f"#define {symbol}_SZ_ARG {len(fun.inputs)}",
     f"#define {symbol}_SZ_RES {len(fun.outputs)}",
     f"#define {symbol}_SZ_IW 0",
-    f"#define {symbol}_SZ_W {sz_w}",
+    f"#define {symbol}_WORKSPACE_BYTES {sz_w}",
     f"#define {symbol}_FRAME_BYTES {frame_bytes}",
     "",
-    f"// The pointer ABI for {fun.name}.",
     "#ifdef __cplusplus",
     'extern "C" {',
     "#endif",
-    c_api_signature(fun) + ";",
-    *solver_options_declarations(fun),
+    *([] if casadi else [c_api_signature(fun) + ";"]),
+    pointer_signature(fun, casadi=casadi) + ";",
+    *solver_options_declarations(fun, casadi=casadi),
     *(f"int {solver_symbol}_stats(scaly_solver_stats* out);" for solver_symbol in solver_stats_symbols(fun)),
     *(casadi_declarations(symbol) if casadi else []),
     "#ifdef __cplusplus",
     "}",
     "#endif",
   ]
-  lines += _typed_buffers(fun, symbol)
+  lines += _typed_wrappers(fun, symbol, casadi=casadi)
   lines += _sparse_leaf_tables(fun, symbol)
   return "\n".join(lines) + "\n"
 
@@ -322,9 +323,13 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
   fun, prog = ctx.fun, ctx.prog
   count = int(prog.attrs["proc_count"])
   solvers = solver_functions(fun)
+  adapters, staging = casadi_extern_adapters(prog) if casadi else ([], 0)
   lines = [
-    *_includes(prog=prog, dialect=ctx.recipe.dialect, vector_libm=ctx.recipe.vector_libm),
+    *_includes(
+      ("#include <stdlib.h>",) if staging else (), prog=prog, dialect="c" if casadi else ctx.recipe.dialect, vector_libm=ctx.recipe.vector_libm
+    ),
     "",
+    *entry_types(fun, main_proc(prog), casadi=casadi),
     *abi_status_defines(),
     "",
     *stats_c_defs(),
@@ -336,6 +341,7 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
     "#endif",
     "",
     *extern_declarations(prog),
+    *adapters,
   ]
   for fn in solvers:
     symbol = c_ident(fn.name)
@@ -347,7 +353,17 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
     )
   for proc in prog.args[: count - 1]:
     lines.extend(
-      [*_render_raw_callee(proc, dialect=ctx.recipe.dialect, vector_libm=ctx.recipe.vector_libm, reserved_names=_c_reserved_names(prog)), ""]
+      [
+        *_render_raw_callee(
+          proc,
+          dialect=ctx.recipe.dialect,
+          vector_libm=ctx.recipe.vector_libm,
+          reserved_names=_c_reserved_names(prog),
+          byte_workspace=casadi,
+          staging=bool(staging),
+        ),
+        "",
+      ]
     )
   entry = _render_entry(
     main_proc(prog),
@@ -357,18 +373,28 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
     vector_libm=ctx.recipe.vector_libm,
     options_count=len(solvers),
     entry_setup=[f"  {c_ident(fn.name)}_set_options(solver_options[{i}]);" for i, fn in enumerate(solvers)],
+    external_staging=staging,
   )
   lines.extend(entry)
   symbol = c_ident(fun.name)
   lines += ["", *render_solver_defaults(fun)]
   lines += [
-    c_api_signature(fun) + " {",
+    pointer_signature(fun, casadi=casadi) + " {",
     f"  const scaly_solver_option* options[] = {{ {', '.join(f'{c_ident(fn.name)}_default_options()' for fn in solvers)} }};",
-    f"  return {symbol}_with_options(arg, res, iw, w, mem, options);",
+    f"  return {symbol}_with_options(arg, res, iw, w, mem, options);" if casadi else f"  return {symbol}_abi_with_options(arg, res, w, options);",
     "}",
   ]
   if casadi:
     lines.extend(["", *render_casadi_queries(fun, ctx.workspace_size)])
+  else:
+    lines.extend(
+      [
+        "",
+        *render_typed_entry(
+          fun, main_proc(prog), entry_setup=[f"  {c_ident(fn.name)}_set_options({c_ident(fn.name)}_default_options());" for fn in solvers]
+        ),
+      ]
+    )
   lines.extend(["", "#ifdef __cplusplus", "}", "#endif"])
   return "\n".join(lines).rstrip() + "\n"
 
@@ -414,7 +440,7 @@ def render_c_source(
   cpu: CpuLevel = "generic",
   frame_budget: int = 65536,
 ) -> str:
-  """Render a standalone pointer-ABI C implementation of ``fun`` and its callees. ``casadi`` adds
+  """Render a standalone C implementation of ``fun`` and its callees. ``casadi`` selects
   the CasADi 3.8 compatible symbols.
 
   A ``LoweringError`` for a function that cannot be lowered propagates. There is no fallback.
@@ -441,9 +467,9 @@ def render_c_api_header(
   cpu: CpuLevel = "generic",
   frame_budget: int = 65536,
 ) -> str:
-  """Render the public header for ``fun``: the ABI declarations, ``SZ_*`` constants, the typed
-  buffers of the chosen ``lang``, the
-  sparse-output tables, and with ``casadi`` the CasADi query prototypes."""
+  """Render the public header for ``fun``, including typed buffers, workspace bytes and sparse layout tables.
+  With ``casadi=True``, declare the CasADi-compatible entry and its queries.
+  """
   fun = as_concrete(fun)
   _check_lang(lang)
   if casadi:
@@ -452,7 +478,7 @@ def render_c_api_header(
     fun, recipe=BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal, frame_budget=frame_budget)
   )
   return ctx.recipe.comment(f"{c_ident(fun.name)}.c") + _render_header(
-    ctx.fun, ctx.backends, ctx.workspace_size, _frame_bytes(ctx.prog), lang=lang, casadi=casadi
+    ctx.fun, ctx.backends, main_proc(ctx.prog).attrs["workspace_layout"], ctx.workspace_size, _frame_bytes(ctx.prog), lang=lang, casadi=casadi
   )
 
 
@@ -508,10 +534,9 @@ def workspace_size(
   cpu: CpuLevel = "generic",
   frame_budget: int = 65536,
 ) -> int:
-  """Entries of scratch ``fun`` needs in ``w[]``, the value its header's ``SZ_W`` quotes: doubles
-  when every leaf is float64, floats when every leaf is float32, and bytes otherwise.
-  ``CModule.workspace_size`` is the same number without a second lowering, so prefer it when the
-  module is already in hand."""
+  """Bytes of caller scratch ``fun`` needs, including padding. The header reports this as
+  ``<name>_WORKSPACE_BYTES``. Use ``CModule.workspace_size`` when the module is already rendered.
+  """
   fun = as_concrete(fun)
   if casadi:
     fun = casadi_layout(fun)

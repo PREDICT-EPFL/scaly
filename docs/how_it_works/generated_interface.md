@@ -30,62 +30,39 @@ print(render_c_module(rollout, lanes=1).source)
 ```
 
 `lanes=1` turns off vector widening so the listing stays short. This is the
-printed `rollout.c`:
+part of the printed `rollout.c` that evaluates the function:
 
 ```c
-/* Scaly build recipe
- * CPU baseline: generic
- * lanes=1, dialect=gnu, vector_libm=none, reciprocal=False
- * Math library: scalar libm
- * gcc -O3 -fno-math-errno -c rollout.c
- * clang -O3 -fno-math-errno -c rollout.c
- * Link with: -lm
- */
-#include "rollout.h"
-
-#include <math.h>
-#include <stddef.h>
-#include <stdint.h>
-typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
-
-#define SCALY_SUCCESS 0
-#define SCALY_ERR_NULL_ABI 1
-#define SCALY_ERR_NULL_WORK 2
-#define SCALY_ERR_NULL_RESULT 3
-#define SCALY_ERR_NULL_INPUT 4
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-static inline void euler_raw(const double* z, const double* u, double* znext, double* w) {
-  (void)w;
-  const double* t0 = z;
-  const double* t2 = z + 1;
-  double v0 = t2[0];
-  *(double2*)(znext) = (double2){(t0[0] + (0.10000000000000001 * v0)), (v0 + (0.10000000000000001 * sin(u[0])))};
+static inline void euler_raw(const double* z, const double* u, double* znext) {
+  double v0 = z[1];
+  *(double2*)(znext) = (double2){(z[0] + (0.10000000000000001 * v0)), (v0 + (0.10000000000000001 * sin(u[0])))};
 }
 
-int rollout(const double** arg, double** res, int* iw, double* w, int mem) {
-  (void)iw;
-  (void)mem;
+static inline void SCALY_KERNEL_rollout(const double* zs, const double* us, double* zn) {
+  double s0[20];
+  for (long long it_t0 = 0; it_t0 < 10; ++it_t0) {
+    euler_raw((zs + (2 * it_t0)), (us + it_t0), (s0 + (it_t0 * 2)));
+  }
+  for (long long i_zn = 0; i_zn < 20; ++i_zn) {
+    zn[i_zn] = s0[i_zn];
+  }
+}
+
+int rollout_abi(const void* const* arg, void* const* res, rollout_workspace_t* w) {
   if (!arg || !res) return SCALY_ERR_NULL_ABI;
   (void)w;
   if (!arg[0]) return SCALY_ERR_NULL_INPUT;
   if (!arg[1]) return SCALY_ERR_NULL_INPUT;
   if (!res[0]) return SCALY_ERR_NULL_RESULT;
-  for (long long it_zn = 0; it_zn < 10; ++it_zn) {
-    euler_raw((arg[0] + (2 * it_zn)), (arg[1] + it_zn), (res[0] + (it_zn * 2)), NULL);
-  }
+  SCALY_KERNEL_rollout((const double*)arg[0], (const double*)arg[1], (double*)res[0]);
   return SCALY_SUCCESS;
 }
 
-#ifdef __cplusplus
+void rollout(const rollout_zs_t* zs, const rollout_us_t* us, rollout_zn_t* zn, rollout_workspace_t* w) {
+  (void)w;
+  SCALY_KERNEL_rollout((const double*)zs->data, (const double*)us->data, (double*)zn->data);
 }
-#endif
 ```
-
-The sections below take this file apart from top to bottom.
 
 ## Build recipe
 
@@ -119,8 +96,9 @@ Every module has a main C source and one header. The source contains, in order:
 
 1. The recipe comment and, for a C header, `#include` of that header.
 2. System includes, vector typedefs and lane macros, and the status codes.
-3. One `static inline void <callee>_raw(...)` per retained callee.
-4. The exported entry, named after the root function.
+3. The input, output, and workspace type definitions.
+4. One `static inline void <callee>_raw(...)` per retained callee, followed by the root kernel.
+5. The typed entry and the pointer-array entry.
 
 Distinct functions may share a Python name. Scaly gives their internal C
 procedures distinct names and keeps each call attached to its own function.
@@ -128,47 +106,39 @@ The exported entry keeps its C identifier, so a clash with a reserved name
 such as `log` raises `ValueError` before compilation. Buffer and loop names
 are renamed when needed, including C++ keywords in typed headers.
 
-A `_raw` procedure takes one pointer per input, `const`-qualified, one pointer
-per output and a trailing workspace pointer. It has no null checks and no
-status code, so the entry pays for those once rather than at every stage. A
-callee that lowering expanded into its caller has no `_raw` at all. Without
-`.block()`, `euler` is expanded into the loop in `rollout` and `euler_raw`
-disappears, so function boundaries in Python do not promise C procedures.
-
-`euler_raw` is called with `w = NULL` because it spills nothing to the
-workspace. When a callee does spill, the caller passes its own `w` advanced
-past its own spill window. The workspace pointer has the entry's type,
-`double*` here, and `void*` for a function whose inputs and outputs mix types.
+A `_raw` procedure takes a const pointer per input, a writable pointer per
+output, and one pointer per workspace array it needs. A caller passes the
+slice after its own spills for each dtype. Sibling calls share those slices.
+`euler_raw` needs no workspace array. Without `.block()`, lowering would
+expand `euler` into `rollout` and omit the separate procedure.
 
 A module that reaches a solver also exports a build manifest and external
 wrapper sources. Each wrapper compiles with its oracles as a separate C
 translation unit. It links to the plugin's native library and exports a solve
 function, an option setter and a statistics accessor. The host entry validates
-its arguments, supplies the option arrays, then calls its ordinary generated
-body. [Solvers](solvers.md) describes what each wrapper does.
+the pointer arrays when the caller uses the pointer-array entry. Both entries
+supply solver options before they call the same kernel. [Solvers](solvers.md) describes what each wrapper does.
 
 ## The pointer ABI
 
-The standard entry has the same five-argument signature for every function, and
-the [guide](../guide/codegen.md#the-pointer-entry) explains each argument. A module
-containing a solver also exports a `_with_options` entry with a sixth argument
-for call-time option arrays. Python uses this entry. The standard entry calls it
-with backend defaults. The [option interface](../guide/codegen.md#solver-options-in-c)
-describes the arrays and their lifetime. `rollout` has `float64` inputs and
-outputs, so its pointers point to `double`. A function whose inputs and
-outputs are all `float32` takes `float` pointers, and any other mix of
-`float64`, `float32`, `int32`, `int64` and `bool` takes `void` pointers, which
-the entry casts once per input and output to its C type. The
-[guide](../guide/codegen.md#float32-and-integer-functions) shows both. The body
-starts with null checks that return one of five codes:
+The typed entry takes a pointer to each input and output struct and one
+pointer to the workspace struct. The pointer-array entry `<name>_abi` accepts
+separate input and output buffers with the same workspace. Python uses that
+entry. A module containing a solver also exports `<name>_abi_with_options`
+for the call-time [option arrays](../guide/codegen.md#solver-options-in-c).
+The `casadi=True` export has its own five-argument entry and
+[workspace queries](../guide/codegen.md#casadi-compatible-exports).
+
+The pointer-array entry checks its arguments and returns a status.
 
 | Code                    | Value | Returned when                                         |
 | ----------------------- | ----- | ----------------------------------------------------- |
 | `SCALY_SUCCESS`         | 0     | evaluation finished                                   |
 | `SCALY_ERR_NULL_ABI`    | 1     | `arg` or `res` is null                                |
-| `SCALY_ERR_NULL_WORK`   | 2     | `w` is null and the header's `SZ_W` is not zero       |
+| `SCALY_ERR_NULL_WORK`   | 2     | `w` is null and the header reports workspace bytes       |
 | `SCALY_ERR_NULL_RESULT` | 3     | an output that holds values has a null pointer        |
 | `SCALY_ERR_NULL_INPUT`  | 4     | an input that holds values has a null pointer         |
+| `SCALY_ERR_ALLOC_WORK`  | 5     | a CasADi entry could not allocate typed staging for external C |
 
 An input or output with no stored values may have a null pointer. The `arg`
 and `res` pointer arrays must still be non-null.
@@ -181,15 +151,12 @@ statistics described [below](#solver-statistics).
 
 ### Alignment
 
-The pointer interface needs only the natural alignment of each input's and
-output's type, and a `void* w` needs 8 bytes, the alignment of its widest
-temporaries. Stores of
-several values at once go through vector types declared `aligned(8)` and
-`may_alias`, like the `double2` store in `euler_raw`, so the compiler never
-assumes 16-byte alignment of a caller's buffer. The typed structs in the header
-request 16 bytes regardless. Every temporary that lowering moves to the
-workspace starts at a multiple of 64 bytes from `w`, with the padding counted in `SZ_W`, so a
-workspace aligned to 64 bytes gives every temporary a cache-line boundary.
+The pointer-array entry needs the natural alignment of each input and output
+element type. Vector stores like the `double2` store in `euler_raw` use
+`aligned(8)` and `may_alias`, so they work on naturally aligned double
+arrays. The typed input and output structs request 16-byte alignment.
+Workspace members request 64-byte alignment, and each spilled slot starts at
+a 64-byte offset within its dtype's member.
 
 ### C++ linkage
 

@@ -41,11 +41,34 @@ static inline __attribute__((always_inline, unused)) void lanes_4_4_4_4_vec_st(d
   else for (long long i = 0; i < n; ++i) p[i] = v[i];
 }
 
+#include <stdbool.h>
+#ifndef SCALY_ALIGNAS
+#ifdef __cplusplus
+#define SCALY_ALIGNAS(n) alignas(n)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define SCALY_ALIGNAS(n) _Alignas(n)
+#elif defined(__GNUC__)
+#define SCALY_ALIGNAS(n) __attribute__((aligned(n)))
+#else
+#define SCALY_ALIGNAS(n)
+#endif
+#endif
+#ifndef SCALY_TYPES_dynamics_jac_znext_z
+#define SCALY_TYPES_dynamics_jac_znext_z
+typedef struct { SCALY_ALIGNAS(16) double data[4]; } dynamics_jac_znext_z_z_t;
+typedef struct { SCALY_ALIGNAS(16) double data[2]; } dynamics_jac_znext_z_u_t;
+typedef struct { SCALY_ALIGNAS(16) double data[16]; } dynamics_jac_znext_z_jac_znext_z_t;
+typedef struct {
+  unsigned char unused;
+} dynamics_jac_znext_z_workspace_t;
+#endif
+
 #define SCALY_SUCCESS 0
 #define SCALY_ERR_NULL_ABI 1
 #define SCALY_ERR_NULL_WORK 2
 #define SCALY_ERR_NULL_RESULT 3
 #define SCALY_ERR_NULL_INPUT 4
+#define SCALY_ERR_ALLOC_WORK 5
 
 #ifdef __cplusplus
 extern "C" {
@@ -70,14 +93,8 @@ static inline __attribute__((always_inline)) void lanes_3(long long i, long long
   lanes_4_4_4_4_vec l = *(const lanes_4_4_4_4_vec_mem*)ls;
   lanes_4_4_4_4_vec_st(&jac_znext_z[(((i_jac_znext_z_0 * 4) + i)) + 0], l, n);
 }
-int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, int mem) {
-  (void)iw;
-  (void)mem;
-  if (!arg || !res) return SCALY_ERR_NULL_ABI;
-  (void)w;
-  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
-  if (!arg[1]) return SCALY_ERR_NULL_INPUT;
-  if (!res[0]) return SCALY_ERR_NULL_RESULT;
+static inline void SCALY_KERNEL_dynamics_jac_znext_z(const double* z, const double* u, double* jac_znext_z) {
+  (void)u;
   double s0[4];
   double s1[16];
   static const double k2[8] = {0, 0, 0, 0, 1, 0, 0, 1};
@@ -85,7 +102,7 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, i
   double s3[1];
   static const double k7[8] = {1, 0, 0, 1, 0.050000000000000003, 0, 0, 0.050000000000000003};
   for (long long i_t0 = 0; i_t0 < 2; ++i_t0) {
-    s0[i_t0] = (2.0 * arg[0][(2 + i_t0)]);
+    s0[i_t0] = (2.0 * z[(2 + i_t0)]);
   }
   for (long long zero_t1_start = 0; zero_t1_start <= 4 - SCALY_WIDTH_4_4_4_4; zero_t1_start += SCALY_WIDTH_4_4_4_4) {
     lanes_1(zero_t1_start, SCALY_WIDTH_4_4_4_4, s1);
@@ -106,7 +123,7 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, i
 #endif
   double acc_t4 = 0.0;
   for (long long i_t4 = 0; i_t4 < 2; ++i_t4) {
-    double v2 = arg[0][(2 + i_t4)];
+    double v2 = z[(2 + i_t4)];
     acc_t4 = (acc_t4 + (v2 * v2));
   }
   s2[0] = acc_t4;
@@ -120,18 +137,32 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, i
     for (long long j_t6_1 = 0; j_t6_1 < 2; ++j_t6_1) {
       int64_t v3 = (2 + j_t6_1);
       double v4 = k2[((j_t6_1_0 * 2) + j_t6_1)];
-      s1[((j_t6_1_0 * 4) + v3)] = (v4 - (0.050000000000000003 * ((s0[j_t6_1_0] * arg[0][v3]) + (s3[0] * v4))));
+      s1[((j_t6_1_0 * 4) + v3)] = (v4 - (0.050000000000000003 * ((s0[j_t6_1_0] * z[v3]) + (s3[0] * v4))));
     }
   }
   for (long long i_jac_znext_z_0 = 0; i_jac_znext_z_0 < 4; ++i_jac_znext_z_0) {
     for (long long i_jac_znext_z_start = 0; i_jac_znext_z_start <= 4 - SCALY_WIDTH_4_4_4_4; i_jac_znext_z_start += SCALY_WIDTH_4_4_4_4) {
-      lanes_3(i_jac_znext_z_start, SCALY_WIDTH_4_4_4_4, res[0], s1, i_jac_znext_z_0);
+      lanes_3(i_jac_znext_z_start, SCALY_WIDTH_4_4_4_4, jac_znext_z, s1, i_jac_znext_z_0);
     }
 #if (4 % SCALY_WIDTH_4_4_4_4) != 0
-    lanes_3(4 - 4 % SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, res[0], s1, i_jac_znext_z_0);
+    lanes_3(4 - 4 % SCALY_WIDTH_4_4_4_4, 4 % SCALY_WIDTH_4_4_4_4, jac_znext_z, s1, i_jac_znext_z_0);
 #endif
   }
+}
+
+int dynamics_jac_znext_z_abi(const void* const* arg, void* const* res, dynamics_jac_znext_z_workspace_t* w) {
+  if (!arg || !res) return SCALY_ERR_NULL_ABI;
+  (void)w;
+  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
+  if (!arg[1]) return SCALY_ERR_NULL_INPUT;
+  if (!res[0]) return SCALY_ERR_NULL_RESULT;
+  SCALY_KERNEL_dynamics_jac_znext_z((const double*)arg[0], (const double*)arg[1], (double*)res[0]);
   return SCALY_SUCCESS;
+}
+
+void dynamics_jac_znext_z(const dynamics_jac_znext_z_z_t* z, const dynamics_jac_znext_z_u_t* u, dynamics_jac_znext_z_jac_znext_z_t* jac_znext_z, dynamics_jac_znext_z_workspace_t* w) {
+  (void)w;
+  SCALY_KERNEL_dynamics_jac_znext_z((const double*)z->data, (const double*)u->data, (double*)jac_znext_z->data);
 }
 
 #ifdef __cplusplus

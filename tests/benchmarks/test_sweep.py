@@ -782,17 +782,19 @@ def test_compiled_driver_rejects_omitted_nonzero_triangle_entry(tmp_path: Path) 
 #ifdef __cplusplus
 extern "C" {
 #endif
-int sparse_lower_fixture(const double** arg, double** res, const int* iw, double* w, int mem);
+typedef struct { unsigned char unused; } sparse_lower_fixture_workspace_t;
+int sparse_lower_fixture_abi(const void* const* arg, void* const* res, sparse_lower_fixture_workspace_t* w);
 #ifdef __cplusplus
 }
 #endif
 """
   source = """
 #include "sparse_lower_fixture.h"
-int sparse_lower_fixture(const double**, double** res, const int*, double*, int) {
-  if (!res[0]) return 11;
-  res[0][0] = 1.0;
-  res[0][1] = 3.0;
+int sparse_lower_fixture_abi(const void* const*, void* const* res, sparse_lower_fixture_workspace_t*) {
+  double* out = res[0];
+  if (!out) return 11;
+  out[0] = 1.0;
+  out[1] = 3.0;
   return 0;
 }
 """

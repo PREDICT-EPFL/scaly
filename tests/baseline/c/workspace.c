@@ -46,11 +46,34 @@ static inline __attribute__((always_inline)) lanes_8_8_8_8_vec lanes_8_8_8_8_vec
   return result;
 }
 
+#include <stdbool.h>
+#ifndef SCALY_ALIGNAS
+#ifdef __cplusplus
+#define SCALY_ALIGNAS(n) alignas(n)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define SCALY_ALIGNAS(n) _Alignas(n)
+#elif defined(__GNUC__)
+#define SCALY_ALIGNAS(n) __attribute__((aligned(n)))
+#else
+#define SCALY_ALIGNAS(n)
+#endif
+#endif
+#ifndef SCALY_TYPES_workspace
+#define SCALY_TYPES_workspace
+typedef struct { SCALY_ALIGNAS(16) double data[16384]; } workspace_x_t;
+typedef struct { SCALY_ALIGNAS(16) double data[1]; } workspace_sum_t;
+typedef struct { SCALY_ALIGNAS(16) double data[1]; } workspace_sumsqr_t;
+typedef struct {
+  SCALY_ALIGNAS(64) double f64[16384];
+} workspace_workspace_t;
+#endif
+
 #define SCALY_SUCCESS 0
 #define SCALY_ERR_NULL_ABI 1
 #define SCALY_ERR_NULL_WORK 2
 #define SCALY_ERR_NULL_RESULT 3
 #define SCALY_ERR_NULL_INPUT 4
+#define SCALY_ERR_ALLOC_WORK 5
 
 #ifdef __cplusplus
 extern "C" {
@@ -68,20 +91,13 @@ static inline __attribute__((always_inline)) void lanes_2(long long i, long long
   else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = s0[((i + k) < 16383 ? (i + k) : 16383)];
   for (long long k = 0; k < n; ++k) acc_sum[0] = (acc_sum[0] + l[k]);
 }
-int workspace(const double** arg, double** res, int* iw, double* w, int mem) {
-  (void)iw;
-  (void)mem;
-  if (!arg || !res) return SCALY_ERR_NULL_ABI;
-  if (!w) return SCALY_ERR_NULL_WORK;
-  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
-  if (!res[0]) return SCALY_ERR_NULL_RESULT;
-  if (!res[1]) return SCALY_ERR_NULL_RESULT;
-  double* s0 = w + 0;
+static inline void SCALY_KERNEL_workspace(const double* x, double* sum, double* sumsqr, double* SCALY_W_f64) {
+  double* s0 = SCALY_W_f64;
   for (long long i_t0_start = 0; i_t0_start <= 16384 - SCALY_WIDTH_8_8_8_8; i_t0_start += SCALY_WIDTH_8_8_8_8) {
-    lanes_1(i_t0_start, SCALY_WIDTH_8_8_8_8, s0, arg[0]);
+    lanes_1(i_t0_start, SCALY_WIDTH_8_8_8_8, s0, x);
   }
 #if (16384 % SCALY_WIDTH_8_8_8_8) != 0
-  lanes_1(16384 - 16384 % SCALY_WIDTH_8_8_8_8, 16384 % SCALY_WIDTH_8_8_8_8, s0, arg[0]);
+  lanes_1(16384 - 16384 % SCALY_WIDTH_8_8_8_8, 16384 % SCALY_WIDTH_8_8_8_8, s0, x);
 #endif
   double acc_sum = 0.0;
   for (long long i_sum_start = 0; i_sum_start <= 16384 - SCALY_WIDTH_8_8_8_8; i_sum_start += SCALY_WIDTH_8_8_8_8) {
@@ -90,14 +106,27 @@ int workspace(const double** arg, double** res, int* iw, double* w, int mem) {
 #if (16384 % SCALY_WIDTH_8_8_8_8) != 0
   lanes_2(16384 - 16384 % SCALY_WIDTH_8_8_8_8, 16384 % SCALY_WIDTH_8_8_8_8, &acc_sum, s0);
 #endif
-  res[0][0] = acc_sum;
+  sum[0] = acc_sum;
   double acc_sumsqr = 0.0;
   for (long long i_sumsqr = 0; i_sumsqr < 16384; ++i_sumsqr) {
     double v0 = s0[i_sumsqr];
     acc_sumsqr = (acc_sumsqr + (v0 * v0));
   }
-  res[1][0] = acc_sumsqr;
+  sumsqr[0] = acc_sumsqr;
+}
+
+int workspace_abi(const void* const* arg, void* const* res, workspace_workspace_t* w) {
+  if (!arg || !res) return SCALY_ERR_NULL_ABI;
+  if (!w) return SCALY_ERR_NULL_WORK;
+  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
+  if (!res[0]) return SCALY_ERR_NULL_RESULT;
+  if (!res[1]) return SCALY_ERR_NULL_RESULT;
+  SCALY_KERNEL_workspace((const double*)arg[0], (double*)res[0], (double*)res[1], (double*)w->f64);
   return SCALY_SUCCESS;
+}
+
+void workspace(const workspace_x_t* x, workspace_sum_t* sum, workspace_sumsqr_t* sumsqr, workspace_workspace_t* w) {
+  SCALY_KERNEL_workspace((const double*)x->data, (double*)sum->data, (double*)sumsqr->data, (double*)w->f64);
 }
 
 #ifdef __cplusplus

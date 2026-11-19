@@ -25,39 +25,49 @@
 #ifndef SCALY_ERR_NULL_INPUT
 #define SCALY_ERR_NULL_INPUT 4
 #endif
+#ifndef SCALY_ERR_ALLOC_WORK
+#define SCALY_ERR_ALLOC_WORK 5
+#endif
 
 #ifndef SCALY_ALIGNAS
 #ifdef __cplusplus
 #define SCALY_ALIGNAS(n) alignas(n)
 #elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 #define SCALY_ALIGNAS(n) _Alignas(n)
+#elif defined(__GNUC__)
+#define SCALY_ALIGNAS(n) __attribute__((aligned(n)))
 #else
 #define SCALY_ALIGNAS(n)
 #endif
 #endif
 
+#ifndef SCALY_TYPES_workspace
+#define SCALY_TYPES_workspace
+typedef struct { SCALY_ALIGNAS(16) double data[16384]; } workspace_x_t;
+typedef struct { SCALY_ALIGNAS(16) double data[1]; } workspace_sum_t;
+typedef struct { SCALY_ALIGNAS(16) double data[1]; } workspace_sumsqr_t;
+typedef struct {
+  SCALY_ALIGNAS(64) double f64[16384];
+} workspace_workspace_t;
+#endif
+
 #define workspace_SZ_ARG 1
 #define workspace_SZ_RES 2
 #define workspace_SZ_IW 0
-#define workspace_SZ_W 16384
+#define workspace_WORKSPACE_BYTES 131072
 #define workspace_FRAME_BYTES 4096
 
-// The pointer ABI for workspace.
 #ifdef __cplusplus
 extern "C" {
 #endif
-int workspace(const double** arg, double** res, int* iw, double* w, int mem);
+void workspace(const workspace_x_t* x, workspace_sum_t* sum, workspace_sumsqr_t* sumsqr, workspace_workspace_t* w);
+int workspace_abi(const void* const* arg, void* const* res, workspace_workspace_t* w);
 #ifdef __cplusplus
 }
 #endif
 
-// Typed buffers: one struct per input and output, and the caller-owned workspace.
-typedef struct { SCALY_ALIGNAS(16) double data[16384]; } workspace_x_t;
-typedef struct { SCALY_ALIGNAS(16) double data[1]; } workspace_sum_t;
-typedef struct { SCALY_ALIGNAS(16) double data[1]; } workspace_sumsqr_t;
-typedef struct { SCALY_ALIGNAS(16) double data[workspace_SZ_W > 0 ? workspace_SZ_W : 1]; } workspace_workspace_t;
 static inline int workspace_call(const workspace_x_t* x, workspace_sum_t* sum, workspace_sumsqr_t* sumsqr, workspace_workspace_t* workspace_2) {
-  const double* arg[workspace_SZ_ARG > 0 ? workspace_SZ_ARG : 1] = {x->data};
-  double* res[workspace_SZ_RES > 0 ? workspace_SZ_RES : 1] = {sum->data, sumsqr->data};
-  return workspace(arg, res, NULL, workspace_2 ? workspace_2->data : NULL, 0);
+  const void* arg[workspace_SZ_ARG > 0 ? workspace_SZ_ARG : 1] = {x->data};
+  void* res[workspace_SZ_RES > 0 ? workspace_SZ_RES : 1] = {sum->data, sumsqr->data};
+  return workspace_abi(arg, res, workspace_2);
 }

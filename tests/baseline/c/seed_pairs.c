@@ -53,11 +53,34 @@ static inline __attribute__((always_inline)) lanes_4_4_4_4_vec lanes_4_4_4_4_vec
   return result;
 }
 
+#include <stdbool.h>
+#ifndef SCALY_ALIGNAS
+#ifdef __cplusplus
+#define SCALY_ALIGNAS(n) alignas(n)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define SCALY_ALIGNAS(n) _Alignas(n)
+#elif defined(__GNUC__)
+#define SCALY_ALIGNAS(n) __attribute__((aligned(n)))
+#else
+#define SCALY_ALIGNAS(n)
+#endif
+#endif
+#ifndef SCALY_TYPES_seed_pair_map
+#define SCALY_TYPES_seed_pair_map
+typedef struct { SCALY_ALIGNAS(16) double data[12]; } seed_pair_map_x_t;
+typedef struct { SCALY_ALIGNAS(16) double data[144]; } seed_pair_map_d_t;
+typedef struct { SCALY_ALIGNAS(16) double data[36]; } seed_pair_map_y_t;
+typedef struct {
+  unsigned char unused;
+} seed_pair_map_workspace_t;
+#endif
+
 #define SCALY_SUCCESS 0
 #define SCALY_ERR_NULL_ABI 1
 #define SCALY_ERR_NULL_WORK 2
 #define SCALY_ERR_NULL_RESULT 3
 #define SCALY_ERR_NULL_INPUT 4
+#define SCALY_ERR_ALLOC_WORK 5
 
 #ifdef __cplusplus
 extern "C" {
@@ -88,8 +111,7 @@ static inline __attribute__((always_inline)) void lanes_4(long long i, long long
   lanes_8_8_8_8_vec l_2 = *(const lanes_8_8_8_8_vec_mem*)l_2s;
   lanes_8_8_8_8_vec_st(&y[(i) + 0], (l + l_2), n);
 }
-static inline void seed_pair_stage_support_raw(const double* x, const double* d, double* y, double* w) {
-  (void)w;
+static inline void seed_pair_stage_support_raw(const double* x, const double* d, double* y) {
   double s0[4];
   double s1[48];
   for (long long i_t0_start = 0; i_t0_start <= 4 - SCALY_WIDTH_4_4_4_4; i_t0_start += SCALY_WIDTH_4_4_4_4) {
@@ -139,33 +161,40 @@ static inline __attribute__((always_inline)) void lanes_6(long long i, long long
   else for (long long k = 0; k < SCALY_WIDTH_8_8_8_8; ++k) l[k] = s1[((i + k) < 35 ? (i + k) : 35)];
   lanes_8_8_8_8_vec_st(&y[(i) + 0], l, n);
 }
-int seed_pair_map(const double** arg, double** res, int* iw, double* w, int mem) {
-  (void)iw;
-  (void)mem;
+static inline void SCALY_KERNEL_seed_pair_map(const double* x, const double* d, double* y) {
+  double s0[144];
+  static const double k1[48] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  double s1[36];
+  for (long long i_t0_start = 0; i_t0_start <= 144 - SCALY_WIDTH_8_8_8_8; i_t0_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_5(i_t0_start, SCALY_WIDTH_8_8_8_8, d, k1, s0);
+  }
+#if (144 % SCALY_WIDTH_8_8_8_8) != 0
+  lanes_5(144 - 144 % SCALY_WIDTH_8_8_8_8, 144 % SCALY_WIDTH_8_8_8_8, d, k1, s0);
+#endif
+  for (long long it_t2 = 0; it_t2 < 3; ++it_t2) {
+    seed_pair_stage_support_raw((x + (4 * it_t2)), (s0 + (48 * it_t2)), (s1 + (it_t2 * 12)));
+  }
+  for (long long c_y_start = 0; c_y_start <= 36 - SCALY_WIDTH_8_8_8_8; c_y_start += SCALY_WIDTH_8_8_8_8) {
+    lanes_6(c_y_start, SCALY_WIDTH_8_8_8_8, s1, y);
+  }
+#if (36 % SCALY_WIDTH_8_8_8_8) != 0
+  lanes_6(36 - 36 % SCALY_WIDTH_8_8_8_8, 36 % SCALY_WIDTH_8_8_8_8, s1, y);
+#endif
+}
+
+int seed_pair_map_abi(const void* const* arg, void* const* res, seed_pair_map_workspace_t* w) {
   if (!arg || !res) return SCALY_ERR_NULL_ABI;
   (void)w;
   if (!arg[0]) return SCALY_ERR_NULL_INPUT;
   if (!arg[1]) return SCALY_ERR_NULL_INPUT;
   if (!res[0]) return SCALY_ERR_NULL_RESULT;
-  double s0[144];
-  static const double k1[48] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-  double s1[36];
-  for (long long i_t0_start = 0; i_t0_start <= 144 - SCALY_WIDTH_8_8_8_8; i_t0_start += SCALY_WIDTH_8_8_8_8) {
-    lanes_5(i_t0_start, SCALY_WIDTH_8_8_8_8, arg[1], k1, s0);
-  }
-#if (144 % SCALY_WIDTH_8_8_8_8) != 0
-  lanes_5(144 - 144 % SCALY_WIDTH_8_8_8_8, 144 % SCALY_WIDTH_8_8_8_8, arg[1], k1, s0);
-#endif
-  for (long long it_t2 = 0; it_t2 < 3; ++it_t2) {
-    seed_pair_stage_support_raw((arg[0] + (4 * it_t2)), (s0 + (48 * it_t2)), (s1 + (it_t2 * 12)), NULL);
-  }
-  for (long long c_y_start = 0; c_y_start <= 36 - SCALY_WIDTH_8_8_8_8; c_y_start += SCALY_WIDTH_8_8_8_8) {
-    lanes_6(c_y_start, SCALY_WIDTH_8_8_8_8, s1, res[0]);
-  }
-#if (36 % SCALY_WIDTH_8_8_8_8) != 0
-  lanes_6(36 - 36 % SCALY_WIDTH_8_8_8_8, 36 % SCALY_WIDTH_8_8_8_8, s1, res[0]);
-#endif
+  SCALY_KERNEL_seed_pair_map((const double*)arg[0], (const double*)arg[1], (double*)res[0]);
   return SCALY_SUCCESS;
+}
+
+void seed_pair_map(const seed_pair_map_x_t* x, const seed_pair_map_d_t* d, seed_pair_map_y_t* y, seed_pair_map_workspace_t* w) {
+  (void)w;
+  SCALY_KERNEL_seed_pair_map((const double*)x->data, (const double*)d->data, (double*)y->data);
 }
 
 #ifdef __cplusplus

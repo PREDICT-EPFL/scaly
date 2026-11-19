@@ -84,7 +84,7 @@ class _Backend:
 
   name = "piqp"
   kind = "qp"
-  protocol_version = 9
+  protocol_version = 10
   lib_stem = "piqpc"
   link_flags = ("-lpiqpc",)
   header = "piqp/piqp.h"

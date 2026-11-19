@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from collections import Counter
+from typing import TypeAlias
 
 from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp, walk_program
@@ -21,6 +22,7 @@ from ._common import (
 
 SCALAR_SPILL_ALLOWANCE = 4096
 WORKSPACE_ALIGNMENT = 64  # bytes between the start of the workspace and every spilled slot
+WorkspaceLayout: TypeAlias = tuple[tuple[DType, int], ...]
 
 
 @dataclass(slots=True)
@@ -28,8 +30,8 @@ class _PackPlan:
   rename: dict[str, str] = field(default_factory=dict)  # private buffer name -> slot name
   slot_dtype: dict[str, DType] = field(default_factory=dict)  # slot name -> dtype
   slot_size: dict[str, int] = field(default_factory=dict)  # slot name -> element count
-  spill_offset: dict[str, int] = field(default_factory=dict)  # slot name -> offset into w[]
-  own_spill: int = 0  # workspace units this proc spills to its own w[] window
+  spill_offset: dict[str, int] = field(default_factory=dict)
+  own_spill: dict[DType, int] = field(default_factory=dict)
   callees: list[str] = field(default_factory=list)  # one entry per call site
 
 
@@ -53,6 +55,8 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
       plan.callees.append(stmt.attrs["callee"])
     elif stmt.op in (ProgramOp.FOR, ProgramOp.BLOCK):
       pending.extend(stmt.args[1:] if stmt.op == ProgramOp.FOR else stmt.args)
+    elif stmt.op == ProgramOp.IF:
+      pending.extend(stmt.args[1:])
   if not packable:
     return plan
 
@@ -159,17 +163,25 @@ def _aligned(units: int, unit: DType) -> int:
   return -(-units // step) * step
 
 
+def _layout(counts: dict[DType, int]) -> WorkspaceLayout:
+  return tuple(sorted(counts.items(), key=lambda item: (-item[0].itemsize, item[0].name)))
+
+
+def extern_workspace(fn) -> WorkspaceLayout:
+  """Element counts for a separately compiled function's workspace arguments."""
+  layout = getattr(fn, "workspace_layout", None)
+  if layout is not None:
+    return layout
+  return ((dtypes.float64, fn.workspace),) if fn.workspace else ()
+
+
 def pack_workspace(prog: ProgramNode, *, frame_budget: int = 65536) -> ProgramNode:
   """Pack private storage and spill the largest slots until each estimated frame fits.
 
-  The workspace has the program's ``workspace_dtype``: a float64 or float32 workspace holds only
-  slots of its dtype, and a uint8 one, addressed in bytes, holds every dtype. Other locals still
-  count toward the estimate, at their real size. Each spilled slot starts at a multiple of
-  WORKSPACE_ALIGNMENT bytes. Zero spills every eligible slot. Scalar spills still need stack space,
-  covered by a fixed allowance.
+  Each dtype has its own array. Slots start on WORKSPACE_ALIGNMENT byte boundaries within it.
+  Zero puts all private buffers in the workspace and reports only remaining buffer bytes.
   """
   procs = prog.args
-  unit: DType = prog.attrs.get("workspace_dtype", dtypes.float64)
   plans = {pr.attrs["name"]: _plan_pack(pr) for pr in procs}
   procedures = {pr.attrs["name"]: pr for pr in procs}
   inline_slots: dict[str, Counter[tuple[str, str]]] = {}
@@ -184,7 +196,7 @@ def pack_workspace(prog: ProgramNode, *, frame_budget: int = 65536) -> ProgramNo
     return inline_slots[name]
 
   def estimate(name: str) -> int:
-    return SCALAR_SPILL_ALLOWANCE + sum(
+    return (SCALAR_SPILL_ALLOWANCE if frame_budget else 0) + sum(
       count * _slot_bytes(plans[owner], slot) for (owner, slot), count in slots(name).items() if slot not in plans[owner].spill_offset
     )
 
@@ -194,46 +206,42 @@ def pack_workspace(prog: ProgramNode, *, frame_budget: int = 65536) -> ProgramNo
       if frame_budget and frame <= frame_budget:
         break
       plan = plans[owner]
-      if unit in (plan.slot_dtype[slot], dtypes.uint8) and slot not in plan.spill_offset:
-        plan.spill_offset[slot] = plan.own_spill
-        plan.own_spill = _aligned(plan.own_spill + _slot_bytes(plan, slot) // unit.itemsize, unit)
+      if slot not in plan.spill_offset:
+        dtype = plan.slot_dtype[slot]
+        offset = plan.own_spill.get(dtype, 0)
+        plan.spill_offset[slot] = offset
+        plan.own_spill[dtype] = _aligned(offset + plan.slot_size[slot], dtype)
         frame -= slots(name)[owner, slot] * _slot_bytes(plan, slot)
 
-  # sz_w(proc) = own spill + max callee workspace: callees share the window after the own spill.
-  # A byte workspace instead lays its callees' windows end to end, so every byte of it holds one
-  # dtype for the whole call and no access changes the type of memory another one reads.
-  # An external function's workspace is counted in doubles.
-  sz_w: dict[str, int] = {fn.name: fn.workspace * dtypes.float64.itemsize // unit.itemsize for fn in prog.attrs.get("externs", ())}
-  windows: dict[str, dict[str, int]] = {}
+  # Each dtype needs its own spills plus the largest callee's demand for that dtype.
+  layouts = {fn.name: extern_workspace(fn) for fn in prog.attrs.get("externs", ())}
+  typed_externs = {fn.name for fn in prog.attrs.get("externs", ()) if hasattr(fn, "workspace_layout")}
 
-  def total(name: str) -> int:
-    if name in sz_w:
-      return sz_w[name]
-    sz_w[name] = plans[name].own_spill  # break cycles defensively
-    callees = sorted({c for c in plans[name].callees if c in plans or c in sz_w})
-    if unit != dtypes.uint8:
-      sz_w[name] = plans[name].own_spill + max((total(c) for c in callees), default=0)
-      return sz_w[name]
-    offset = plans[name].own_spill
-    windows[name] = {}
-    for callee in callees:
-      windows[name][callee] = offset
-      offset = _aligned(offset + total(callee), unit)
-    sz_w[name] = offset
-    return sz_w[name]
+  def total(name: str) -> WorkspaceLayout:
+    if name not in layouts:
+      plan = plans[name]
+      counts = dict(plan.own_spill)
+      for callee in set(plan.callees):
+        if callee in plans or callee in layouts:
+          for dtype, size in total(callee):
+            counts[dtype] = max(counts.get(dtype, 0), plan.own_spill.get(dtype, 0) + _aligned(size, dtype))
+      layouts[name] = _layout(counts)
+    return layouts[name]
 
   for name in plans:
     total(name)
 
-  procs = [_apply_pack(pr, plans[pr.attrs["name"]], sz_w, estimate(pr.attrs["name"]), windows.get(pr.attrs["name"], {})) for pr in procs]
+  procs = [_apply_pack(pr, plans[pr.attrs["name"]], layouts, typed_externs, estimate(pr.attrs["name"])) for pr in procs]
   return ProgramNode(ProgramOp.PROGRAM, tuple(procs), prog.attrs, dtype=prog.dtype)
 
 
-def _apply_pack(proc: ProgramNode, plan: _PackPlan, sz_w: dict[str, int], frame_bytes: int, windows: dict[str, int]) -> ProgramNode:
+def _apply_pack(proc: ProgramNode, plan: _PackPlan, layouts: dict[str, WorkspaceLayout], typed_externs: set[str], frame_bytes: int) -> ProgramNode:
   params, body = _proc_parts(proc)
   name = proc.attrs["name"]
+  layout = layouts[name]
+  proc_attrs = {"workspace_layout": layout, "sz_w": sum(dtype.itemsize * n for dtype, n in layout), "frame_bytes": frame_bytes}
   if not plan.rename and not plan.callees:
-    return _rebuild_proc(proc, params, body, sz_w=sz_w.get(name, 0), w_self=plan.own_spill, frame_bytes=frame_bytes)
+    return _rebuild_proc(proc, params, body, **proc_attrs)
 
   # Slot BUFFER nodes (one decl per slot, sized to the slot max, tagged with a spill offset).
   slot_bufs: dict[str, ProgramNode] = {}
@@ -257,8 +265,11 @@ def _apply_pack(proc: ProgramNode, plan: _PackPlan, sz_w: dict[str, int], frame_
       return ProgramNode(ProgramOp.VIEW, n.args, {**n.attrs, "buffer": plan.rename[n.attrs["buffer"]]}, dtype=n.dtype)
     if n.op == ProgramOp.CALL:
       callee = n.attrs["callee"]
-      w_self = windows.get(callee, plan.own_spill)
-      return ProgramNode(ProgramOp.CALL, n.args, {**n.attrs, "w_self": w_self, "callee_needs_w": sz_w.get(callee, 0) > 0}, dtype=n.dtype)
+      offsets = tuple((dtype, plan.own_spill.get(dtype, 0)) for dtype, _ in layouts.get(callee, ()))
+      attrs = {**n.attrs, "workspace_offsets": offsets}
+      if callee in typed_externs:
+        attrs["typed_extern_workspace"] = True
+      return ProgramNode(ProgramOp.CALL, n.args, attrs, dtype=n.dtype)
     return n
 
   new_body: list[ProgramNode] = []
@@ -272,4 +283,4 @@ def _apply_pack(proc: ProgramNode, plan: _PackPlan, sz_w: dict[str, int], frame_
       seen_slot.add(slot_name)
     new_body.append(rewritten)
 
-  return _rebuild_proc(proc, params, new_body, sz_w=sz_w.get(name, 0), w_self=plan.own_spill, frame_bytes=frame_bytes)
+  return _rebuild_proc(proc, params, new_body, **proc_attrs)

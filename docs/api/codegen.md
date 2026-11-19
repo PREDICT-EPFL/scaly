@@ -37,7 +37,7 @@ These keyword options apply to `render_c_module`, `render_c_source`, `render_c_a
 | `dialect` | `"gnu"` | GNU vector extensions. `"c"` emits scalar operations inside lane loops using C99 syntax. |
 | `vector_libm` | `"none"` | Per-lane scalar math calls. `"glibc"` selects supported x86-64 libmvec functions and requires `dialect="gnu"`. |
 | `reciprocal` | `False` | Permits invariant `x / y` to become `x * (1 / y)`. This can change rounding, overflow, and underflow. |
-| `frame_budget` | `65536` | Estimated stack bytes for each generated C function. Zero moves all float64 temporary arrays to caller-provided workspace. Scalars still use the stack. |
+| `frame_budget` | `65536` | Estimated stack bytes for each generated C function. Zero moves every temporary array to caller-provided workspace and reports zero buffer bytes. |
 
 The `lang` option selects the header language. It does not select the kernel dialect.
 `module.recipe.cpu_flags` contains the target compiler flags. `module.link_flags` includes
@@ -56,8 +56,8 @@ layout at every width, and the header's workspace size does not depend on it.
 
 `dialect="gnu"` uses GNU vector types and compiler builtins, as provided by GCC and Clang.
 `dialect="c"` uses scalar lane loops and is intended for C99 compilers without those extensions.
-Both give the same buffer layouts. Typed buffers use 16-byte alignment in C11 and C++, and
-natural alignment in C99.
+Both give the same buffer layouts. Inputs and outputs request 16-byte alignment and workspace
+arrays request 64-byte alignment in C11 and C++, or with GCC and Clang in C99 mode.
 
 With `vector_libm="none"`, transcendentals call scalar libm once per lane. The `glibc` option
 emits guarded declarations for the supported `sin`, `cos`, `tan`, `exp`, `log`, `pow`, and `tanh`

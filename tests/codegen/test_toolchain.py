@@ -116,7 +116,7 @@ def test_aot_cli_writes_the_module_pair(tmp_path, monkeypatch, capsys) -> None:
   monkeypatch.syspath_prepend(str(tmp_path))
   out = tmp_path / "generated"
   aot.main(["scaly_aot_cli_target:build", "-o", str(out), "--frame-budget", "0"])
-  assert "#define aot_cli_SZ_W 0" in (out / "aot_cli.h").read_text()
+  assert "#define aot_cli_WORKSPACE_BYTES 0" in (out / "aot_cli.h").read_text()
   source = (out / "aot_cli.c").read_text()
   assert source.startswith("/* Scaly build recipe")
   assert '#include "aot_cli.h"' in source

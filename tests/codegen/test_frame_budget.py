@@ -26,6 +26,45 @@ def _function():
   return kernel
 
 
+def test_zero_frame_budget_spills_bool_mask_with_float32_leaves(tmp_path) -> None:
+  n = 4096
+  x_type = sc.TensorType((n,), dtype=sc.dtypes.float32)
+
+  @sc.function(sc.arg("x", x_type), outputs=sc.arg("y"))
+  def masked(x: sc.Expr) -> sc.Expr:
+    mask = (x > 0).block()
+    return sc.where(mask, x, -x) + sc.where(mask[::-1], x, -x)
+
+  module = write_module(masked, tmp_path, frame_budget=0)
+  assert module.frame_bytes == 0
+  assert any(
+    slot.op == ProgramOp.BUFFER and slot.dtype == sc.dtypes.bool_ and "workspace_offset" in slot.attrs for slot in walk_program(module.program)
+  )
+  assert "bool b[4096];" in module.header
+  driver = tmp_path / "driver.c"
+  driver.write_text(
+    '#include "masked.h"\n'
+    "#include <string.h>\n"
+    "void run(const float* data, float* result) {\n"
+    "  static masked_x_t x;\n"
+    "  static masked_y_t y;\n"
+    "  static masked_workspace_t w;\n"
+    "  memcpy(x.data, data, sizeof x.data);\n"
+    "  masked(&x, &y, &w);\n"
+    "  memcpy(result, y.data, sizeof y.data);\n"
+    "}\n"
+  )
+  lib = tmp_path / "masked.so"
+  subprocess.run(
+    [*named_compiler("gcc"), "-std=c11", "-O2", "-shared", "-fPIC", str(driver), str(tmp_path / module.source_name), "-lm", "-o", str(lib)],
+    check=True,
+  )
+  x = np.linspace(-2, 3, n, dtype=np.float32)
+  result = np.empty_like(x)
+  ctypes.CDLL(str(lib)).run(ctypes.c_void_p(x.ctypes.data), ctypes.c_void_p(result.ctypes.data))
+  np.testing.assert_array_equal(result, np.abs(x) + np.where(x[::-1] > 0, x, -x))
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize("compiler", ["gcc", "clang"])
 @pytest.mark.parametrize("lanes,dialect", [(1, "gnu"), (4, "gnu"), ("auto", "c")])
@@ -51,7 +90,7 @@ def test_generated_frames_fit_and_match_numpy(tmp_path, compiler, lanes, dialect
       "-fno-math-errno",
       "-shared",
       "-fPIC",
-      f"-Wframe-larger-than={module.frame_bytes}",
+      f"-Wframe-larger-than={max(module.frame_bytes, 4096)}",
       "-Werror",
       str(tmp_path / module.source_name),
       "-lm",
@@ -64,13 +103,12 @@ def test_generated_frames_fit_and_match_numpy(tmp_path, compiler, lanes, dialect
   )
   handle = ctypes.CDLL(str(library))
   pointer = ctypes.POINTER(ctypes.c_double)
-  handle.kernel.argtypes = [ctypes.POINTER(pointer), ctypes.POINTER(pointer), ctypes.c_void_p, pointer, ctypes.c_int]
+  handle.kernel_abi.argtypes = [ctypes.POINTER(pointer), ctypes.POINTER(pointer), ctypes.c_void_p]
   data = np.linspace(-2, 3, 900)
   result = np.zeros(1)
-  work = np.zeros(module.workspace_size)
-  status = handle.kernel(
-    (pointer * 1)(data.ctypes.data_as(pointer)), (pointer * 1)(result.ctypes.data_as(pointer)), None, work.ctypes.data_as(pointer), 0
-  )
+  scratch = np.empty(module.workspace_size + 63, dtype=np.uint8)
+  work = ctypes.c_void_p((scratch.ctypes.data + 63) & ~63)
+  status = handle.kernel_abi((pointer * 1)(data.ctypes.data_as(pointer)), (pointer * 1)(result.ctypes.data_as(pointer)), work)
   assert status == 0
   expected = sum((np.sin(data + i).sum() + np.square(np.sin(data + i)).sum()) for i in range(10))
   np.testing.assert_allclose(result[0], expected, rtol=1e-12)

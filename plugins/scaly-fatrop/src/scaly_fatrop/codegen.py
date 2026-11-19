@@ -87,9 +87,11 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     double x[{n}], initial[{n}], g[{max(1, m)}], grad[{n}];
     double lower[{m + n}], upper[{m + n}], lam[{m + n}], factor[{max(1, m)}], obj;
     int kind[{m + n}], column[{m + n}], native[{m + n}], ng[{stages}], ngi[{stages}], invalid;
-    double *w, t_fe, t_callback;
+    double t_fe, t_callback;
     int n_f, n_g, n_grad, n_jac, n_hess;
 """)
+  for declaration in ctx.workspace_declarations:
+    emit(f"    {declaration};")
   if stage is None:
     assert jac is not None and hess is not None
     emit(f"    double j[{max(1, jac.nnz)}], h[{max(1, hess.nnz)}];")
@@ -111,7 +113,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   params = [f"d->p{i}" for i in range(len(desc.param_names))]
 
   def call(oracle, inputs: list[str], outputs: list[str], count: str = "") -> str:
-    args = [*inputs, *outputs, "d->w"]
+    args = [*inputs, *outputs, *ctx.oracle_workspace(oracle, prefix="d->")]
     return f"double t = scaly_clock_s();\n  {ctx.raw_symbol_of(oracle)}({', '.join(args)});\n  d->t_fe += scaly_clock_s() - t;" + (
       f" ++d->{count};" if count else ""
     )
@@ -246,7 +248,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   signature = [
     *(f"const double* in{i}" for i in range(len(desc.input_signature))),
     *(f"double* out{i}" for i in range(len(desc.output_signature))),
-    "double* w",
+    *ctx.workspace_declarations,
     "const scaly_solver_option* options",
   ]
   emit(f"""
@@ -257,8 +259,9 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     {stats} = (scaly_solver_stats){{0}};
     {stats}.version = SCALY_SOLVER_STATS_VERSION;
     {stats}.status = SCALY_SOLVE_ERROR; {stats}.native_status = -1;
-    d->w = w;
 """)
+  for name in ctx.workspace_args:
+    emit(f"  d->{name} = {name};")
   for i in range(len(desc.param_names)):
     emit(f"  d->p{i} = in{2 * nv + 2 + i};")
   for block, (size, offset) in enumerate(zip(sizes, offsets, strict=True)):

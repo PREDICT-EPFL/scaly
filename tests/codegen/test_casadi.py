@@ -15,7 +15,7 @@ import pytest
 import scaly as sc
 from scaly.codegen import render_c_api_header, render_c_module, workspace_size
 from scaly.codegen.casadi import CASADI_QUERIES
-from tests.compilers import c_compiler, cxx_compiler
+from tests.compilers import c_compiler, cxx_compiler, named_compiler
 
 ACADOS_SYMBOLS = ("", "_work", "_sparsity_in", "_sparsity_out", "_n_in", "_n_out")
 
@@ -56,6 +56,68 @@ def _build(tmp_path, fun: sc.Function, **kwargs):
   ]
   subprocess.run(cmd, check=True)
   return module, lib_path
+
+
+def test_casadi_byte_workspace_under_strict_aliasing(tmp_path) -> None:
+  n = 1030
+
+  @sc.function(sc.arg("x", n), outputs=sc.arg("y"))
+  def stage(x: sc.Expr) -> sc.Expr:
+    values = x.sin().block()
+    ints = sc.cast(x * 8, "int64").block()
+    return values + values[::-1] + sc.cast(ints + ints[::-1], "float64")
+
+  @sc.function(sc.arg("x", n), outputs=sc.arg("y"))
+  def byte_kernel(x: sc.Expr) -> sc.Expr:
+    return stage(x + 0.2) * 2
+
+  module = render_c_module(byte_kernel, casadi=True, frame_budget=0)
+  assert "int64_t i64[" in module.header and "double f64[" in module.header
+  assert "void* w" in module.header
+  assert module.frame_bytes == 0
+  (tmp_path / module.header_name).write_text(module.header)
+  source = tmp_path / module.source_name
+  source.write_text(
+    module.source
+    + """
+int run(const double* x, double* y) {
+  const double* arg[] = {x};
+  double* res[] = {y};
+  static unsigned char bytes[byte_kernel_WORKSPACE_BYTES + 1];
+  casadi_int work;
+  byte_kernel_work(NULL, NULL, NULL, &work);
+  if (work * sizeof(double) != byte_kernel_WORKSPACE_BYTES) return 1;
+  return byte_kernel(arg, res, NULL, bytes + 1, 0);
+}
+"""
+  )
+  library = tmp_path / "byte_kernel.so"
+  subprocess.run(
+    [
+      *named_compiler("gcc"),
+      "-std=c11",
+      "-O3",
+      "-fstrict-aliasing",
+      "-Wstrict-aliasing",
+      "-Werror",
+      "-shared",
+      "-fPIC",
+      str(source),
+      "-lm",
+      "-o",
+      str(library),
+    ],
+    check=True,
+  )
+  x = np.linspace(-1.2, 2.1, n)
+  y = np.empty_like(x)
+  run = ctypes.CDLL(str(library)).run
+  assert run(ctypes.c_void_p(x.ctypes.data), ctypes.c_void_p(y.ctypes.data)) == 0
+  values = x + 0.2
+  ints = (values * 8).astype(np.int64)
+  np.testing.assert_allclose(y, 2 * (np.sin(values) + np.sin(values[::-1]) + ints + ints[::-1]), rtol=1e-14)
+  ext = casadi.external(byte_kernel.name, str(library))
+  np.testing.assert_allclose(ext(x).full().ravel(), y, rtol=1e-14)
 
 
 def test_casadi_header_declares_the_query_set() -> None:
@@ -110,14 +172,14 @@ def test_casadi_external_loads_and_matches_the_jit(tmp_path) -> None:
 
   sizes = [ctypes.c_longlong() for _ in range(4)]
   assert lib.f_spjac_work(*(ctypes.byref(s) for s in sizes)) == 0
-  assert [s.value for s in sizes] == [2, 1, 0, module.workspace_size]
+  assert [s.value for s in sizes] == [2, 1, 0, module.workspace_size // 8]
 
   c_double_p = ctypes.POINTER(ctypes.c_double)
   lib.f_spjac.argtypes = [ctypes.POINTER(c_double_p), ctypes.POINTER(c_double_p), ctypes.POINTER(ctypes.c_int), c_double_p, ctypes.c_int]
   x_buf = (ctypes.c_double * 4)(*xv)
   p_buf = (ctypes.c_double * 2)(*pv)
   out = (ctypes.c_double * sp.nnz)()
-  w = (ctypes.c_double * max(module.workspace_size, 1))()
+  w = (ctypes.c_double * max(module.workspace_size // 8, 1))()
   args = (c_double_p * 2)(ctypes.cast(x_buf, c_double_p), ctypes.cast(p_buf, c_double_p))
   res = (c_double_p * 1)(ctypes.cast(out, c_double_p))
   assert lib.f_spjac(args, res, None, w, lib.f_spjac_checkout()) == 0
@@ -178,7 +240,7 @@ def test_casadi_external_empty_dense_leaves(tmp_path, shape, side):
   scalar = (ctypes.c_double * 1)()
   args = (ptr * 1)(None if side == "input" else x.ctypes.data_as(ptr))
   res = (ptr * ext.n_out())(*([None] if side == "output" else []), ctypes.cast(scalar, ptr))
-  work = (ctypes.c_double * max(module.workspace_size, 1))()
+  work = (ctypes.c_double * max(module.workspace_size // 8, 1))()
   assert entry(args, res, None, work, 0) == 0
   np.testing.assert_allclose(scalar[0], expected)
   assert entry(None, res, None, work, 0) == 1
