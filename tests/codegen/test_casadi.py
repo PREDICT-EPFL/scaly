@@ -123,6 +123,7 @@ int run(const double* x, double* y) {
 def test_casadi_header_declares_the_query_set() -> None:
   fun = _spjac()
   header = render_c_api_header(fun, casadi=True)
+  assert "#define f_spjac_SZ_IW 0" in header
   assert "#ifndef casadi_int\n#define casadi_int long long int\n#endif" in header
   for suffix in CASADI_QUERIES:
     assert f" f_spjac_{suffix}(" in header, suffix

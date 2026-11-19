@@ -240,41 +240,44 @@ the mapped `loop` into a program loop around one call and keeps the `call`:
 
 ```
 prog.module {
-  prog.proc @model(%z: memref<2xfloat64>, %u: memref<1xfloat64>, %znext: memref<2xfloat64>) {device=host, input_count=2, lowering="auto", scalarize_mode="procedure", scalarized=True, sz_w=0, w_self=0} {
+  prog.proc @model(%z: memref<2xfloat64>, %u: memref<1xfloat64>, %znext: memref<2xfloat64>) {device=host, frame_bytes=4096, input_count=2, lowering="auto", scalarize_mode="procedure", scalarized=True, sz_w=0, workspace_layout=[]} {
     %v0 = prog.assign prog.load %z[1] : float64 {declare=True}
     prog.store_pair prog.add(prog.load %z[0], prog.mul(0.1, %v0)), prog.add(%v0, prog.mul(0.1, prog.load %u[0])), %znext[0] : float64
   }
-  prog.proc @terminal(%z: memref<2xfloat64>, %cost: memref<1xfloat64>) {device=host, input_count=1, lowering="auto", scalarize_mode="procedure", scalarized=True, sz_w=0, w_self=0} {
+  prog.proc @terminal(%z: memref<2xfloat64>, %cost: memref<1xfloat64>) {device=host, frame_bytes=4096, input_count=1, lowering="auto", scalarize_mode="procedure", scalarized=True, sz_w=0, workspace_layout=[]} {
     %v0 = prog.assign prog.load %z[0] : float64 {declare=True}
     %v1 = prog.assign prog.load %z[1] : float64 {declare=True}
     prog.store prog.add(prog.mul(%v0, %v0), prog.mul(%v1, %v1)), %cost[0] : float64
   }
-  prog.proc @stages(%zs: memref<20xfloat64>, %us: memref<10xfloat64>, %J: memref<1xfloat64>) {device=host, input_count=2, lowering="auto", scalarize_mode="disabled", sz_w=0, w_self=0} {
+  prog.proc @stages(%zs: memref<20xfloat64>, %us: memref<10xfloat64>, %J: memref<1xfloat64>) {device=host, frame_bytes=4272, input_count=2, lowering="auto", scalarize_mode="disabled", sz_w=0, workspace_layout=[]} {
     %s0 = prog.buffer : memref<20xfloat64, private>
     prog.for %it_t0 = 0 to 10 step 1 {kind=global} {
-      prog.call @model(%zs[prog.mul(2, %it_t0)], %us[%it_t0], %s0[prog.mul(%it_t0, 2)]) {callee_needs_w=False, n_in=2, n_out=1, w_self=0}
+      prog.call @model(%zs[prog.mul(2, %it_t0)], %us[%it_t0], %s0[prog.mul(%it_t0, 2)]) {n_in=2, n_out=1, workspace_offsets=[]}
     }
-    %t1 = prog.buffer : memref<2xfloat64, private> = prog.alias %s0 offset 18
-    %s1 = prog.buffer : memref<1xfloat64, private>
-    prog.call @terminal(%t1, %s1) {callee_needs_w=False, n_in=1, n_out=1, w_self=0}
-    prog.store prog.load %s1[0], %J[0] : float64
+    %s1 = prog.buffer : memref<2xfloat64, private>
+    prog.for %i_t1 = 0 to 2 step 1 {kind=global} {
+      prog.store prog.load %s0[prog.add(18, %i_t1)], %s1[%i_t1] : float64
+    }
+    prog.call @terminal(%s1, %J) {n_in=1, n_out=1, workspace_offsets=[]}
   }
 }
 ```
 
 The `starts` and `strides` of the `loop` node became the views
 `%zs[2 * it]` and `%us[it]`. A view passed to a call is an address, not a load,
-and the C for `stages` shows it as pointer arithmetic (trimmed to the loop and
-the call):
+and the C for `stages` shows it as pointer arithmetic. The body below also
+copies the final two entries into the terminal call's input buffer.
 
 ```c
   double s0[20];
-  const double* t1 = s0 + 18;
-  double s1[1];
+  double s1[2];
   for (long long it_t0 = 0; it_t0 < 10; ++it_t0) {
-    model_raw((arg[0] + (2 * it_t0)), (arg[1] + it_t0), (s0 + (it_t0 * 2)), NULL);
+    model_raw((zs + (2 * it_t0)), (us + it_t0), (s0 + (it_t0 * 2)));
   }
-  terminal_raw(t1, s1, NULL);
+  for (long long i_t1 = 0; i_t1 < 2; ++i_t1) {
+    s1[i_t1] = s0[(18 + i_t1)];
+  }
+  terminal_raw(s1, J);
 ```
 
 The two small callees were expanded into scalar statements, which the
@@ -288,14 +291,18 @@ when each happens.
 
 The attributes on a `prog.proc` line are these:
 
-| Attribute        | Meaning                                                                |
-| ---------------- | ---------------------------------------------------------------------- |
-| `input_count`    | How many leading parameters are inputs, rendered as `const` pointers   |
-| `lowering`       | The combined hint of the function's nodes                              |
-| `scalarize_mode` | Whether the procedure may be expanded into scalar statements           |
-| `scalarized`     | Present once it has been                                               |
-| `sz_w`           | Workspace size the caller must provide, callees included               |
-| `w_self`         | The part of that workspace the procedure uses itself                   |
+| Attribute          | Meaning                                                              |
+| ------------------ | -------------------------------------------------------------------- |
+| `input_count`      | How many leading parameters are inputs, rendered as `const` pointers |
+| `lowering`         | The combined hint of the function's nodes                            |
+| `scalarize_mode`   | Whether the procedure may be expanded into scalar statements         |
+| `scalarized`       | Present once it has been                                             |
+| `workspace_layout` | Element count per dtype, including scratch for callees               |
+| `sz_w`             | Workspace capacity in bytes, including padding                      |
+| `frame_bytes`      | Estimated stack bytes for this procedure                             |
+
+A `prog.call` records its callee's starting offset in each dtype array as
+`workspace_offsets`. Each offset counts elements of that dtype.
 
 ### Views and aliases
 
@@ -311,24 +318,30 @@ def trace2(M: sc.Expr) -> sc.Expr:
 
 @sc.function(sc.arg("x", 8), outputs=sc.arg("t"))
 def f(x: sc.Expr) -> sc.Expr:
-    y = x.sin()
-    return trace2(y[2:].reshape((2, 3)))
+    y = x.sin().block()
+    return trace2(y[2:].reshape((2, 3))) + y.sum()
 ```
 
 ```
 prog.module {
-  prog.proc @trace2(%M: memref<2x3xfloat64>, %s: memref<1xfloat64>) {device=host, input_count=1, lowering="auto", scalarize_mode="procedure", scalarized=True, sz_w=0, w_self=0} {
+  prog.proc @trace2(%M: memref<2x3xfloat64>, %s: memref<1xfloat64>) {device=host, frame_bytes=4096, input_count=1, lowering="auto", scalarize_mode="procedure", scalarized=True, sz_w=0, workspace_layout=[]} {
     prog.store prog.add(prog.load %M[0], prog.load %M[4]), %s[0] : float64
   }
-  prog.proc @f(%x: memref<8xfloat64>, %t: memref<1xfloat64>) {device=host, input_count=1, lowering="auto", scalarize_mode="disabled", sz_w=0, w_self=0} {
+  prog.proc @f(%x: memref<8xfloat64>, %t: memref<1xfloat64>) {device=host, frame_bytes=4176, input_count=1, lowering="block", scalarize_mode="disabled", sz_w=0, workspace_layout=[]} {
     %s0 = prog.buffer : memref<8xfloat64, private>
     prog.for %i_t0 = 0 to 8 step 1 {kind=global} {
       prog.store prog.sin(prog.load %x[%i_t0]), %s0[%i_t0] : float64
     }
     %t1 = prog.buffer : memref<6xfloat64, private> = prog.alias %s0 offset 2
     %s1 = prog.buffer : memref<1xfloat64, private>
-    prog.call @trace2(%t1, %s1) {callee_needs_w=False, n_in=1, n_out=1, w_self=0}
-    prog.store prog.load %s1[0], %t[0] : float64
+    prog.call @trace2(%t1, %s1) {n_in=1, n_out=1, workspace_offsets=[]}
+    %s2 = prog.buffer : memref<1xfloat64, private>
+    %acc_t3 = prog.assign 0 : float64 {declare=True}
+    prog.for %i_t3 = 0 to 8 step 1 {kind=reduce} {
+      %acc_t3 = prog.assign prog.add(%acc_t3, prog.load %s0[%i_t3]) : float64
+    }
+    prog.store %acc_t3, %s2[0] : float64
+    prog.store prog.add(prog.load %s1[0], prog.load %s2[0]), %t[0] : float64
   }
 }
 ```
@@ -338,7 +351,7 @@ prog.module {
 
 ```c
 double s0[8];
-const double* t1 = s0 + 2;
+const double* t1 = (s0 + 2);
 ```
 
 The reshape costs nothing at all. Buffers are flat and row-major, so the

@@ -66,7 +66,7 @@ void rollout(const rollout_zs_t* zs, const rollout_us_t* us, rollout_zn_t* zn, r
 
 ## Build recipe
 
-The comment at the top is the `BuildRecipe` the module was rendered for. It
+The full generated source starts with a comment that records its `BuildRecipe`. It
 names the CPU baseline, the lane width, the C dialect, the math library and the
 reciprocal policy, and it gives a GCC and a Clang command that build the file
 the way Scaly expects. The same comment opens the header.

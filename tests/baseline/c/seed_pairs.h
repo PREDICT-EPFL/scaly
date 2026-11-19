@@ -53,7 +53,6 @@ typedef struct {
 
 #define seed_pair_map_SZ_ARG 2
 #define seed_pair_map_SZ_RES 1
-#define seed_pair_map_SZ_IW 0
 #define seed_pair_map_WORKSPACE_BYTES 0
 #define seed_pair_map_FRAME_BYTES 5952
 

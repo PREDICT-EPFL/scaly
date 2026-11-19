@@ -65,6 +65,50 @@ def test_zero_frame_budget_spills_bool_mask_with_float32_leaves(tmp_path) -> Non
   np.testing.assert_array_equal(result, np.abs(x) + np.where(x[::-1] > 0, x, -x))
 
 
+def test_cond_callee_gets_workspace_at_zero_frame_budget(tmp_path) -> None:
+  n = 2000
+
+  @sc.function(sc.arg("x", n), outputs=sc.arg("y"))
+  def plain(x: sc.Expr) -> sc.Expr:
+    return x.sum()
+
+  @sc.function(sc.arg("x", n), outputs=sc.arg("y"))
+  def spilled(x: sc.Expr) -> sc.Expr:
+    values = x.sin().block()
+    return values.sum() + (values * values).sum()
+
+  @sc.function(sc.arg("choose", sc.TensorType((), dtype=sc.dtypes.bool_)), sc.arg("x", n), outputs=sc.arg("y"))
+  def conditional(choose: sc.Expr, x: sc.Expr) -> sc.Expr:
+    return sc.cond(choose, (plain, spilled), x)
+
+  module = write_module(conditional, tmp_path, frame_budget=0)
+  assert module.frame_bytes == 0
+  assert module.workspace_size >= n * sc.dtypes.float64.itemsize
+  driver = tmp_path / "driver.c"
+  driver.write_text(
+    '#include "conditional.h"\n'
+    "int run(bool choose, const double* x, double* y) {\n"
+    "  const void* arg[] = {&choose, x};\n"
+    "  void* res[] = {y};\n"
+    "  static conditional_workspace_t w;\n"
+    "  return conditional_abi(arg, res, &w);\n"
+    "}\n"
+  )
+  library = tmp_path / "conditional.so"
+  subprocess.run(
+    [*named_compiler("gcc"), "-std=c11", "-O2", "-shared", "-fPIC", str(driver), str(tmp_path / module.source_name), "-lm", "-o", str(library)],
+    check=True,
+  )
+  x = np.linspace(-0.7, 1.3, n)
+  values = np.sin(x)
+  y = ctypes.c_double()
+  run = ctypes.CDLL(str(library)).run
+  run.argtypes = [ctypes.c_bool, ctypes.c_void_p, ctypes.POINTER(ctypes.c_double)]
+  for choose, expected in [(False, x.sum()), (True, values.sum() + (values * values).sum())]:
+    assert run(choose, x.ctypes.data, ctypes.byref(y)) == 0
+    np.testing.assert_allclose(y.value, expected, rtol=1e-13)
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize("compiler", ["gcc", "clang"])
 @pytest.mark.parametrize("lanes,dialect", [(1, "gnu"), (4, "gnu"), ("auto", "c")])

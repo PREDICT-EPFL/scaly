@@ -120,15 +120,19 @@ stage as a procedure with its own loop:
 
 ```
 prog.module {
-  prog.proc @stage(%x: memref<3xfloat64>, %y: memref<3xfloat64>) {
+  prog.proc @stage(%x: memref<3xfloat64>, %y: memref<3xfloat64>) {device=host, frame_bytes=4096, input_count=1, lowering="block", scalarize_mode="disabled", sz_w=0, workspace_layout=[]} {
     prog.for %i_y = 0 to 3 step 1 {kind=global} {
       %v0 = prog.assign prog.load %x[%i_y] : float64 {declare=True}
       prog.store prog.mul(prog.sin(%v0), %v0), %y[%i_y] : float64
     }
   }
-  prog.proc @horizon(%xs: memref<15xfloat64>, %ys: memref<15xfloat64>) {
-    prog.for %it_ys = 0 to 5 step 1 {kind=global} {
-      prog.call @stage(%xs[prog.mul(3, %it_ys)], %ys[prog.mul(%it_ys, 3)]) {callee_needs_w=False, n_in=1, n_out=1, w_self=0}
+  prog.proc @horizon(%xs: memref<15xfloat64>, %ys: memref<15xfloat64>) {device=host, frame_bytes=4216, input_count=1, lowering="auto", scalarize_mode="disabled", sz_w=0, workspace_layout=[]} {
+    %s0 = prog.buffer : memref<15xfloat64, private>
+    prog.for %it_t0 = 0 to 5 step 1 {kind=global} {
+      prog.call @stage(%xs[prog.mul(3, %it_t0)], %s0[prog.mul(%it_t0, 3)]) {n_in=1, n_out=1, workspace_offsets=[]}
+    }
+    prog.for %i_ys = 0 to 15 step 1 {kind=global} {
+      prog.store prog.load %s0[%i_ys], %ys[%i_ys] : float64
     }
   }
 }

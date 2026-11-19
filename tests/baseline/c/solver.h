@@ -95,7 +95,6 @@ typedef struct {
 
 #define qp_host_SZ_ARG 1
 #define qp_host_SZ_RES 1
-#define qp_host_SZ_IW 0
 #define qp_host_WORKSPACE_BYTES 0
 #define qp_host_FRAME_BYTES 4144
 

@@ -53,7 +53,6 @@ typedef struct {
 
 #define shooting_spjac_eq_z_SZ_ARG 2
 #define shooting_spjac_eq_z_SZ_RES 1
-#define shooting_spjac_eq_z_SZ_IW 0
 #define shooting_spjac_eq_z_WORKSPACE_BYTES 0
 #define shooting_spjac_eq_z_FRAME_BYTES 4768
 

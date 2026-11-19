@@ -324,6 +324,8 @@ using workspace_t = ::energy_workspace_t;
 
 These aliases live inside `namespace energy`. The output alias contains two
 underscores for the same name-collision reason as the typed C struct.
+Use the `Buffer` aliases with `energy::call`. The typed C entry takes the
+same C structs declared in `energy.h`.
 A complete `main.cpp` using this header is:
 
 ```cpp
@@ -429,9 +431,9 @@ three-by-one input and one-by-one output. `energy_work` returns the required
 pointer-array sizes and the scratch capacity rounded up to a number of doubles.
 `energy_work_bytes` reports these sizes in bytes. The implementation reads and
 writes `w` as byte storage, so a caller can supply CasADi's double array or its
-own byte array. If the function calls separately compiled C, the CasADi adapter
-allocates typed staging for that call. CasADi exports use scalar operations
-inside the lane loops. The entry ignores `iw` and `mem`,
+own byte array. If the function calls separately compiled C, the adapter uses
+`malloc` to allocate typed buffers on each evaluation. Scaly renders the lane
+loops with scalar C in this mode. The entry ignores `iw` and `mem`,
 `energy_checkout()` returns zero, and `energy_release` does nothing.
 
 For example, on Linux this command builds a shared library for CasADi:
@@ -819,8 +821,9 @@ arrays and reports zero buffer bytes. The C compiler can still need stack space
 to call functions and save registers.
 
 `module.frame_bytes` and `<name>_FRAME_BYTES` give the largest estimate over the
-generated C functions. A function that is not inlined adds its own frame on top
-of its caller's, and that sum is not included. The estimate also excludes the
-stack used by external C functions and solver libraries.
-Check the compiled frames with `-Wframe-larger-than=<budget> -Werror` under the
-application's own compiler flags.
+generated C functions. At a zero frame budget, the estimate counts only arrays
+and omits the scalar-spill allowance. A non-inlined call adds its own frame to
+its caller's on the stack. The estimate excludes that sum and the frames of
+external C functions and solver libraries. To check compiled frames, use
+`-Wframe-larger-than=<stack-limit> -Werror` with the application's stack limit
+and compiler flags.

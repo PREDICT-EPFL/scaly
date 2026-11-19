@@ -53,7 +53,6 @@ typedef struct {
 
 #define dynamics_float32_SZ_ARG 2
 #define dynamics_float32_SZ_RES 1
-#define dynamics_float32_SZ_IW 0
 #define dynamics_float32_WORKSPACE_BYTES 0
 #define dynamics_float32_FRAME_BYTES 4104
 

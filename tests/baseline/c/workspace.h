@@ -53,7 +53,6 @@ typedef struct {
 
 #define workspace_SZ_ARG 1
 #define workspace_SZ_RES 2
-#define workspace_SZ_IW 0
 #define workspace_WORKSPACE_BYTES 131072
 #define workspace_FRAME_BYTES 4096
 

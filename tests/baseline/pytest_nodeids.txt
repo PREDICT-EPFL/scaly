@@ -2704,6 +2704,7 @@ tests/codegen/test_float32.py::test_verifier_rejects_buffer_dtype_mismatches[sto
 tests/codegen/test_float32.py::test_verifier_rejects_buffer_dtype_mismatches[view]
 tests/codegen/test_frame_budget.py::test_compiler_gate_rejects_unspilled_frame[clang]
 tests/codegen/test_frame_budget.py::test_compiler_gate_rejects_unspilled_frame[gcc]
+tests/codegen/test_frame_budget.py::test_cond_callee_gets_workspace_at_zero_frame_budget
 tests/codegen/test_frame_budget.py::test_frame_macro_does_not_shadow_buffer_names
 tests/codegen/test_frame_budget.py::test_frame_macro_does_not_shadow_sparse_namespace
 tests/codegen/test_frame_budget.py::test_frame_option_reaches_all_render_entry_points

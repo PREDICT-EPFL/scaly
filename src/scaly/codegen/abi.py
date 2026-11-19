@@ -51,7 +51,7 @@ def buffer_idents(fun: ConcreteFunction) -> tuple[list[str], list[str]]:
   symbol = c_ident(fun.name)
   shared = set(fun.input_names) & set(fun.output_names)
   names = NameScope(
-    (symbol, f"{symbol}_with_options", "arg", "res", "workspace", "workspace_t", "solver_options", "call", "sz_arg", "sz_res", "sz_iw", "sz_w"),
+    (symbol, f"{symbol}_with_options", "arg", "res", "workspace", "workspace_t", "solver_options", "call", "sz_arg", "sz_res", "workspace_bytes"),
     header=True,
   )
   names.occupied.update((f"{symbol}_FRAME_BYTES", f"{symbol}_WORKSPACE_BYTES", f"{symbol}_abi"))

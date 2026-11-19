@@ -53,7 +53,6 @@ typedef struct {
 
 #define multi_output_SZ_ARG 1
 #define multi_output_SZ_RES 2
-#define multi_output_SZ_IW 0
 #define multi_output_WORKSPACE_BYTES 0
 #define multi_output_FRAME_BYTES 4176
 

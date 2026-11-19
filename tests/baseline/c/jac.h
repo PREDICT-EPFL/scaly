@@ -53,7 +53,6 @@ typedef struct {
 
 #define dynamics_jac_znext_z_SZ_ARG 2
 #define dynamics_jac_znext_z_SZ_RES 1
-#define dynamics_jac_znext_z_SZ_IW 0
 #define dynamics_jac_znext_z_WORKSPACE_BYTES 0
 #define dynamics_jac_znext_z_FRAME_BYTES 4272
 

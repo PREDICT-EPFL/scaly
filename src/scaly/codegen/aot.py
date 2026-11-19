@@ -102,9 +102,10 @@ class CModule:
 
   @cached_property
   def frame_bytes(self) -> int:
-    """Largest estimated procedure frame in bytes, including inlined locals and scalar spills.
+    """Largest estimated procedure frame in bytes, including inlined arrays.
 
-    External C functions and solver implementations are outside this estimate.
+    A positive frame budget includes the scalar-spill allowance. At zero the
+    estimate counts only arrays. External C and solver frames are outside it.
     """
     return _frame_bytes(self.program)
 
@@ -290,7 +291,7 @@ def _render_header(
     "",
     f"#define {symbol}_SZ_ARG {len(fun.inputs)}",
     f"#define {symbol}_SZ_RES {len(fun.outputs)}",
-    f"#define {symbol}_SZ_IW 0",
+    *([f"#define {symbol}_SZ_IW 0"] if casadi else []),
     f"#define {symbol}_WORKSPACE_BYTES {sz_w}",
     f"#define {symbol}_FRAME_BYTES {frame_bytes}",
     "",

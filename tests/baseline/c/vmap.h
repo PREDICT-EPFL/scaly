@@ -53,7 +53,6 @@ typedef struct {
 
 #define shooting_SZ_ARG 2
 #define shooting_SZ_RES 1
-#define shooting_SZ_IW 0
 #define shooting_WORKSPACE_BYTES 0
 #define shooting_FRAME_BYTES 4096
 

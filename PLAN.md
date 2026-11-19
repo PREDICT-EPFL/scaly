@@ -22,5 +22,11 @@ define the generated C interface.
   the full checks, and confirm the review delta. Remove this plan, publish the branch, open and link
   the pull request, and record the handoff on #372.
 
-The lowering check that rejects an all-float32 host calling a float64 extern with scratch remains
-with [#474](https://github.com/PREDICT-EPFL/scaly/issues/474#issuecomment-7007249552).
+The lowering check that rejects an all-float32 host calling a float64 extern with scratch and its
+obsolete workspace metadata remain with [#474](https://github.com/PREDICT-EPFL/scaly/issues/474#issuecomment-7007249552).
+
+Opus 5.5 (high) checked the public interface and every changed snapshot hunk. Verdict: changes
+needed. The fixes update the Program IR and build-recipe docs, explain the frame estimate at zero,
+document the CasADi heap staging and C++ leaf types, and remove the obsolete integer-workspace
+macro from the default header. The conditional regression passes both branches against NumPy and fails at 0 caller bytes
+when IF traversal is removed. The requested comparison measures generation and compilation only.
