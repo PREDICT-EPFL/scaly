@@ -284,30 +284,6 @@ def test_sqp_raises_a_negative_pivot_to_its_magnitude(capfd: pytest.CaptureFixtu
   assert shifts and shifts == pytest.approx([6.0] * len(shifts), rel=1e-3)
 
 
-def test_sqp_ldl_symbolic_matches_a_dense_reference() -> None:
-  from scaly_sqp.codegen import _ldl_symbolic
-
-  # arrow pattern: column 0 couples to every row, so eliminating it fills the
-  # whole trailing block — parent[i] = i + 1 and 4 + 3 + 2 + 1 factor entries
-  n = 5
-  entries = sorted([(0, 0)] + [(i, i) for i in range(1, n)] + [(0, c) for c in range(1, n)], key=lambda e: (e[1], e[0]))
-  col_ptr = [0] * (n + 1)
-  for _, c in entries:
-    col_ptr[c + 1] += 1
-  for c in range(n):
-    col_ptr[c + 1] += col_ptr[c]
-  parent, l_ptr = _ldl_symbolic(n, col_ptr, [r for r, _ in entries])
-  assert parent == [1, 2, 3, 4, -1]
-  assert l_ptr == [0, 4, 7, 9, 10, 10]
-
-  # a diagonal Hessian needs no factor entries at all
-  diagonal = [0] * (n + 1)
-  for c in range(n):
-    diagonal[c + 1] = c + 1
-  parent, l_ptr = _ldl_symbolic(n, diagonal, list(range(n)))
-  assert parent == [-1] * n and l_ptr == [0] * (n + 1)
-
-
 @pytest.mark.solver("sqp")
 def test_sqp_solves_an_indefinite_coupled_hessian() -> None:
   # H = [[1, 2], [2, 1]] has eigenvalues -1 and 3, so PIQP cannot take it

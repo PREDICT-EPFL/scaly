@@ -108,6 +108,7 @@ src/scaly/
   linalg/                linear algebra as library Functions over LOOP, with custom derivative rules
     dense.py             triangular solves, Cholesky, LDL^T and LU, their solves and rules, stacks over leading axes
     entry.py             the solve entry point, choosing a factorization by matrix type and assume
+    symbolic.py          orderings, elimination tree and the pattern of L for sparse factorizations, from a pattern alone
 
   viz/
     graph.py             graph JSON, colors and labels; presentation, not compiler text
@@ -133,18 +134,19 @@ one, never a higher one.
 | --- | --- | --- |
 | 0 | `utils/*` | Leaves. Environment, identifier spelling and file parsing; no scaly concepts. |
 | 1 | `ir/*` | The vocabulary. Both dialects, their verifiers, their text, and the machinery for defining passes. |
-| 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/rules`, `ad/sparsity`, `solvers/{stats,stages}` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites, the elementwise table, structural sparsity, solver statistics and stage layouts. Nothing here knows what a `Function` is. |
+| 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/rules`, `ad/sparsity`, `solvers/{stats,stages}`, `linalg/symbolic` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites, the elementwise table, structural sparsity, solver statistics, stage layouts and the symbolic analysis of sparse factorizations. Nothing here knows what a `Function` is. |
 | 3 | `function/{model,concrete,tree,digest,extern}` | Function declarations, concrete graph instances, typed trees over import layer 1, external declarations, and the digest of a graph. |
 | 4 | `ad/{forward,reverse,calls,helpers,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the one builder that does too (`vmap`). |
-| 5 | `function/{factory,api}`, the rest of `solvers/`, `linalg/*` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, and the library Functions built with them. |
+| 5 | `function/{factory,api}`, the rest of `solvers/`, the rest of `linalg/` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, and the library Functions built with them. |
 | 6 | `passes/lowering/*`, `passes/program/*` | Lower whole Functions, including their solver callees, and optimize the program dialect. |
 | 7 | `codegen/*` | The backend: render, compile, load, dispatch. |
 | 8 | `viz/*` | Observes the backend. Nothing in the compiler depends on it. |
 | 9 | `scaly/__init__` | The public names sit above everything they re-export. |
 
 `passes/` straddles the frontend: its expression rewrites are below `Function` (import layer 2)
-and its lowering is above it (import layer 6). Enforcement is per module, not per package, so
-this is legal. Package `__init__` files carry their own entry, set by what they re-export:
+and its lowering is above it (import layer 6). `linalg/` does the same: its symbolic analysis
+reads only a pattern and sits at import layer 2, while its factorizations are Functions at import
+layer 5. Enforcement is per module, not per package, so this is legal. Package `__init__` files carry their own entry, set by what they re-export:
 `scaly.function` re-exports names from import layer 3 and is import layer 3, while `scaly.passes`
 re-exports nothing and sits at import layer 1, below both of its modules.
 
