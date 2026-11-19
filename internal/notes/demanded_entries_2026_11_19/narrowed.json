@@ -1,0 +1,35 @@
+{
+  "chain_5": {
+    "ADD": {
+      "nodes": 10,
+      "entries": 25626,
+      "computed": 13548
+    },
+    "SCATTER": {
+      "nodes": 1,
+      "entries": 504,
+      "computed": 3
+    }
+  },
+  "race_cars_5": {
+    "ADD": {
+      "nodes": 1,
+      "entries": 144,
+      "computed": 69
+    }
+  },
+  "npmpc_jac_100": {},
+  "npmpc_100": {
+    "ADD": {
+      "nodes": 2,
+      "entries": 9835,
+      "computed": 5011
+    },
+    "MATMUL": {
+      "nodes": 2,
+      "entries": 8,
+      "computed": 2
+    }
+  },
+  "chain_jac_5": {}
+}

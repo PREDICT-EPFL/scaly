@@ -26,7 +26,7 @@ from ...utils.names import NameScope
 from ..affine import affine_index_map
 from ..arith import constant
 from ...ad.rules import ELEMENTWISE
-from .demand import cheap, is_placement, plan_demand
+from .demand import affine, cheap, is_placement, plan_demand
 from .fusion import ALIASES, SeedEpilogue, _contiguous_slice_offset, plan_fusion, product_outputs
 from .plans import MapRegion, compact_reads, has_compact_map, map_regions, plan_seed_map
 from ..arith import fold_program
@@ -442,9 +442,10 @@ class LowerCtx:
   # --- helpers --------------------------------------------------------------
 
   def _narrows(self, node: Expr, entries: np.ndarray) -> bool:
-    """Whether a stored node is computed at only the ``entries`` its consumers read: a placement or
-    sum of placements and a contraction always, an elementwise or movement op when the loop over
-    ``entries`` is cheaper than the loop over all of them."""
+    """Whether a stored node is computed at only the ``entries`` its consumers read: a contraction
+    always, an elementwise op when that is cheaper than computing all of them, and a copy when its
+    entries need no index table. A placement, or a sum of them, stores only some of its values
+    when ``placed_lanes`` allows it."""
     if any(arg.type.pattern is not None for arg in node.args):
       return False
     op = ExprOp(node.op)
@@ -458,8 +459,8 @@ class LowerCtx:
     if op in ELEMENTWISE:
       return not self.seed_pairs and cheap(entries, node.size)
     if op == ExprOp.GATHER:
-      return node.args[1].value is not None and node.attrs["mode"] != "fill" and cheap(entries, node.size)
-    return op in (ExprOp.TRANSPOSE, ExprOp.SLICE, ExprOp.CONCAT, ExprOp.STACK) and cheap(entries, node.size)
+      return node.args[1].value is not None and node.attrs["mode"] != "fill" and affine(entries)
+    return op in (ExprOp.TRANSPOSE, ExprOp.SLICE, ExprOp.CONCAT, ExprOp.STACK) and affine(entries)
 
   def emit_domain(self, node: Expr, out: ProgramNode, entries: np.ndarray) -> None:
     """Store ``node`` at its demanded ``entries`` only, each evaluated by ``compute``."""
