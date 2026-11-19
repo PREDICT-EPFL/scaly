@@ -1,0 +1,247 @@
+{
+  "base": "e65496006c8f5d336dd44644d8740d76a7c9084b",
+  "reviewed_diff_sha256": "de0095ac7cb80014958c336efa47339cc13c6867d4ee44e2552f9518dd346ee7",
+  "regenerated_diff_sha256": "de0095ac7cb80014958c336efa47339cc13c6867d4ee44e2552f9518dd346ee7",
+  "diff_identical_after_rebase": true,
+  "review": {
+    "model": "claude-opus-5-5",
+    "initial_effort": "high",
+    "fix_check_effort": "low",
+    "fix_check_verdict": "approve",
+    "snapshot_scope": "All 21 files, including the solver bridge and its header",
+    "finding": "Kernel computation was preserved. The reviewed changes cover entry wrappers, typed parameters and workspace pointers, declarations and status codes. The fix check verified the SZ_IW removal from the default headers."
+  },
+  "files": [
+    {
+      "file": "tests/baseline/c/float32.c",
+      "changed": true,
+      "before_bytes": 1547,
+      "after_bytes": 2705,
+      "before_lines": 54,
+      "after_lines": 84,
+      "before_sha256": "b206c9892c394ecb219371849eb0608193861053c214fc25131208e79316f224",
+      "after_sha256": "f119b687cc6fd3eed4a5418c7c8ffd72e4b9380d07416d0d7d6f89310eb423de",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/float32.h",
+      "changed": true,
+      "before_bytes": 2118,
+      "after_bytes": 2275,
+      "before_lines": 63,
+      "after_lines": 72,
+      "before_sha256": "34a6f9c1f81aea55d680010050966defc068c1c56ed60e399b801ebdcbbe9b96",
+      "after_sha256": "d52bfad8fb47beed08e3fc328f251ca96c952aa0994ae3e9f920234c1f0f44d2",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/forward.c",
+      "changed": true,
+      "before_bytes": 1551,
+      "after_bytes": 2598,
+      "before_lines": 54,
+      "after_lines": 84,
+      "before_sha256": "7ce793fde0b3b78a861c72c903377edefaee8f475b4cbaf9f277cd5a2982d6ea",
+      "after_sha256": "43ed6d4dc1b688b89a7342da83d1e01e43be85b2b7c426daa1c536dd4e40858a",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/forward.h",
+      "changed": true,
+      "before_bytes": 1927,
+      "after_bytes": 2046,
+      "before_lines": 63,
+      "after_lines": 72,
+      "before_sha256": "305cd760f63a1d500cb0063c1651cd945378ea620180f54239aaf7aaa1ed4e6c",
+      "after_sha256": "1b118f7155cfa9b55dfeddb61ef7495ae75f2016c7c58d2d9db4192b1cc8a732",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/jac.c",
+      "changed": true,
+      "before_bytes": 5704,
+      "after_bytes": 6995,
+      "before_lines": 139,
+      "after_lines": 170,
+      "before_sha256": "bad378837aa21d27f7529ef4e9e6572945ce7560515b767aeb336cde1cbea31c",
+      "after_sha256": "2164b151f821314304346a904c701279c5fff079ed34c07d4967061789cfa6f2",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/jac.h",
+      "changed": true,
+      "before_bytes": 2252,
+      "after_bytes": 2431,
+      "before_lines": 63,
+      "after_lines": 72,
+      "before_sha256": "c2a4d5a38c5eb284c51756b0ac08ed2f3fcee1dfcfdf5be2c7a0aaf63646e9bd",
+      "after_sha256": "08f405e862e93ddc1333a4fb3fddee36e59bb1d9f7bde72def75b3100a8a3b83",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/seed_pairs.c",
+      "changed": true,
+      "before_bytes": 8214,
+      "after_bytes": 9294,
+      "before_lines": 173,
+      "after_lines": 202,
+      "before_sha256": "21ebc8e1863717b7ffa77457054ed6123afede131450b40133651625f71e7655",
+      "after_sha256": "ef2d7e38b0745063f55ca900422d93eafa4bbe784b45080cfe0721c5815d670b",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/seed_pairs.h",
+      "changed": true,
+      "before_bytes": 2040,
+      "after_bytes": 2171,
+      "before_lines": 63,
+      "after_lines": 72,
+      "before_sha256": "d17735e079433f941a810633a0337ae6bfefd7c0fa33f394a0e578ae07e0564f",
+      "after_sha256": "b55015dc5323771ce26d1d0c0fac43adf379b6112c5582b6f27c826f899e79a9",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/solver.c",
+      "changed": true,
+      "before_bytes": 3604,
+      "after_bytes": 4518,
+      "before_lines": 116,
+      "after_lines": 145,
+      "before_sha256": "2d9b5819f7dee570de6b1fa7592d0638a7925254afcffa3a21bf2c915361e131",
+      "after_sha256": "41042f266afd881cc0228b2b7701b1ec7fc6800af628851d235004ed470a1218",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/solver.extern.c",
+      "changed": true,
+      "before_bytes": 9495,
+      "after_bytes": 9445,
+      "before_lines": 190,
+      "after_lines": 189,
+      "before_sha256": "e8b7903fb6a60ba9284545da321ffb2f907305b74fed0ed48077b56ce61957b8",
+      "after_sha256": "bc48032b557aef1a62023b6cb744c6c74b96fbf008a8a1caf6f8a0c45c154a7f",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/solver.h",
+      "changed": true,
+      "before_bytes": 3617,
+      "after_bytes": 3683,
+      "before_lines": 115,
+      "after_lines": 124,
+      "before_sha256": "7bd16cfc34233ccb668034cbd08c7a9f5603d11bc888cb4f776d08df138ca44f",
+      "after_sha256": "ab3220513cb0f99a9ebee21264c7b5793fb630bc49842b103076d85dc0b9956a",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/spjac.c",
+      "changed": true,
+      "before_bytes": 9859,
+      "after_bytes": 11134,
+      "before_lines": 192,
+      "after_lines": 223,
+      "before_sha256": "cfa473f18cd0eb9e32893087583a0923ad9d5aeff6e33e36b655ff32cc990f0b",
+      "after_sha256": "9a98ee6cc31d7939d9c344311d2c03e25327bad414ac5491d9bb6fe47f18e913",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/spjac.h",
+      "changed": true,
+      "before_bytes": 2920,
+      "after_bytes": 3093,
+      "before_lines": 73,
+      "after_lines": 82,
+      "before_sha256": "7c9e4c3e37c01bf4ffeff3f68ad0c687a11aa9a87cad6e9eeaa11c251d803618",
+      "after_sha256": "c41c541e341567671966d2c3cc5310089f023f99a170d6d263df0d00f891fed6",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/vmap.c",
+      "changed": true,
+      "before_bytes": 6018,
+      "after_bytes": 7051,
+      "before_lines": 130,
+      "after_lines": 160,
+      "before_sha256": "e4bac65dd0527911ccf7a78a34c37b661a447f295d2e1837f0b0011ab9456b2c",
+      "after_sha256": "65a6c48562ee0287d25d68cd3ec969e59bb614ae8f688535f81314b7a3134fe6",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/vmap.h",
+      "changed": true,
+      "before_bytes": 1917,
+      "after_bytes": 2030,
+      "before_lines": 63,
+      "after_lines": 72,
+      "before_sha256": "68ab4cfb803e494d563d2aaca93beca368d0009de9a8649c6d6ad9bd24d4bd3d",
+      "after_sha256": "ce8eb75a6f844b3043e005373ca0bf165ee793999ea16418fc07906139be3bb2",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/vmap_multi.c",
+      "changed": true,
+      "before_bytes": 4675,
+      "after_bytes": 5821,
+      "before_lines": 110,
+      "after_lines": 140,
+      "before_sha256": "4feff0cb32b460634c850842e5a132bf763324b39bebe2d40a397fb03f7f4785",
+      "after_sha256": "ea287717440447da51501a77789836f018024c31118d38f8d0a0779864e30f73",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/vmap_multi.h",
+      "changed": true,
+      "before_bytes": 2055,
+      "after_bytes": 2200,
+      "before_lines": 63,
+      "after_lines": 72,
+      "before_sha256": "e83f6f9add251c732c8ac431508c9964bd735a72ace04810241543645df44686",
+      "after_sha256": "21a1466052235350e5b9ad1f281e7026d4ad796bb67a4e6ec2136d8bf76c9088",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/wide.c",
+      "changed": true,
+      "before_bytes": 73707,
+      "after_bytes": 74780,
+      "before_lines": 265,
+      "after_lines": 296,
+      "before_sha256": "aa6015e383365bf72e14711f597125089bef567833710c8813ca6de45aafbde8",
+      "after_sha256": "f606f1b25c36b172c5ef4860d4cfd241b66904384bddef62eae64f434e0603ab",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/wide.h",
+      "changed": true,
+      "before_bytes": 1911,
+      "after_bytes": 2025,
+      "before_lines": 64,
+      "after_lines": 73,
+      "before_sha256": "91b4d9ab5dd92c4b1b4294febbac05742ab714025972f0e70789449b7465ac64",
+      "after_sha256": "fce415177f6c120641c74b5e2e58544739f33f910abeea9b4587a7624eed45a7",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/workspace.c",
+      "changed": true,
+      "before_bytes": 4228,
+      "after_bytes": 5364,
+      "before_lines": 105,
+      "after_lines": 134,
+      "before_sha256": "42057c045e19255b687a38d6f912e8e2c4c783b6999f4b6678619b407fb44afe",
+      "after_sha256": "fdecd85a45ba45df68f013d504a8523fb699123acb988d399b9a22b6040e2a65",
+      "constant_declarations_identical_ignoring_names": true
+    },
+    {
+      "file": "tests/baseline/c/workspace.h",
+      "changed": true,
+      "before_bytes": 1972,
+      "after_bytes": 2109,
+      "before_lines": 63,
+      "after_lines": 72,
+      "before_sha256": "c3a6f5972802f017e9c3818d0a213efd9fd0b8184c6a4bcf50c4f09e699e57e6",
+      "after_sha256": "745b5c8c714f85e16ed5e3105f67b879996f40b010d563aedb6394d5d1589d7b",
+      "constant_declarations_identical_ignoring_names": true
+    }
+  ]
+}
