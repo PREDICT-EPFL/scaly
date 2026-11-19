@@ -26,8 +26,31 @@ jobs:
       include-slow: true
       environments: '[{"platform":"linux-x86_64","runner":"ubuntu-latest"}]'
 
+  # Generated C for Cortex-A53 runs under user-mode emulation, so this checks values, not speed.
+  cortex-a53:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
+
+      - name: Install zig and qemu-aarch64
+        env:
+          SCALY_BUILD_SOLVERS: skip
+        run: |
+          uv sync --frozen --extra toolchain
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user
+          uv run zig version
+          qemu-aarch64 --version
+
+      - name: Build for Cortex-A53, run under qemu and compare with NumPy
+        run: uv run pytest -q -rs tests/codegen/test_cortex_a53.py
+
   report:
-    needs: [platforms, verify]
+    needs: [platforms, verify, cortex-a53]
     if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:

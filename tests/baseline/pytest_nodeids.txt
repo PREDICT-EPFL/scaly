@@ -2556,6 +2556,10 @@ tests/codegen/test_casadi.py::test_casadi_sparse_leaves_match_casadi_sparsity[c-
 tests/codegen/test_casadi.py::test_casadi_sparse_leaves_match_casadi_sparsity[c-nonempty]
 tests/codegen/test_casadi.py::test_casadi_sparse_leaves_match_casadi_sparsity[cpp-empty]
 tests/codegen/test_casadi.py::test_casadi_sparse_leaves_match_casadi_sparsity[cpp-nonempty]
+tests/codegen/test_cortex_a53.py::test_cortex_a53_executable_matches_numpy_under_qemu[embedded_oracle]
+tests/codegen/test_cortex_a53.py::test_cortex_a53_executable_matches_numpy_under_qemu[sparse_kernel]
+tests/codegen/test_cortex_a53.py::test_cortex_a53_freestanding_object_has_only_libm_symbols[embedded_oracle]
+tests/codegen/test_cortex_a53.py::test_cortex_a53_freestanding_object_has_only_libm_symbols[sparse_kernel]
 tests/codegen/test_cpp.py::test_cpp_header_and_c_header_compile_the_same_kernel
 tests/codegen/test_cpp.py::test_cpp_header_compiles_and_runs
 tests/codegen/test_cpp.py::test_cpp_header_declares_namespace_buffers_and_constexpr_tables
