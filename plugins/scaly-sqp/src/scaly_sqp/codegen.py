@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
 from scaly.ir.types import CanonicalPattern
-from scaly.linalg.symbolic import analyze_symmetric
+from scaly.linalg.symbolic import ldl_symbolic
 from scaly_piqp import PIQP_VERSION
 
 if TYPE_CHECKING:
@@ -87,7 +87,7 @@ def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
   a_ptr, a_rows, _, a_src = _csc([(r, c, k) for k, (r, c) in enumerate(zip(jrows, jcols, strict=True)) if r < nh], n)
   g_ptr, g_rows, _, g_src = _csc([(r - nh, c, k) for k, (r, c) in enumerate(zip(jrows, jcols, strict=True)) if r >= nh], n)
   nnz_j, nnz_h, nnz_p = len(jrows), len(hrows), len(p_rows)
-  ldl = analyze_symmetric(CanonicalPattern((n, n), tuple(p_rows), tuple(p_cols)), "natural")
+  ldl = ldl_symbolic(CanonicalPattern((n, n), tuple(p_rows), tuple(p_cols)), "natural")
   ldl_parent, ldl_ptr, nnz_l = list(ldl.parent), list(ldl.l_ptr), ldl.nnz_l
   normal_slot = [p_slot[(r, c)] for r, c, _, _ in normal_terms]
   normal_a = [ka for _, _, ka, _ in normal_terms]

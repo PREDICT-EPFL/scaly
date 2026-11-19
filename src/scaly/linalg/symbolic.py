@@ -1,11 +1,12 @@
-"""The symbolic analysis of a sparse symmetric factorization: ordering, elimination tree and the pattern of L, from a pattern alone.
+"""The symbolic analysis of a sparse LDL^T or Cholesky factorization: ordering, elimination tree and the pattern of L, from a pattern alone.
 
-``analyze_symmetric(pattern, ordering)`` is the entry point: it performs the symbolic factorization
-of a symmetric matrix and returns a ``SymbolicAnalysis`` holding its tables. Every other function here is a private step of
-it. It runs when a graph is built, on the pattern of a sparse type, and never sees a value, so
-the pattern it finds is structural and ignores numerical cancellation. The factorizations in
-``scaly.linalg`` and the solver plugins read its tables to decide what their loops or their
-straight-line code index. It imports nothing above ``scaly.ir``, so it sits below ``Function``.
+``ldl_symbolic(pattern, ordering)`` is the entry point: the symbolic step of a sparse ``L D L^T``
+factorization, as Davis's ``ldl_symbolic`` is to his ``ldl_numeric``. It returns an ``LDLSymbolic``
+holding the tables, which a Cholesky factorization reads just the same. Every other function here
+is a private step of it. It runs when a graph is built, on the pattern of a sparse type, and
+never sees a value, so the pattern it finds is structural and ignores numerical cancellation. The
+factorizations in ``scaly.linalg`` and the solver plugins read its tables to decide what their
+loops or their straight-line code index. It imports nothing above ``scaly.ir``, so it sits below ``Function``.
 
 The matrix ``A`` is symmetric, given by the stored coordinates of one triangle, both, or any mix:
 the analysis works on the pattern of ``A + A^T`` with a full diagonal. It describes
@@ -33,7 +34,7 @@ ORDERINGS: tuple[Ordering, ...] = ("natural", "rcm", "amd")
 
 
 @dataclass(frozen=True, eq=False)
-class SymbolicAnalysis:
+class LDLSymbolic:
   """The structure of ``P A P^T = L D L^T`` for a symmetric ``A`` with a fixed pattern.
 
   Equal tables give the same object while one is alive, so ``is`` compares two analyses, and
@@ -78,11 +79,11 @@ class SymbolicAnalysis:
 # Weak, so an analysis lives only as long as something holds it: the pattern of L alone can run to
 # tens of megabytes, and a solver plugin keeps only the tree and the column pointers.
 _LOCK = threading.Lock()
-_BY_PATTERN: weakref.WeakValueDictionary[tuple[str, str], SymbolicAnalysis] = weakref.WeakValueDictionary()
-_BY_DIGEST: weakref.WeakValueDictionary[str, SymbolicAnalysis] = weakref.WeakValueDictionary()
+_BY_PATTERN: weakref.WeakValueDictionary[tuple[str, str], LDLSymbolic] = weakref.WeakValueDictionary()
+_BY_DIGEST: weakref.WeakValueDictionary[str, LDLSymbolic] = weakref.WeakValueDictionary()
 
 
-def analyze_symmetric(pattern: CanonicalPattern, ordering: Ordering = "amd") -> SymbolicAnalysis:
+def ldl_symbolic(pattern: CanonicalPattern, ordering: Ordering = "amd") -> LDLSymbolic:
   """Analyze the ``n x n`` symmetric matrix whose stored coordinates are ``pattern``, under one ordering.
 
   ``pattern`` is a sparse type's pattern (``TensorType.pattern``, or
@@ -118,7 +119,7 @@ def analyze_symmetric(pattern: CanonicalPattern, ordering: Ordering = "amd") -> 
     return _BY_PATTERN.setdefault(key, analysis)
 
 
-def _analyze(pattern: CanonicalPattern, ordering: Ordering) -> SymbolicAnalysis:
+def _analyze(pattern: CanonicalPattern, ordering: Ordering) -> LDLSymbolic:
   n = pattern.shape[0]
   rows, cols = np.asarray(pattern.rows, dtype=np.int64), np.asarray(pattern.cols, dtype=np.int64)
   off = rows != cols
@@ -166,7 +167,7 @@ def _analyze(pattern: CanonicalPattern, ordering: Ordering) -> SymbolicAnalysis:
     "l_rows": as_tuple(l_rows),
   }
   digest = sha256(repr((n, sorted(tables.items()))).encode("ascii")).hexdigest()
-  return SymbolicAnalysis(n=n, digest=digest, **tables)
+  return LDLSymbolic(n=n, digest=digest, **tables)
 
 
 def _permuted_lower(n: int, rows: np.ndarray, cols: np.ndarray, iperm: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
