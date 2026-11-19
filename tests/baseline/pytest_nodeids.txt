@@ -4224,6 +4224,24 @@ tests/passes/lowering/test_calls.py::test_unrolling_preserves_reduction_order_bi
 tests/passes/lowering/test_calls.py::test_unrolling_preserves_reduction_order_bitwise[True]
 tests/passes/lowering/test_ctx.py::test_duplicate_rule_rejected_without_partial_registration
 tests/passes/lowering/test_ctx.py::test_non_float64_callee_leaves_are_typed_parameters
+tests/passes/lowering/test_demand.py::test_a_computed_part_of_a_concatenation_stays_whole
+tests/passes/lowering/test_demand.py::test_a_gather_reaches_a_stored_product_through[concatenation]
+tests/passes/lowering/test_demand.py::test_a_gather_reaches_a_stored_product_through[mostly-zero constant]
+tests/passes/lowering/test_demand.py::test_a_gather_reaches_a_stored_product_through[scatter]
+tests/passes/lowering/test_demand.py::test_a_gather_reaches_a_stored_product_through[slice]
+tests/passes/lowering/test_demand.py::test_a_gather_reaches_a_stored_product_through[sum]
+tests/passes/lowering/test_demand.py::test_a_gather_reaches_a_stored_product_through[transpose]
+tests/passes/lowering/test_demand.py::test_a_gather_that_repeats_entries_reads_a_sum_computed_once_per_entry
+tests/passes/lowering/test_demand.py::test_a_narrowed_scatter_keeps_the_sign_of_zero
+tests/passes/lowering/test_demand.py::test_a_product_read_through_a_gather_computes_only_the_gathered_entries
+tests/passes/lowering/test_demand.py::test_a_reduction_and_a_sum_of_scatters_compute_only_the_entries_read
+tests/passes/lowering/test_demand.py::test_a_scalar_product_no_entry_of_which_is_read_still_lowers
+tests/passes/lowering/test_demand.py::test_a_stored_copy_computes_only_the_entries_two_readers_use[concatenation]
+tests/passes/lowering/test_demand.py::test_a_stored_copy_computes_only_the_entries_two_readers_use[gather]
+tests/passes/lowering/test_demand.py::test_a_stored_copy_computes_only_the_entries_two_readers_use[slice]
+tests/passes/lowering/test_demand.py::test_a_stored_copy_computes_only_the_entries_two_readers_use[stack]
+tests/passes/lowering/test_demand.py::test_a_stored_copy_computes_only_the_entries_two_readers_use[transpose]
+tests/passes/lowering/test_demand.py::test_the_sampled_adjoint_is_the_product_at_its_demanded_entries
 tests/passes/lowering/test_fusion.py::test_a_carried_range_is_never_merged_split_or_reordered
 tests/passes/lowering/test_fusion.py::test_a_libm_call_is_not_duplicated_by_two_reads[False]
 tests/passes/lowering/test_fusion.py::test_a_libm_call_is_not_duplicated_by_two_reads[True]
@@ -5442,6 +5460,7 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.expr]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.calls]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.contraction]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.ctx]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.demand]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.effects]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.elementwise]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lowering.fusion]
