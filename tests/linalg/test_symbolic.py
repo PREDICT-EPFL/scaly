@@ -15,7 +15,8 @@ from scipy.sparse.csgraph import reverse_cuthill_mckee
 from scipy.sparse.linalg import splu
 
 from scaly.ir.types import CanonicalPattern, SparsityPattern
-from scaly.linalg.symbolic import ORDERINGS, Ordering, LDLSymbolic, ldl_symbolic
+from scaly.linalg import symbolic
+from scaly.linalg.symbolic import ORDERINGS, LDLSymbolic, Ordering
 
 
 def _pattern(mask: np.ndarray) -> CanonicalPattern:
@@ -105,7 +106,7 @@ def _columns(ptr: tuple[int, ...], rows: tuple[int, ...]) -> list[tuple[int, ...
 def test_pattern_of_l_and_elimination_tree_match_a_dense_elimination(name: str, ordering: Ordering) -> None:
   mask = PATTERNS[name]()
   n = mask.shape[0]
-  s = ldl_symbolic(_pattern(mask), ordering)
+  s = symbolic.ldl(_pattern(mask), ordering)
   assert s.n == n
   assert sorted(s.perm) == list(range(n)) and [s.perm[s.iperm[i]] for i in range(n)] == list(range(n))
 
@@ -150,7 +151,7 @@ def test_permuted_pattern_reads_the_lower_stored_entry_of_each_pair(name: str, o
   rng = np.random.default_rng(7)
   mask = lower | (lower.T & (rng.random(lower.shape) < 0.5))
   pattern = _pattern(mask)
-  s = ldl_symbolic(pattern, ordering)
+  s = symbolic.ldl(pattern, ordering)
   n = mask.shape[0]
   permuted = np.tril((mask | mask.T)[np.ix_(s.perm, s.perm)])
   assert len(s.a_ptr) == n + 1 and s.a_ptr[-1] == len(s.a_rows) == len(s.a_source) == int(permuted.sum())
@@ -165,7 +166,7 @@ def test_permuted_pattern_reads_the_lower_stored_entry_of_each_pair(name: str, o
 
 def test_upper_lower_and_full_storage_give_one_factor_pattern() -> None:
   lower = _multistage(4, 3, 2, 5)
-  analyses = [ldl_symbolic(_pattern(m), "amd") for m in (lower, lower.T, lower | lower.T)]
+  analyses = [symbolic.ldl(_pattern(m), "amd") for m in (lower, lower.T, lower | lower.T)]
   assert len({(s.perm, s.parent, s.l_ptr, s.l_rows) for s in analyses}) == 1
 
 
@@ -174,7 +175,7 @@ def test_rcm_is_scipys_reverse_cuthill_mckee(name: str) -> None:
   mask = PATTERNS[name]()
   graph = sparse.csr_array((mask | mask.T).astype(np.float64))
   expected = tuple(int(i) for i in reverse_cuthill_mckee(graph, symmetric_mode=True))
-  assert ldl_symbolic(_pattern(mask), "rcm").perm == expected
+  assert symbolic.ldl(_pattern(mask), "rcm").perm == expected
 
 
 def _splu_strict_lower_fill(mask: np.ndarray) -> int:
@@ -200,15 +201,15 @@ def _splu_strict_lower_fill(mask: np.ndarray) -> int:
 )
 def test_amd_fill_is_within_superlus_minimum_degree_fill(name: str, mask: np.ndarray) -> None:
   # a sanity bound, not a match: the two minimum-degree variants break ties differently
-  amd, superlu = ldl_symbolic(_pattern(mask), "amd").nnz_l, _splu_strict_lower_fill(mask)
+  amd, superlu = symbolic.ldl(_pattern(mask), "amd").nnz_l, _splu_strict_lower_fill(mask)
   assert amd <= 1.1 * superlu, (name, amd, superlu)
 
 
 def test_amd_leaves_the_hub_of_an_arrow_for_last() -> None:
   # the hub ties with the last leaf at degree 1, either order fills nothing
-  s = ldl_symbolic(_pattern(_arrow(40, hub_first=True)), "amd")
+  s = symbolic.ldl(_pattern(_arrow(40, hub_first=True)), "amd")
   assert 0 in s.perm[-2:] and s.nnz_l == 39
-  assert ldl_symbolic(_pattern(_arrow(40, hub_first=True)), "natural").nnz_l == 40 * 39 // 2
+  assert symbolic.ldl(_pattern(_arrow(40, hub_first=True)), "natural").nnz_l == 40 * 39 // 2
 
 
 def test_amd_orders_dense_rows_last() -> None:
@@ -218,7 +219,7 @@ def test_amd_orders_dense_rows_last() -> None:
   mask = np.eye(n, dtype=bool) | np.eye(n, k=-1, dtype=bool)
   mask[:, 7] = mask[7, :] = True
   mask[::2, 123] = mask[123, ::2] = True
-  s = ldl_symbolic(_pattern(np.tril(mask)), "amd")
+  s = symbolic.ldl(_pattern(np.tril(mask)), "amd")
   assert s.perm[-2:] == (7, 123)
   assert s.nnz_l <= 1.1 * _splu_strict_lower_fill(np.tril(mask))
   np.testing.assert_array_equal(_dense_elimination(np.tril(mask), s.perm).sum(axis=0), s.col_counts)
@@ -226,22 +227,22 @@ def test_amd_orders_dense_rows_last() -> None:
 
 def test_natural_ordering_of_an_arrow_matches_davis_ldl_symbolic() -> None:
   # column 0 couples to every row, so eliminating it first fills the whole trailing block
-  s = ldl_symbolic(_pattern(_arrow(5, hub_first=True)), "natural")
+  s = symbolic.ldl(_pattern(_arrow(5, hub_first=True)), "natural")
   assert s.perm == (0, 1, 2, 3, 4)
   assert s.parent == (1, 2, 3, 4, -1)
   assert s.l_ptr == (0, 4, 7, 9, 10, 10)
   # a diagonal matrix needs no factor entries at all
-  s = ldl_symbolic(_pattern(np.eye(5, dtype=bool)), "natural")
+  s = symbolic.ldl(_pattern(np.eye(5, dtype=bool)), "natural")
   assert s.parent == (-1,) * 5 and s.l_ptr == (0,) * 6
 
 
 def test_equal_patterns_share_one_immutable_analysis() -> None:
   mask = _multistage(3, 3, 1, 10)
-  s = ldl_symbolic(_pattern(mask), "amd")
-  assert ldl_symbolic(_pattern(mask.copy()), "amd") is s
+  s = symbolic.ldl(_pattern(mask), "amd")
+  assert symbolic.ldl(_pattern(mask.copy()), "amd") is s
   assert isinstance(s.digest, str) and len(s.digest) == 64
-  assert ldl_symbolic(_pattern(mask), "natural").digest != s.digest
-  assert ldl_symbolic(_pattern(mask | np.tri(*mask.shape, -2, dtype=bool)), "amd").digest != s.digest
+  assert symbolic.ldl(_pattern(mask), "natural").digest != s.digest
+  assert symbolic.ldl(_pattern(mask | np.tri(*mask.shape, -2, dtype=bool)), "amd").digest != s.digest
   with pytest.raises(dataclasses.FrozenInstanceError):
     s.perm = ()  # ty: ignore[invalid-assignment]
   assert all(isinstance(getattr(s, f.name), tuple) for f in dataclasses.fields(LDLSymbolic) if f.name not in ("n", "digest"))
@@ -249,28 +250,28 @@ def test_equal_patterns_share_one_immutable_analysis() -> None:
 
 def test_an_analysis_nobody_holds_is_released() -> None:
   mask = _multistage(3, 2, 2, 11)
-  s = ldl_symbolic(_pattern(mask), "natural")
+  s = symbolic.ldl(_pattern(mask), "natural")
   alive = weakref.ref(s)
   del s
   gc.collect()
   assert alive() is None
-  assert ldl_symbolic(_pattern(mask), "natural").l_ptr == ldl_symbolic(_pattern(mask), "natural").l_ptr
+  assert symbolic.ldl(_pattern(mask), "natural").l_ptr == symbolic.ldl(_pattern(mask), "natural").l_ptr
 
 
 @pytest.mark.parametrize("ordering", ORDERINGS)
 def test_an_empty_pattern_has_an_empty_analysis(ordering: Ordering) -> None:
-  s = ldl_symbolic(CanonicalPattern((0, 0), (), ()), ordering)
+  s = symbolic.ldl(CanonicalPattern((0, 0), (), ()), ordering)
   assert s.perm == s.parent == s.postorder == s.l_rows == () and s.l_ptr == s.a_ptr == (0,)
 
 
 def test_orderings_with_equal_tables_give_the_same_analysis() -> None:
   # a dense matrix has one structure whatever the order of RCM's breadth-first search
   mask = np.tril(np.ones((4, 4), dtype=bool))
-  assert ldl_symbolic(_pattern(mask), "natural") is ldl_symbolic(_pattern(mask), "amd")
+  assert symbolic.ldl(_pattern(mask), "natural") is symbolic.ldl(_pattern(mask), "amd")
 
 
 def test_refuses_a_rectangular_pattern_and_an_unknown_ordering() -> None:
   with pytest.raises(ValueError, match="square"):
-    ldl_symbolic(_pattern(np.ones((2, 3), dtype=bool)))
+    symbolic.ldl(_pattern(np.ones((2, 3), dtype=bool)))
   with pytest.raises(ValueError, match="ordering"):
-    ldl_symbolic(_pattern(np.eye(3, dtype=bool)), "mmd")  # ty: ignore[invalid-argument-type]
+    symbolic.ldl(_pattern(np.eye(3, dtype=bool)), "mmd")  # ty: ignore[invalid-argument-type]

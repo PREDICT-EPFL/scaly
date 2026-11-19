@@ -1,12 +1,15 @@
 """The symbolic analysis of a sparse LDL^T or Cholesky factorization: ordering, elimination tree and the pattern of L, from a pattern alone.
 
-``ldl_symbolic(pattern, ordering)`` is the entry point: the symbolic step of a sparse ``L D L^T``
-factorization, as Davis's ``ldl_symbolic`` is to his ``ldl_numeric``. It returns an ``LDLSymbolic``
-holding the tables, which a Cholesky factorization reads just the same. Every other function here
-is a private step of it. It runs when a graph is built, on the pattern of a sparse type, and
-never sees a value, so the pattern it finds is structural and ignores numerical cancellation. The
-factorizations in ``scaly.linalg`` and the solver plugins read its tables to decide what their
-loops or their straight-line code index. It imports nothing above ``scaly.ir``, so it sits below ``Function``.
+``symbolic.ldl(pattern, ordering)`` is the entry point: the symbolic step of a sparse ``L D L^T``
+factorization, as Davis's ``ldl_symbolic`` is to his ``ldl_numeric``, with ``scaly.linalg.ldl`` as
+the numeric step. Import the module and call ``symbolic.ldl``, never ``ldl`` by its bare name, so
+the two steps stay apart. It returns an ``LDLSymbolic`` holding the tables, which a Cholesky
+factorization reads just the same. Every other function here is a private step of it.
+
+It runs when a graph is built, on the pattern of a sparse type, and never sees a value, so the
+pattern it finds is structural and ignores numerical cancellation. The factorizations in
+``scaly.linalg`` and the solver plugins read its tables to decide what their loops or their
+straight-line code index. It imports nothing above ``scaly.ir``, so it sits below ``Function``.
 
 The matrix ``A`` is symmetric, given by the stored coordinates of one triangle, both, or any mix:
 the analysis works on the pattern of ``A + A^T`` with a full diagonal. It describes
@@ -83,7 +86,7 @@ _BY_PATTERN: weakref.WeakValueDictionary[tuple[str, str], LDLSymbolic] = weakref
 _BY_DIGEST: weakref.WeakValueDictionary[str, LDLSymbolic] = weakref.WeakValueDictionary()
 
 
-def ldl_symbolic(pattern: CanonicalPattern, ordering: Ordering = "amd") -> LDLSymbolic:
+def ldl(pattern: CanonicalPattern, ordering: Ordering = "amd") -> LDLSymbolic:
   """Analyze the ``n x n`` symmetric matrix whose stored coordinates are ``pattern``, under one ordering.
 
   ``pattern`` is a sparse type's pattern (``TensorType.pattern``, or
