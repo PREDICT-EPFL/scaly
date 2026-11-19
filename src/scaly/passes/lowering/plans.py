@@ -2,26 +2,60 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ...ad.rules import ELEMENTWISE
 from ...ir import program as p
 from ...ir.expr import _index_values, Expr, ExprOp, sampled_conditions
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.support import project_entries, slice_indices, transpose_entries, support_indices, _constant_condition
 from ...ir.types import CanonicalPattern, dtypes, stored_indices, stored_slots
-from .ctx import LowerCtx
 from ..arith import constant, fold_program
+
+if TYPE_CHECKING:
+  from .ctx import LowerCtx
 
 
 @dataclass(frozen=True)
 class MapRegion:
-  """One output region with fixed operand membership and physical stored-slot access maps."""
+  """One region with fixed operand membership, physical writes and canonical reads."""
 
   writes: np.ndarray
   reads: tuple[np.ndarray, ...]
+
+
+def has_compact_map(node: Expr) -> bool:
+  """Whether the sparse operation has one compact map over its entire output."""
+  return node.type.pattern is not None and (
+    node.op in ELEMENTWISE
+    or node.op in (ExprOp.RESHAPE, ExprOp.TRANSPOSE, ExprOp.SLICE)
+    or node.op == ExprOp.GATHER
+    and node.args[1].value is not None
+    and node.attrs["mode"] != "fill"
+  )
+
+
+def compact_reads(node: Expr) -> tuple[np.ndarray, ...]:
+  """The canonical operand slots read by each stored output entry."""
+  logical = stored_indices(node.type)
+  if node.op in ELEMENTWISE:
+    reads = [stored_slots(arg.type, project_entries(logical, arg.shape, node.shape)) for arg in node.args]
+    if node.op == ExprOp.SELECT and (chosen := _constant_condition(node.args[0], logical, node.shape)) is not None:
+      reads[1] = np.where(chosen, reads[1], -1)
+      reads[2] = np.where(chosen, -1, reads[2])
+    return tuple(reads)
+  src = node.args[0]
+  if node.op == ExprOp.TRANSPOSE:
+    logical = transpose_entries(logical, node.shape, tuple(map(int, np.argsort(node.attrs["axes"]))))
+  elif node.op == ExprOp.SLICE:
+    logical = slice_indices(src.shape, node.attrs["index"], logical)
+  elif node.op == ExprOp.GATHER:
+    logical = _index_values(node).reshape(-1)[logical]
+  return (stored_slots(src.type, logical),)
 
 
 @dataclass(frozen=True)
@@ -210,7 +244,6 @@ def emit_map(
   ctx: LowerCtx,
   node: Expr,
   reads: Sequence[np.ndarray],
-  body: Callable[[tuple[ProgramNode, ...]], ProgramNode],
   *,
   writes: np.ndarray | None = None,
   operands: Sequence[Expr] | None = None,
@@ -220,16 +253,16 @@ def emit_map(
   operands = (
     (node.args[2:] if node.op == ExprOp.SCATTER else node.args[:1] if node.op == ExprOp.GATHER else node.args) if operands is None else operands
   )
-  writes = np.arange(node.type.storage_size, dtype=np.int64) if writes is None else writes
-  writes = ctx.physical_slots(node, writes)
-  for region in map_regions(writes, reads):
+  regions = ctx.planned_maps.get(node.id)
+  if regions is None:
+    writes = np.arange(node.type.storage_size, dtype=np.int64) if writes is None else writes
+    regions = map_regions(ctx.physical_slots(node, writes), reads)
+  for number, region in enumerate(regions):
 
     def statements(k: ProgramNode) -> list[ProgramNode]:
-      values = tuple(
-        constant(0, arg.type.dtype) if slots[0] < 0 else ctx.read_stored(arg, slots, k) for arg, slots in zip(operands, region.reads, strict=True)
-      )
+      value = ctx.compute_map(node, operands, region, number, k)
       dst = ctx.index_at(region.writes, k, shared=True)
-      return [p.store(p.view(out, [dst]), body(values))]
+      return [p.store(p.view(out, [dst]), value)]
 
     if len(region.writes) <= 4:
       for k in range(len(region.writes)):
@@ -241,7 +274,6 @@ def emit_map(
 
 def lower_movement(ctx: LowerCtx, node: Expr) -> None:
   """Use the compact map for every movement involving sparse storage."""
-  logical = stored_indices(node.type)
   op = node.op
   if op == ExprOp.SCATTER:
     src = node.args[2]
@@ -258,6 +290,7 @@ def lower_movement(ctx: LowerCtx, node: Expr) -> None:
     ctx.emit(ranges, [p.store(target, p.add(p.load(target), value) if repeated else value)])
     return
   if op in (ExprOp.STACK, ExprOp.CONCAT):
+    logical = stored_indices(node.type)
     axis = node.attrs["axis"]
     coords = list(np.unravel_index(logical, node.shape))
     offset = 0
@@ -270,28 +303,14 @@ def lower_movement(ctx: LowerCtx, node: Expr) -> None:
         source_coords[axis] -= offset
         offset += src.shape[axis]
       source = np.ravel_multi_index(tuple(source_coords), src.shape)
-      emit_map(ctx, node, [stored_slots(src.type, source)], lambda v: v[0], writes=np.flatnonzero(selected), operands=(src,))
+      emit_map(ctx, node, [stored_slots(src.type, source)], writes=np.flatnonzero(selected), operands=(src,))
     return
-  src = node.args[0]
-  if op == ExprOp.TRANSPOSE:
-    logical = transpose_entries(logical, node.shape, tuple(map(int, np.argsort(node.attrs["axes"]))))
-  elif op == ExprOp.SLICE:
-    logical = slice_indices(src.shape, node.attrs["index"], logical)
-  elif op == ExprOp.GATHER:
-    logical = _index_values(node).reshape(-1)[logical]
-  emit_map(ctx, node, [stored_slots(src.type, logical)], lambda v: v[0])
+  emit_map(ctx, node, ctx.compact_reads(node))
 
 
-def lower_elementwise(ctx: LowerCtx, node: Expr, program_op) -> None:
-  """Sample broadcast operands on the output pattern and emit its compact scalar body."""
-  logical = stored_indices(node.type)
-  reads = [stored_slots(arg.type, project_entries(logical, arg.shape, node.shape)) for arg in node.args]
-  if program_op == p.ProgramOp.SELECT:
-    chosen = _constant_condition(node.args[0], logical, node.shape)
-    if chosen is not None:
-      reads[1] = np.where(chosen, reads[1], -1)
-      reads[2] = np.where(chosen, -1, reads[2])
-  emit_map(ctx, node, reads, lambda values: ProgramNode(program_op, values, dtype=node.type.dtype))
+def lower_elementwise(ctx: LowerCtx, node: Expr) -> None:
+  """Emit the compact map for a sparse elementwise operation."""
+  emit_map(ctx, node, ctx.compact_reads(node))
 
 
 def lower_supported_elementwise(ctx: LowerCtx, node: Expr, program_op) -> bool:

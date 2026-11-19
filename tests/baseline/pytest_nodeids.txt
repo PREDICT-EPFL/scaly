@@ -4170,6 +4170,10 @@ tests/passes/lowering/test_fusion.py::test_shared_producer_merges_only_agreeing_
 tests/passes/lowering/test_fusion.py::test_shared_producer_merges_only_agreeing_consumer_loops[domain]
 tests/passes/lowering/test_fusion.py::test_shared_producer_merges_only_agreeing_consumer_loops[same]
 tests/passes/lowering/test_fusion.py::test_single_consumer_chain_is_one_loop
+tests/passes/lowering/test_fusion.py::test_sparse_fusion_keeps_each_regions_operand_slots
+tests/passes/lowering/test_fusion.py::test_sparse_fusion_keeps_sampled_product_conditions
+tests/passes/lowering/test_fusion.py::test_sparse_fusion_requires_the_same_stored_traversal[same_traversal]
+tests/passes/lowering/test_fusion.py::test_sparse_fusion_requires_the_same_stored_traversal[transposed]
 tests/passes/lowering/test_fusion.py::test_value_read_by_two_agreeing_consumers_is_computed_once
 tests/passes/lowering/test_fusion.py::test_value_read_several_times_per_element_is_stored[broadcast]
 tests/passes/lowering/test_fusion.py::test_value_read_several_times_per_element_is_stored[matmul_operand]

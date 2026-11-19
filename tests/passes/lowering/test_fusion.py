@@ -251,6 +251,82 @@ def test_reused_selection_of_an_input_needs_no_buffer() -> None:
   assert not _privates(_lowered(_function("reused_input_selection", ((1000,),), body)))
 
 
+_SPARSE_FUSION_PATTERN = CanonicalPattern((4, 4), (0, 0, 1, 1, 2, 2, 3, 3), (0, 2, 1, 3, 0, 2, 1, 3))
+
+
+def _sparse_leaf(name: str, pattern: CanonicalPattern):
+  return sc.arg(name, sc.TensorType(pattern.shape, pattern=pattern), layout="csr")
+
+
+@needs_cc
+@pytest.mark.parametrize("transpose", [False, True], ids=["same_traversal", "transposed"])
+def test_sparse_fusion_requires_the_same_stored_traversal(transpose: bool) -> None:
+  pattern = _SPARSE_FUSION_PATTERN
+
+  @sc.function(_sparse_leaf("x", pattern), outputs=_sparse_leaf("y", pattern), name=f"sparse_fusion_{transpose}")
+  def fn(x):
+    producer = x.sin().tanh()
+    return (producer.T if transpose else producer * 2.0).block()
+
+  values = np.linspace(-1.0, 1.0, pattern.nnz)
+  expected = np.zeros(pattern.shape)
+  expected[pattern.rows, pattern.cols] = np.tanh(np.sin(values))
+  actual = fn(values).toarray()
+  np.testing.assert_allclose(actual, expected.T if transpose else expected * 2.0)
+  proc = _lowered(fn)
+  assert _work(proc, ProgramOp.SIN) == pattern.nnz
+  assert _work(proc, ProgramOp.TANH) == pattern.nnz
+  assert len(_privates(proc)) == int(transpose)
+  assert sum(stmt.op == ProgramOp.FOR for stmt in proc.args) == 1 + int(transpose)
+
+
+@needs_cc
+def test_sparse_fusion_keeps_each_regions_operand_slots() -> None:
+  pattern = _SPARSE_FUSION_PATTERN
+  subset = CanonicalPattern(pattern.shape, pattern.rows[::2], pattern.cols[::2])
+
+  @sc.function(_sparse_leaf("x", pattern), _sparse_leaf("y", subset), outputs=_sparse_leaf("z", pattern), name="sparse_fusion_regions")
+  def fn(x, y):
+    return sc.maximum(x + y, y).block()
+
+  x = np.linspace(-1.0, 1.0, pattern.nnz)
+  y = np.array([3.0, -2.0, 1.5, -0.5])
+  left, right = np.zeros(pattern.shape), np.zeros(pattern.shape)
+  left[pattern.rows, pattern.cols] = x
+  right[subset.rows, subset.cols] = y
+  np.testing.assert_allclose(fn(x, y).toarray(), np.maximum(left + right, right))
+  assert not _privates(_lowered(fn))
+
+
+@needs_cc
+def test_sparse_fusion_keeps_sampled_product_conditions() -> None:
+  pattern = _SPARSE_FUSION_PATTERN
+  coords = pattern.rows, pattern.cols
+
+  @sc.function(
+    _sparse_leaf("x", pattern),
+    _sparse_leaf("y", pattern),
+    outputs=_sparse_leaf("z", pattern),
+    name="sparse_fusion_sampled_conditions",
+  )
+  def fn(x, y):
+    masks = sc.pack(sc.values(x) > 0, pattern), sc.pack(sc.values(y) < 2, pattern)
+    return sc.matmul(x.sin().tanh(), y, sampled=pattern, conditions=masks).block()
+
+  x = np.array([0.25, -0.5, -0.75, 0.5, 0.75, 1.0, 0.125, 0.5])
+  y = np.array([0.5, 0.25, 0.125, np.inf, 1.0, 2.0, -0.5, np.inf])
+  left, right = np.zeros(pattern.shape), np.zeros(pattern.shape)
+  left[coords] = np.where(x > 0, np.tanh(np.sin(x)), 0.0)
+  right[coords] = np.where(y < 2, y, 0.0)
+  expected = np.zeros(pattern.shape)
+  expected[coords] = (left @ right)[coords]
+  np.testing.assert_allclose(fn(x, y).toarray(), expected)
+  proc = _lowered(fn)
+  assert _work(proc, ProgramOp.SIN) == pattern.nnz
+  # The contraction reads the coefficient from storage. Its two pointwise operations share it.
+  assert len([buf for buf in _privates(proc) if buf.dtype == sc.dtypes.float64]) == 1
+
+
 def test_sampled_product_counts_its_condition_read() -> None:
   a = CanonicalPattern((3, 3), (0, 1, 1, 2), (0, 0, 2, 1))
   b = CanonicalPattern((3, 3), (0, 0, 1, 2), (0, 2, 1, 2))

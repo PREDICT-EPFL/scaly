@@ -27,6 +27,7 @@ from ..affine import affine_index_map
 from ..arith import constant
 from ...ad.rules import ELEMENTWISE
 from .fusion import ALIASES, _contiguous_slice_offset, plan_fusion
+from .plans import MapRegion, compact_reads, has_compact_map, map_regions
 from ..arith import fold_program
 from ..program.fold_arith import _fold_index as _fold_bounded
 from ..program.scheduling import ScalarNameAllocator, schedule_values
@@ -274,7 +275,9 @@ class LowerCtx:
     self.invariant = invariant
     self.deferred: frozenset[int] = frozenset()
     self.sums: dict[int, tuple[Expr, ...]] = {}
-    self._reads: dict[tuple[int, bool, tuple[ProgramNode, ...]], ProgramNode] = {}
+    self._compact_reads: dict[int, tuple[np.ndarray, ...]] = {}
+    self.planned_maps: dict[int, tuple[MapRegion, ...]] = {}
+    self._reads: dict[tuple[int, _Coordinates, tuple[ProgramNode, ...]], ProgramNode] = {}
     # Each index ``index_at`` built, with the table and the variable it indexes.
     self._indexed: dict[ProgramNode, tuple[np.ndarray, ProgramNode]] = {}
     # Nodes evaluated in place that read through a deferred transpose.
@@ -369,6 +372,7 @@ class LowerCtx:
       seed_pairs=self.seed_pairs,
       support_of=self.support_of,
       reads_at=reads_at,
+      shares_traversal=self._shares_traversal,
     )
     absorbed = {leaf.id for leaves in self.sums.values() for leaf in leaves}
     self.permutes = set()
@@ -450,11 +454,30 @@ class LowerCtx:
     self.emit(ranges, [p.store(p.view(out, [k]), self.compute_flat(expr, k))], delinearize=expr.id in self.permutes)
 
   def physical_slots(self, expr: Expr, slots: np.ndarray) -> np.ndarray:
-    order = self._orders.get(expr.id)
-    if order is None or not len(order):
-      return slots
-    width = len(order)
-    return np.where(slots < 0, -1, slots // width * width + order[slots % width])
+    return _permute_slots(slots, self._orders.get(expr.id))
+
+  def compact_reads(self, expr: Expr) -> tuple[np.ndarray, ...]:
+    if expr.id not in self._compact_reads:
+      self._compact_reads[expr.id] = compact_reads(expr)
+    return self._compact_reads[expr.id]
+
+  def _compact_regions(self, expr: Expr) -> tuple[MapRegion, ...]:
+    if expr.id not in self.planned_maps:
+      slots = np.arange(expr.type.storage_size, dtype=np.int64)
+      writes = _permute_slots(slots, self._output_orders.get(expr.id))
+      self.planned_maps[expr.id] = map_regions(writes, self.compact_reads(expr))
+    return self.planned_maps[expr.id]
+
+  def _shares_traversal(self, producer: Expr, consumer: Expr) -> bool:
+    if producer.shape != consumer.shape or producer.type.pattern != consumer.type.pattern:
+      return False
+    if not has_compact_map(producer) or not has_compact_map(consumer):
+      return False
+    source, target = self._compact_regions(producer), self._compact_regions(consumer)
+    if len(source) != len(target):
+      return False
+    operand = next(i for i, arg in enumerate(consumer.args) if arg is producer)
+    return all(np.array_equal(src.writes, dst.reads[operand]) for src, dst in zip(source, target, strict=True))
 
   def read_stored(self, expr: Expr, slots: np.ndarray, k: ProgramNode) -> ProgramNode:
     if expr.type.pattern is None and expr.id not in self._orders:
@@ -665,6 +688,32 @@ class LowerCtx:
     """``compute`` at the row-major position ``flat``."""
     return self._finish(self._step((expr, True, (flat,))))
 
+  def compute_map(self, expr: Expr, operands: Sequence[Expr], region: MapRegion, number: int, k: ProgramNode) -> ProgramNode:
+    """Evaluate a compact map at iteration ``k`` of the given region."""
+    return self._finish(self._map_step(expr, operands, region, number, k))
+
+  def _map_step(self, expr: Expr, operands: Sequence[Expr], region: MapRegion, number: int, k: ProgramNode) -> _Step:
+    reads: list[_Read] = []
+    values = []
+    for arg, slots in zip(operands, region.reads, strict=True):
+      if slots[0] < 0:
+        values.append(constant(0, arg.type.dtype))
+      elif arg.type.pattern is not None and arg.id in self.deferred:
+        # Traversal agreement makes the same region and iteration valid in the producer.
+        reads.append((arg, "stored", (k, p.const_int(number))))
+        values.append(None)
+      else:
+        values.append(self.read_stored(arg, slots, k))
+
+    def build(resolved: list[ProgramNode]) -> ProgramNode:
+      computed = iter(resolved)
+      args = tuple(next(computed) if value is None else value for value in values)
+      if expr.op in ELEMENTWISE:
+        return ProgramNode(ELEMENTWISE[ExprOp(expr.op)].program, args, dtype=expr.type.dtype)
+      return args[0]
+
+    return reads, build
+
   def _finish(self, step: _Step) -> ProgramNode:
     reads, build = step
     return build([self._resolve(r) for r in reads])
@@ -704,10 +753,15 @@ class LowerCtx:
     a merge reads through a transpose or a slice. A flat position reaches an operand of the same size,
     an alias and a gather as it is."""
     expr, flat, at = request
+    if flat == "stored":
+      k, region_index = at
+      number = int(region_index.attrs["value"])
+      region = self.planned_maps[expr.id][number]
+      return self._map_step(expr, expr.args[: len(region.reads)], region, number, k)
     op = ExprOp(expr.op)
     if op in ELEMENTWISE:
       coords = _flat_coordinates(at[0], expr.shape) if flat and any(a.size != expr.size for a in expr.args) else at
-      reads = [(a, True, at) if flat and a.size == expr.size else (a, False, _broadcast(coords, a.shape)) for a in expr.args]
+      reads: list[_Read] = [(a, True, at) if flat and a.size == expr.size else (a, False, _broadcast(coords, a.shape)) for a in expr.args]
       return reads, lambda values: ProgramNode(ELEMENTWISE[op].program, tuple(values), dtype=expr.type.dtype)
     position = at[0] if flat else _flat(expr.shape, at)
     if op == ExprOp.CONST:
@@ -861,7 +915,15 @@ def _source_positions(expr: Expr) -> np.ndarray:
   return positions[expr.attrs["index"]].reshape(-1)
 
 
-_Read = tuple[Expr, bool, tuple[ProgramNode, ...]]
+def _permute_slots(slots: np.ndarray, order: np.ndarray | None) -> np.ndarray:
+  if order is None or not len(order):
+    return slots
+  width = len(order)
+  return np.where(slots < 0, -1, slots // width * width + order[slots % width])
+
+
+_Coordinates = Literal[True, False, "stored"]
+_Read = tuple[Expr, _Coordinates, tuple[ProgramNode, ...]]
 _Step = tuple[list[_Read], Callable[[list[ProgramNode]], ProgramNode]]
 
 
