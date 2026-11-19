@@ -88,8 +88,10 @@ def vmapped(
   @sc.function(_inputs_tree(stages), outputs=sc.group(sc.arg("cost", ()), sc.arg("eq", stages * NX)), name=f"vmap_mlp_N{stages}")
   def fn(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     z, p = inputs
-    eq = sc.vmap(stage_function(), stages)((sc.window(z, 0, NX), sc.window(z, NX, NX), sc.window(z, NX * (stages + 1), NU), sc.window(p, 0, 0))).vec()
-    cost = sc.vmap(_cost_stage(), stages)((sc.window(z, 0, NX), sc.window(z, NX, NX), sc.window(z, NX * (stages + 1), NU))).vec()
+    eq = sc.vmap(stage_function(), stages)(
+      (sc.window(z, 0, NX), sc.window(z, NX, NX), sc.window(z, NX * (stages + 1), NU), sc.window(p, 0, 0))
+    ).ravel()
+    cost = sc.vmap(_cost_stage(), stages)((sc.window(z, 0, NX), sc.window(z, NX, NX), sc.window(z, NX * (stages + 1), NU))).ravel()
     return cost.sum(), eq
 
   return fn

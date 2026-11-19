@@ -482,7 +482,7 @@ def test_custom_derivative_rows_outside_primal_support_survive_composition(decla
   )
   def derivatives(q):
     y = sc.vmap(callee, 2)(q) if mapped else callee(q)
-    outputs = sc.concat([y.vec(), y.sin().vec(), (y * q).vec(), (y / (q + 2)).vec(), (y @ sc.const(np.diag(weights))).vec()])
+    outputs = sc.concat([y.ravel(), y.sin().ravel(), (y * q).ravel(), (y / (q + 2)).ravel(), (y @ sc.const(np.diag(weights))).ravel()])
     dense, sparse = sc.jacobian(outputs, q), sc.to_dense(sc.sparse_jacobian(outputs, q))
     return (dense.scalar(), sparse.scalar()) if scalar else (dense, sparse)
 

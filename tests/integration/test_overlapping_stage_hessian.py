@@ -20,7 +20,7 @@ def _cost(stages: int) -> sc.Function:
 
   @sc.function(sc.arg("z", NX * (stages + 1)), outputs=sc.arg("cost"), name=f"overlap_cost_N{stages}")
   def cost(z):
-    return sc.vmap(stage, stages)(sc.window(z, 0, NX)).vec().sum()
+    return sc.vmap(stage, stages)(sc.window(z, 0, NX)).ravel().sum()
 
   return cost
 

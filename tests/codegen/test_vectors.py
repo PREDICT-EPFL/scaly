@@ -439,7 +439,7 @@ def test_public_mapped_block_matrix_promotes_lane_scratch(tmp_path, dialect):
 
   @sc.function(sc.arg("x", size * stages), outputs=sc.arg("y", size * stages), name="kernel")
   def fn(z: sc.Expr) -> sc.Expr:
-    return sc.vmap(stage, stages)(z).vec()
+    return sc.vmap(stage, stages)(z).ravel()
 
   module = render_c_module(fn, lanes=4, dialect=dialect, frame_budget=16384)
   main = module.program.args[-1]

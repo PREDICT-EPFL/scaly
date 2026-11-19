@@ -74,11 +74,11 @@ def test_affine_views_equal_explicit_ir_windows_and_emit_identical_c() -> None:
 
   z = sc.sym("z", 12)
   Z = z.reshape((4, 3))
-  viewed = sc.vmap(stage, 4)(Z[:, :2], Z[:, 2]).vec()
+  viewed = sc.vmap(stage, 4)(Z[:, :2], Z[:, 2]).ravel()
   explicit = _mapped_call(stage, 4, [(z, 0, 3), (z, 2, 3)])
   assert viewed.args[0].args[0] is explicit  # output reshapes retain the original LOOP node
   left = sc.function(sc.arg("z", 12), outputs=sc.arg("y", 8), name="views")(
-    lambda x: sc.vmap(stage, 4)(x.reshape((4, 3))[:, :2], x.reshape((4, 3))[:, 2]).vec()
+    lambda x: sc.vmap(stage, 4)(x.reshape((4, 3))[:, :2], x.reshape((4, 3))[:, 2]).ravel()
   )
   right = sc.function(sc.arg("z", 12), outputs=sc.arg("y", 8), name="views")(lambda x: _mapped_call(stage, 4, [(x, 0, 3), (x, 2, 3)]))
   assert render_c_source(left) == render_c_source(right)
@@ -159,7 +159,7 @@ def test_views_and_their_derivatives_match_numpy(kind: str) -> None:
 
   @sc.function(sc.arg("x", 6), outputs=sc.arg("y"))
   def mapped(x: sc.Expr) -> sc.Expr:
-    return sc.vmap(square, n)(view(x)).vec()
+    return sc.vmap(square, n)(view(x)).ravel()
 
   x = np.arange(1.0, 7.0)
   expected = view(x).reshape(-1)

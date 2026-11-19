@@ -389,7 +389,7 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
     name="chain_hess_hinted",
   )
   def hessian_values(z: sc.Expr, p: sc.Expr, lam: sc.Expr) -> sc.Expr:
-    mapped = sc.vmap(hinted, HORIZON)(sc.window(z, 0, nz), sc.window(z, nz, nz), sc.window(p, nx, 0)).vec()
+    mapped = sc.vmap(hinted, HORIZON)(sc.window(z, 0, nz), sc.window(z, nz, nz), sc.window(p, nx, 0)).ravel()
     eq = sc.concat([z[:nx] - p[:nx], mapped])
     return sc.values(sc.sparse_hessian(lam @ eq, z, triangle="lower"))
 

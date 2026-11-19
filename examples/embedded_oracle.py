@@ -14,7 +14,7 @@ def stage(z: sc.Expr) -> sc.Expr:
 
 @sc.function(sc.arg("zs", sc.TensorType((8,), dtype=sc.dtypes.float32)), outputs=sc.arg("residuals"))
 def stages(zs: sc.Expr) -> sc.Expr:
-  return sc.vmap(stage, 4)(zs.reshape((4, 2))).vec()
+  return sc.vmap(stage, 4)(zs.reshape((4, 2))).ravel()
 
 
 oracle = stages.factory("embedded_oracle", ["zs"], ["residuals", sc.factory.SpJac("residuals", "zs")])

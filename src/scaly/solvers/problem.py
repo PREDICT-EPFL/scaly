@@ -122,7 +122,7 @@ class Problem[SymbolicVars, NumericalVars, SymbolicParams, NumericalParams]:
 def _concat_vec(exprs: tuple[Expr, ...]) -> Expr | None:
   if not exprs:
     return None
-  vectors = tuple(expr if len(expr.shape) == 1 else expr.vec() for expr in exprs)
+  vectors = tuple(expr if len(expr.shape) == 1 else expr.ravel() for expr in exprs)
   return vectors[0] if len(vectors) == 1 else concat(vectors)
 
 
@@ -275,8 +275,8 @@ class _NlpForm:
     for inequality, expr in zip(problem.spec.ineq, self.inequalities, strict=True):
       if not expr.size:
         continue
-      lower_ineq.append(_bound(None if inequality.lo is None else self._stacked(inequality.lo), expr.shape, -np.inf).vec())
-      upper_ineq.append(_bound(None if inequality.hi is None else self._stacked(inequality.hi), expr.shape, np.inf).vec())
+      lower_ineq.append(_bound(None if inequality.lo is None else self._stacked(inequality.lo), expr.shape, -np.inf).ravel())
+      upper_ineq.append(_bound(None if inequality.hi is None else self._stacked(inequality.hi), expr.shape, np.inf).ravel())
     variable_bounds: list[Expr] = []
     for side, declared, fill in (("lb", problem.spec.lb, -np.inf), ("ub", problem.spec.ub, np.inf)):
       if declared is None:
@@ -284,7 +284,7 @@ class _NlpForm:
         continue
       leaves = problem.vars.flatten_symbolic(declared, f"{problem.name} {side}")
       stacked = _concat_vec(
-        tuple(_bound(self._stacked(expr), original.shape, fill).vec() for expr, original in zip(leaves, problem._var_symbols, strict=True))
+        tuple(_bound(self._stacked(expr), original.shape, fill).ravel() for expr, original in zip(leaves, problem._var_symbols, strict=True))
       )
       assert stacked is not None
       variable_bounds.append(stacked)

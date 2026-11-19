@@ -129,7 +129,7 @@ Arity is the number of operands.
 | Function calls  | `call`, `loop`                                | Variable | An ordinary call or a loop              |
 
 `dot`, `sumsqr`, `norm_1`, `norm_2`, `norm_inf`, `argmin`, `argmax`, `mean`,
-`diag` and `vec` are builders that expand into these operations. There are no matrix decompositions
+`diag` and `ravel` are builders that expand into these operations. There are no matrix decompositions
 or interpolation tables, and no `expm1` or `log1p`.
 
 ### Calls and mapped calls
@@ -153,7 +153,7 @@ def terminal(z: sc.Expr) -> sc.Expr:
 
 @sc.function(sc.arg("zs", 20), sc.arg("us", 10), outputs=sc.arg("J"))
 def stages(zs: sc.Expr, us: sc.Expr) -> sc.Expr:
-    znexts = sc.vmap(model, 10)(zs.reshape((10, 2)), us.reshape((10, 1))).vec()
+    znexts = sc.vmap(model, 10)(zs.reshape((10, 2)), us.reshape((10, 1))).ravel()
     return terminal(znexts[18:])
 
 

@@ -77,7 +77,7 @@ def test_qp_proof_rejects_stopped_derivatives(location: str, form: str) -> None:
 
 @pytest.mark.parametrize("location", ["cost", "lb", "ineq-hi"])
 @pytest.mark.parametrize("form", ["direct", "call", "map", "cond"])
-@pytest.mark.parametrize("operation", ["select", "maximum", "minimum", "abs", "floor", "ceil", "reduce_max", "reduce_min"])
+@pytest.mark.parametrize("operation", ["select", "maximum", "minimum", "abs", "floor", "ceil", "max", "min"])
 def test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear(location: str, form: str, operation: str) -> None:
   """``where(x > 0, x, -x)`` has a zero Hessian but is not quadratic, and a bound of ``x > 0`` has a
   zero Jacobian but depends on the variables."""
@@ -90,8 +90,8 @@ def test_qp_proof_treats_a_condition_on_the_variables_as_nonlinear(location: str
         "abs": value.abs,
         "floor": value.floor,
         "ceil": value.ceil,
-        "reduce_max": lambda: sc.reduce_max(value),
-        "reduce_min": lambda: sc.reduce_min(value),
+        "max": lambda: sc.max(value),
+        "min": lambda: sc.min(value),
       }[operation]()
     return sc.cast(value > 0.0, "float64") if location in {"lb", "ineq-hi"} else sc.where(value > 0.0, value, -value)
 

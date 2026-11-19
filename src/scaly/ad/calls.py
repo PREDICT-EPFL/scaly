@@ -70,7 +70,7 @@ def body_tangents(callee: Any, outputs: Sequence[int], seeds: dict[int, Expr], n
 def _rule_tangent(callee: Any, output: int, seeds: dict[int, Expr], nseed: int) -> Expr:
   rule = callee.rules.jvp
   reads = _reads(callee, output)
-  specs = [(values(inp).vec(), 0, 0) for inp in callee.inputs]
+  specs = [(values(inp).ravel(), 0, 0) for inp in callee.inputs]
   for k, inp in enumerate(callee.inputs):
     seed = seeds.get(k) if reads[k] else None
     specs.append(
@@ -281,7 +281,9 @@ def _pack_jvp_maps(callee: ConcreteFunction[Any, Any, Any, Any], result: Expr, m
     key = HelperKey.of(callee, "forward", selected if any(selected) else (), (), members=functions)
     if key not in cache:
       packed = [
-        callee._inherit_lowering(simplify_cse_fixpoint(concat([values(out).vec() for out in selected_outputs if out.type.dtype.is_bool == is_mask])))
+        callee._inherit_lowering(
+          simplify_cse_fixpoint(concat([values(out).ravel() for out in selected_outputs if out.type.dtype.is_bool == is_mask]))
+        )
         for is_mask in output_groups
       ]
       names = {inp: name for fn in functions for inp, name in zip(fn.inputs, fn.input_names, strict=True)}
@@ -713,9 +715,9 @@ def _vmap_adj_function(
     grads = tuple(simplify_cse_fixpoint(grad) for grad in body_cotangents(callee, output_index, active_formals, seed, pullback))
     # One concatenated result needs one dtype: float64 holds every float32 and integer cotangent exactly.
     common = grads[0].type.dtype if len({grad.type.dtype for grad in grads}) == 1 else dtypes.float64
-    parts = [cast_expr(values(grad), common).vec() for grad in grads]
+    parts = [cast_expr(values(grad), common).ravel() for grad in grads]
     if masked or any(_mask_of(grad) is not None for grad in grads):
-      parts.extend(cast_expr(values(activity(grad)), common).vec() for grad in grads)
+      parts.extend(cast_expr(values(activity(grad)), common).ravel() for grad in grads)
     adj = callee._inherit_lowering(simplify_cse_fixpoint(concat(parts)))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(adj, inp, dep_memo))
@@ -814,7 +816,7 @@ def _loop_vjp(
   strides += list(attrs["strides"])
   for i in selected:
     if i >= nc:
-      seed = simplify_cse_fixpoint(values(cots[i]).vec())
+      seed = simplify_cse_fixpoint(values(cots[i]).ravel())
       formal = callee.results[i] if i < len(callee.results) else callee.inputs[i - len(callee.results) - 1]
       uniform = _uniform_value(seed.value) if seed.op == ExprOp.CONST and seed.value is not None else None
       args.append(seed if uniform is None else _uniform(uniform, (formal.type.storage_size,), dtype=seed.type.dtype))
@@ -843,7 +845,7 @@ def _loop_vjp(
     formal = callee.inputs[skip + i]
     grad = result(len(carries) + j)
     ret.append(
-      (expr.args[nc + i], _scatter_zero(values(grad).vec(), attrs["starts"][i] + np.arange(formal.type.storage_size), expr.args[nc + i].shape))
+      (expr.args[nc + i], _scatter_zero(values(grad).ravel(), attrs["starts"][i] + np.arange(formal.type.storage_size), expr.args[nc + i].shape))
     )
   for j, i in enumerate(sliced):
     formal = callee.inputs[skip + i]

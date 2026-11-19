@@ -33,7 +33,7 @@ def test_mixed_tangent_selections_preserve_zeros(boundary, movement) -> None:
 
   callee = sc.function(sc.arg("z", 2), outputs=sc.arg("y"), name="mixed_product")(product)
   z = sc.concat([x.reshape((1,)), p.reshape((1,))]) if movement == "concat" else sc.stack([x, p])
-  y = product(z) if boundary == "inline" else callee(z) if boundary == "call" else sc.vmap(callee, 2)(sc.broadcast(z)).vec()
+  y = product(z) if boundary == "inline" else callee(z) if boundary == "call" else sc.vmap(callee, 2)(sc.broadcast(z)).ravel()
   tangent = sc.jvp_many(y, x, seeds)
   simplified = simplify_cse_fixpoint(tangent)
   for result in (tangent, simplified):
@@ -68,7 +68,7 @@ def test_call_sparsity_uses_each_argument_support_context(mapped) -> None:
 
   x = sc.sym("mixed_context_x", 2)
   parts = [sc.stack([x[0], 0]), sc.stack([x[0], x[1]]), sc.stack([0, x[1]])]
-  y = sc.vmap(nested, 3)(sc.stack(parts)).vec() if mapped else sc.stack([nested(part) for part in parts])
+  y = sc.vmap(nested, 3)(sc.stack(parts)).ravel() if mapped else sc.stack([nested(part) for part in parts])
   for result in (y, simplify_cse_fixpoint(y)):
     np.testing.assert_array_equal(sc.jacobian_sparsity(result, x).to_mask(), [[False, False], [True, True], [False, False]])
   fn = ConcreteFunction._from_exprs("mixed_context_jac", [x], [sc.jacobian(y, x)], ["x"], ["jac"])
@@ -86,7 +86,7 @@ def test_mapped_coefficient_support_uses_stage_windows(stride, sparse_formal) ->
 
   pattern = sc.SparsityPattern.from_mask(np.eye(2, dtype=bool)).canonicalize()[0] if sparse_formal else None
   formal = Expr(ExprOp.INPUT, type=TensorType((2, 2) if sparse_formal else (2,), pattern=pattern), name="mixed_window_formal")
-  entries = sc.values(formal).vec()
+  entries = sc.values(formal).ravel()
   body = entries[:1] @ entries[1:]
   callee = ConcreteFunction._from_exprs("mixed_window_product", [formal], [body], ["z"], ["y"])
   x = sc.sym("mixed_window_x", 7)
@@ -181,7 +181,7 @@ def test_mixed_tangents_preserve_custom_derivatives_outside_value_support(bounda
   x, p, seeds = sc.sym("mixed_custom_x"), sc.sym("mixed_custom_p"), sc.sym("mixed_custom_seeds", 2)
   z = sc.stack([x, p])
   np.testing.assert_array_equal(sc.jacobian_sparsity(custom(z), x).to_mask(), [[True], [False]])
-  y = body(z) if boundary == "inline" else callee(z) if boundary == "call" else sc.vmap(callee, 2)(sc.broadcast(z)).vec()
+  y = body(z) if boundary == "inline" else callee(z) if boundary == "call" else sc.vmap(callee, 2)(sc.broadcast(z)).ravel()
   tangent = sc.jvp_many(y, x, seeds)
   for result in (tangent, simplify_cse_fixpoint(tangent)):
     assert sc.jacobian_sparsity(result, x).nnz == 0
@@ -269,7 +269,7 @@ def test_ordinary_derivative_relations_stay_within_each_nodes_support() -> None:
   product = b @ sc.const([[0, 1], [1, 0], [0, 0]])
   moved = product.T.reshape((8,)).gather([7, 0, 1, 1])
   scattered = _scatter_zero(moved, [2, 4, 2, 0], (6,))
-  output = sc.concat([scattered, (a / (x * x + 1)).vec(), sc.stack([a.sum(), (a * 0).sum()])])
+  output = sc.concat([scattered, (a / (x * x + 1)).ravel(), sc.stack([a.sum(), (a * 0).sum()])])
   memo = {}
   _jac_mask(output, x, memo)
   for node in topo([output]):
@@ -874,7 +874,7 @@ def test_nested_callee_sparsity_is_analyzed_once_per_variable(monkeypatch, mappe
   @sc.function(sc.arg("z", 8), outputs=sc.arg("out", 4), name="nested_mask_values")
   def fn(actual: sc.Expr) -> sc.Expr:
     return (
-      sc.vmap(nested, 2)(sc.window(actual, 0, 4), sc.window(actual, 2, 4)).vec()
+      sc.vmap(nested, 2)(sc.window(actual, 0, 4), sc.window(actual, 2, 4)).ravel()
       if mapped
       else sc.concat([nested(actual[:2], actual[2:4]), nested(actual[4:6], actual[6:8])])
     )

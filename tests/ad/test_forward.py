@@ -190,7 +190,7 @@ def test_zero_floor_derivative_through_calls(mapped):
     return x.floor()
 
   x = sc.sym("refused_outer_x", 4 if mapped else 2)
-  y = sc.vmap(leaf, 2)(x).vec() if mapped else leaf(x)
+  y = sc.vmap(leaf, 2)(x).ravel() if mapped else leaf(x)
   tangent = sc.jvp_many(y, x, sc.sym("refused_outer_seed", (3, *x.shape)))
   from scaly.passes.expr import simplify
 

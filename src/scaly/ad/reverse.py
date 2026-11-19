@@ -268,7 +268,7 @@ def _stored_matmul_vjp(
       (sparse_cot,) = carry_mask(contribution, lambda c: (pack(c @ _uniform(1, (width,), dtype=cot.type.dtype), pattern),))
     if (1 if left else 0) in active:
       contribution = _masked(sampled, lambda c: values(src).reshape((pattern.nnz, 1)) * c)
-      (dense_cot,) = carry_mask(contribution, lambda c: (_scatter_zero(c.vec(), dense_indices.reshape(-1), dense.shape),))
+      (dense_cot,) = carry_mask(contribution, lambda c: (_scatter_zero(c.ravel(), dense_indices.reshape(-1), dense.shape),))
   return (sparse_cot, dense_cot) if left else (dense_cot, sparse_cot)
 
 

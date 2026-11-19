@@ -206,7 +206,7 @@ def test_declared_layout_window_jacobian_keeps_local_coloring(monkeypatch, batch
   width = leaf.types[0].storage_size
   size = 1 + max(0, length - 1) * stride + width
   raw = sc.sym("layout_window_raw", size)
-  result = sc.vmap(stage, length)(sc.window(raw, 1, stride)).vec()
+  result = sc.vmap(stage, length)(sc.window(raw, 1, stride)).ravel()
 
   def reject_global_coloring(*args, **kwargs):
     pytest.fail("declared-layout window fell back to global coloring")
@@ -232,7 +232,7 @@ def test_gathered_mapped_columns_accumulate_within_and_across_formals(monkeypatc
   )
   raw = sc.sym("gathered_columns_raw", 6)
   indices = np.array([[4, 1, 4], [2, 0, 3]])
-  actual = raw.reshape((2, 3)).gather(indices).vec()
+  actual = raw.reshape((2, 3)).gather(indices).ravel()
   result = _mapped_call(stage, 2, [(actual, 0, 3), (raw, 1, 2)])
   reference = sc.stack([stage(raw.gather(columns), raw[1 + i * 2 : 4 + i * 2]) for i, columns in enumerate(indices)])
 

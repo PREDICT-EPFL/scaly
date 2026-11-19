@@ -245,8 +245,8 @@ def _race_car_nlp(
 
   @sc.problem(vars=sc.arg("z", n_variables), params=sc.arg("p", n_param(n)), name=problem_name)
   def problem(z: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
-    residuals = sc.vmap(_cost_stage, n + 1)(z, sc.window(p, 0, NX), sc.window(p, NX * (n + 1), 0)).vec()
-    corridor = sc.vmap(_corridor_stage, n)(sc.window(z, NZ, NZ), sc.window(p, NX, NX)).vec()
+    residuals = sc.vmap(_cost_stage, n + 1)(z, sc.window(p, 0, NX), sc.window(p, NX * (n + 1), 0)).ravel()
+    corridor = sc.vmap(_corridor_stage, n)(sc.window(z, NZ, NZ), sc.window(p, NX, NX)).ravel()
     return sc.ProblemSpec(
       minimize=sc.dot(sc.const(weights.reshape(-1)), residuals**2),
       eq=(_race_car_eq_vmap_expr(z, p, n),),

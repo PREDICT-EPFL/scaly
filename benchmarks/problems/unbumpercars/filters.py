@@ -618,7 +618,7 @@ def _scaly_oracle_outputs(
   u = z[:n_u]
   slack = z[n_u:]
   step_fn = scaly_dt_mlp_step_fn if filt_cfg.model == "dt" else scaly_ctfull_rk4_fn
-  states_next = sc.vmap(step_fn, ncars)(bar_x, u, sc.broadcast(pw), sc.broadcast(physics), sc.broadcast(dt)).vec()
+  states_next = sc.vmap(step_fn, ncars)(bar_x, u, sc.broadcast(pw), sc.broadcast(physics), sc.broadcast(dt)).ravel()
   hcbf, R = loop_cfg.hcbf, loop_cfg.safety_radius
 
   def pair_b(xi: sc.Expr, xj: sc.Expr, physics: sc.Expr) -> sc.Expr:
@@ -682,10 +682,10 @@ def _scaly_oracle_outputs(
     rows.append(
       sc.vmap(pair_hcbf, loop_cfg.n_pairs)(
         sc.gather(bar_x, idx_i), sc.gather(bar_x, idx_j), sc.gather(states_next, idx_i), sc.gather(states_next, idx_j), sc.broadcast(physics)
-      ).vec()
+      ).ravel()
     )
   if loop_cfg.arena_avoidance:
-    rows.append(sc.vmap(wall_hcbf, ncars)(bar_x, states_next, sc.broadcast(physics)).vec())
+    rows.append(sc.vmap(wall_hcbf, ncars)(bar_x, states_next, sc.broadcast(physics)).ravel())
   g = (sc.concat(rows) + slack) if rows else sc.const(np.zeros((0,)))
   assert g.shape == (n_s,)
   diff = u - u_des

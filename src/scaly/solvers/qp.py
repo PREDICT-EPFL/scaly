@@ -30,7 +30,7 @@ class NotQuadratic(ValueError):
 def _qp_matrix_sparsity(mat: Expr, params: Sequence[Expr], probe: np.ndarray, *, triu: bool = False) -> SparsityPattern:
   """Return the structural matrix pattern in compressed sparse column order."""
   nrow, ncol = mat.shape
-  vec = mat.vec()
+  vec = mat.ravel()
   keep = np.asarray(probe, dtype=np.float64).reshape(-1) != 0.0
   # A condition on a parameter can zero an entry at the probe that another value makes nonzero.
   if _decides_on((mat,), params):
@@ -50,7 +50,7 @@ def _qp_matrix_sparsity(mat: Expr, params: Sequence[Expr], probe: np.ndarray, *,
 def _gathered(mat: Expr, sparsity: SparsityPattern) -> Expr:
   """Return compact matrix values in the pattern's compressed sparse column order."""
   flat = np.asarray(sparsity.rows, dtype=np.int64) * mat.shape[1] + np.asarray(sparsity.cols, dtype=np.int64)
-  return mat.vec().gather(flat)
+  return mat.ravel().gather(flat)
 
 
 def _reaches_op(exprs: Sequence[Expr], op: ExprOp) -> bool:
@@ -158,7 +158,7 @@ def _bound(expr: Expr | None, shape: tuple[int, ...], fill: float) -> Expr:
 def _concat_vectors(exprs: tuple[Expr, ...]) -> Expr:
   if not exprs:
     return Expr.const(np.zeros(0))
-  vectors = tuple(expr.vec() for expr in exprs)
+  vectors = tuple(expr.ravel() for expr in exprs)
   return vectors[0] if len(vectors) == 1 else concat(vectors)
 
 
@@ -247,7 +247,7 @@ def build_qp[SV, NV, SP, NP](
     probe = ConcreteFunction._from_exprs(
       f"{name}_pattern_probe",
       params,
-      tuple(matrix.vec() for matrix in matrices),
+      tuple(matrix.ravel() for matrix in matrices),
       problem.params.names,
       ("P", "A", "G"),
     )
@@ -258,13 +258,13 @@ def build_qp[SV, NV, SP, NP](
     A_sp = _qp_matrix_sparsity(A, params, values[1]) if n_eq else None
     G_sp = _qp_matrix_sparsity(G_mat, params, values[2]) if n_ineq else None
 
-  oracle_outputs: list[Expr] = [_gathered(P, P_sp) if P_sp is not None else P.vec(), c]
+  oracle_outputs: list[Expr] = [_gathered(P, P_sp) if P_sp is not None else P.ravel(), c]
   oracle_names = ["P", "c"]
   if n_eq:
-    oracle_outputs.extend((_gathered(A, A_sp) if A_sp is not None else A.vec(), b))
+    oracle_outputs.extend((_gathered(A, A_sp) if A_sp is not None else A.ravel(), b))
     oracle_names.extend(("A_eq", "b_eq"))
   if n_ineq:
-    oracle_outputs.extend((_gathered(G_mat, G_sp) if G_sp is not None else G_mat.vec(), g_lb, g_ub))
+    oracle_outputs.extend((_gathered(G_mat, G_sp) if G_sp is not None else G_mat.ravel(), g_lb, g_ub))
     oracle_names.extend(("G_ineq", "l_ineq", "u_ineq"))
   oracle_outputs.extend((x_lb, x_ub))
   oracle_names.extend(("x_lb", "x_ub"))

@@ -166,7 +166,7 @@ def test_sparse_hessian_lower_triangle_has_only_surviving_stage_stores(objective
 
   @sc.function(sc.arg("z", 2 * length), outputs=sc.group(sc.arg("f", ()), sc.arg("g", length)), name="range_hess_base")
   def base(z: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
-    return (z[:objective_size] * z[:objective_size]).sum(), sc.vmap(stage, length)(z).vec()
+    return (z[:objective_size] * z[:objective_size]).sum(), sc.vmap(stage, length)(z).ravel()
 
   hess = base.factory("range_hess", ["z", "lam:f", "lam:g"], [sc.factory.SpHess("gamma", "z", triangle="lower")], aux={"gamma": ["f", "g"]})
   observed = {}
@@ -578,7 +578,7 @@ def test_signed_zero_constants_preserve_atan2_quadrants():
   stage = _function("zero_stage", [a], [a])
   x = sc.sym("x", 5)
   zeros = np.array([0.0, -0.0, 0.0, -0.0, 0.0])
-  result = sc.const(zeros).atan2(sc.vmap(stage, 5)(x).vec())
+  result = sc.const(zeros).atan2(sc.vmap(stage, 5)(x).ravel())
   fn = _function("signed_zero", [x], [result])
   data = -np.ones(5)
   np.testing.assert_allclose(fn(data), np.arctan2(zeros, data))

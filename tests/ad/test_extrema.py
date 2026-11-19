@@ -14,7 +14,7 @@ from scaly.ir.types import CanonicalPattern
 @pytest.mark.parametrize("lowering", ["scalar", "block"])
 def test_builders_numpy(kind, shape, lowering):
   axes = [a for count in range(len(shape) + 1) for a in combinations(range(len(shape)), count) if all(shape[i] for i in a)]
-  build = sc.reduce_max if kind == "max" else sc.reduce_min
+  build = sc.max if kind == "max" else sc.min
   reference = np.max if kind == "max" else np.min
   cases = [(a, k) for a in axes for k in (False, True)]
 
@@ -52,7 +52,7 @@ def test_exact_partials(build):
 def test_ties_and_sparse_zeros(kind, sparse):
   pattern = CanonicalPattern((2, 3), (0, 0, 1), (0, 1, 2))
   shape = (pattern.nnz,) if sparse else pattern.shape
-  build = sc.reduce_max if kind == "max" else sc.reduce_min
+  build = sc.max if kind == "max" else sc.min
 
   @sc.function(sc.arg("x", shape), outputs=sc.group(sc.arg("y"), sc.arg("t"), sc.arg("g"), sc.arg("j")))
   def f(x):
@@ -92,9 +92,7 @@ def test_arg_numpy(kind, shape):
     assert build(x, axis=axis).type.dtype == sc.dtypes.int64
 
 
-@pytest.mark.parametrize(
-  "build", [lambda x: sc.reduce_max(x, 1), lambda x: sc.reduce_min(x, 1), lambda x: sc.argmax(x, 1), lambda x: sc.argmin(x, 1)]
-)
+@pytest.mark.parametrize("build", [lambda x: sc.max(x, 1), lambda x: sc.min(x, 1), lambda x: sc.argmax(x, 1), lambda x: sc.argmin(x, 1)])
 def test_empty_domain_rejected(build):
   with pytest.raises(ValueError, match="empty"):
     build(sc.sym("x", (3, 0)))
@@ -114,7 +112,7 @@ def test_norms_nan_and_zero():
 @pytest.mark.parametrize("kind", ["max", "min"])
 @pytest.mark.parametrize("sparse", [False, True])
 def test_unchosen_nan_partial(kind, sparse):
-  build = sc.reduce_max if kind == "max" else sc.reduce_min
+  build = sc.max if kind == "max" else sc.min
   sign = 1 if kind == "max" else -1
 
   @sc.function(sc.arg("x", 2), outputs=sc.group(sc.arg("t"), sc.arg("g")))
@@ -147,7 +145,7 @@ def test_sparse_public_builders_nan_axes_and_indices(kind, lowering):
   from scipy import sparse
 
   pattern = CanonicalPattern((3, 4), (0, 0, 1, 2), (0, 2, 1, 3))
-  build, arg, ref, aref = (sc.reduce_max, sc.argmax, np.max, np.argmax) if kind == "max" else (sc.reduce_min, sc.argmin, np.min, np.argmin)
+  build, arg, ref, aref = (sc.max, sc.argmax, np.max, np.argmax) if kind == "max" else (sc.min, sc.argmin, np.min, np.argmin)
   axes = [None, 0, -1, ()]
 
   @sc.function(sc.arg("x", pattern.nnz), outputs=sc.group(*(sc.group(sc.arg(f"v{i}"), sc.arg(f"a{i}")) for i in range(4))))
@@ -171,7 +169,7 @@ def test_sparse_leading_axis_tangent_keeps_pattern():
 
   @sc.function(sc.arg("x", (2, 2)), outputs=sc.group(sc.arg("t"), sc.arg("g")))
   def f(x):
-    y = sc.reduce_max(sc.pack(x, pattern, shape=(2, 2, 3)), 0)
+    y = sc.max(sc.pack(x, pattern, shape=(2, 2, 3)), 0)
     return sc.to_dense(sc.jvp(y, x, sc.const(np.ones(x.shape)))), sc.gradient(y.sum(), x)
 
   t, g = map(np.asarray, f(np.array([[1.0, 2.0], [3.0, 2.0]])))
@@ -194,7 +192,7 @@ def test_zero_partial_masks_an_infinite_inner_partial(name):
 def test_nonzero_ties_in_composed_extrema():
   @sc.function(sc.arg("x", 5), outputs=sc.group(sc.arg("t"), sc.arg("g"), sc.arg("h")))
   def f(x):
-    y = sc.maximum(x, 1).sum() + sc.reduce_max(x) + sc.reduce_min(x)
+    y = sc.maximum(x, 1).sum() + sc.max(x) + sc.min(x)
     return sc.jvp_many(y, x, sc.const(np.eye(5))), sc.gradient(y, x), sc.hessian(y, x)
 
   t, g, h = map(np.asarray, f(np.array([1.0, 3.0, 3.0, -2.0, -2.0])))
@@ -217,7 +215,7 @@ def test_tied_norm_inf_through_a_transposed_view():
 @pytest.mark.parametrize("kind", ["max", "min"])
 @pytest.mark.parametrize("sparse", [False, True])
 def test_outer_where_mask_survives_extremum_reduction(kind, sparse):
-  build = sc.reduce_max if kind == "max" else sc.reduce_min
+  build = sc.max if kind == "max" else sc.min
 
   @sc.function(sc.arg("x", 2), sc.arg("p", ()), outputs=sc.group(sc.arg("t"), sc.arg("g")))
   def f(x, p):
@@ -233,7 +231,7 @@ def test_outer_where_mask_survives_extremum_reduction(kind, sparse):
 @pytest.mark.parametrize("kind", ["max", "min"])
 def test_outer_sparse_where_mask_survives_leading_axis_extremum(kind):
   pattern = CanonicalPattern((2, 3), (0, 1), (0, 2))
-  build = sc.reduce_max if kind == "max" else sc.reduce_min
+  build = sc.max if kind == "max" else sc.min
 
   @sc.function(sc.arg("x", (2, 2)), sc.arg("p", (2, 1)), outputs=sc.group(sc.arg("t"), sc.arg("g")))
   def f(x, p):

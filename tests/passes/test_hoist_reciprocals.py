@@ -100,7 +100,7 @@ def test_compiled_reciprocal_policy(tmp_path, reciprocal, mapped):
 
   @sc.function(sc.arg("x", 6), sc.arg("y", 1), outputs=sc.arg("out", 6), name="reciprocal_policy")
   def fun(x: sc.Expr, y: sc.Expr) -> sc.Expr:
-    return sc.vmap(stage, 3)(x, sc.broadcast(y)).vec() if mapped else x / y
+    return sc.vmap(stage, 3)(x, sc.broadcast(y)).ravel() if mapped else x / y
 
   program = lower_function(fun, reciprocal=reciprocal)
   if mapped and reciprocal:

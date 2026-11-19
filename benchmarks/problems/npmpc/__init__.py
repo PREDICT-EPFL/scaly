@@ -356,7 +356,7 @@ def npmpc_eq_function(horizon: int, decoder: Decoder = Decoder()) -> NpmpcFuncti
       sc.window(z, NX * (horizon + 1), NU),
       sc.broadcast(p[pw_slice]),
       sc.broadcast(p[dt_slice].reshape(())),
-    ).vec()
+    ).ravel()
 
   return equality
 
@@ -540,7 +540,7 @@ def npmpc_cost_expr(z: sc.Expr, horizon: int, P: sc.Expr, weights: sc.Expr) -> s
   the loop.
   """
   offset = NX * (horizon + 1)
-  stages = sc.vmap(stage_cost_function, horizon)(sc.window(z, 0, NX), sc.window(z, NX, NX), sc.window(z, offset, NU), sc.broadcast(weights)).vec()
+  stages = sc.vmap(stage_cost_function, horizon)(sc.window(z, 0, NX), sc.window(z, NX, NX), sc.window(z, offset, NU), sc.broadcast(weights)).ravel()
   xN = z[NX * horizon : NX * (horizon + 1)]
   e_end = sc.stack([2.0 * (xN[0] / 2.0).sin(), xN[1], xN[2], xN[3]])
   terminal = sc.dot(e_end, P.reshape((NX, NX)) @ e_end)
@@ -652,7 +652,7 @@ def npmpc_nlp(
       sc.window(z, NX * (horizon + 1), NU),
       sc.broadcast(p[pw_slice]),
       sc.broadcast(p[dt_slice].reshape(())),
-    ).vec()
+    ).ravel()
     rows, l_ineq, u_ineq = npmpc_constraint_exprs(z, p[:NX], horizon)
     return sc.ProblemSpec(
       minimize=npmpc_cost_expr(z, horizon, p[P_slice], p[cost_slice]),
@@ -690,7 +690,7 @@ def npmpc_lag_function(horizon: int, decoder: Decoder = Decoder()) -> NpmpcLagFu
       sc.window(z, NX * (horizon + 1), NU),
       sc.broadcast(p[pw_slice]),
       sc.broadcast(p[dt_slice].reshape(())),
-    ).vec()
+    ).ravel()
     return npmpc_cost_expr(z, horizon, p[P_slice], p[cost_slice]), eq
 
   return lagrangian_inputs

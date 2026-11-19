@@ -8,6 +8,7 @@ import ``ir/text.py``, which imports ``ir/expr.py``.
 
 from __future__ import annotations
 
+import builtins
 import hashlib
 import string
 import struct
@@ -692,7 +693,8 @@ class Expr:
       lowering=self.lowering,
     )
 
-  def vec(self) -> Expr:
+  def ravel(self) -> Expr:
+    """Flatten this expression to rank 1 in row-major order."""
     return self.reshape((self.size,))
 
   def transpose(self, axes: tuple[int, ...] | None = None) -> Expr:
@@ -769,6 +771,14 @@ class Expr:
     if result.type.pattern is not None:
       return pack(values(result) / count, result.type.pattern, shape=result.shape)
     return result / count
+
+  def max(self, axis: int | tuple[int, ...] | None = None, *, keepdims: bool = False) -> Expr:
+    """Maximum over axes, with the same rules as ``sc.max``."""
+    return max(self, axis, keepdims=keepdims)
+
+  def min(self, axis: int | tuple[int, ...] | None = None, *, keepdims: bool = False) -> Expr:
+    """Minimum over axes, with the same rules as ``sc.min``."""
+    return min(self, axis, keepdims=keepdims)
 
   def dot(self, other: Any) -> Expr:
     return dot(self, other)
@@ -1016,7 +1026,7 @@ _WEAK_KINDS = {"b": 0, "i": 1, "u": 1, "f": 2}
 def _weak_kind(x: Any) -> int:
   # Read from the Python values: NumPy infers ``object`` for an int beyond int64 and ``float64`` for ``[]``.
   if isinstance(x, list | tuple):
-    return max(map(_weak_kind, x), default=0)
+    return builtins.max(map(_weak_kind, x), default=0)
   if isinstance(x, bool):
     return 0
   if isinstance(x, int):
@@ -1341,7 +1351,7 @@ def matmul(x: Expr, y: Expr, *, sampled: CanonicalPattern | None = None, conditi
   """
   if not x.type.dtype.is_floating or not y.type.dtype.is_floating:
     raise TypeError(f"@ takes floating operands, got {x.type.dtype} and {y.type.dtype}; convert with sc.cast")
-  if max(len(x.shape), len(y.shape)) > 2 and any(arg.type.pattern is not None for arg in (x, y)):
+  if builtins.max(len(x.shape), len(y.shape)) > 2 and any(arg.type.pattern is not None for arg in (x, y)):
     raise NotImplementedError("batched sparse MATMUL requires the shared-pattern CSR kernel in #403")
   if not x.shape or not y.shape or x.shape[-1] != y.shape[-2 if len(y.shape) > 1 else -1]:
     raise ValueError(f"cannot matmul shapes {x.shape} and {y.shape}")
@@ -1399,7 +1409,7 @@ def _reduce(x: Expr, kind: str, axis: int | tuple[int, ...] | None = None) -> Ex
   )
 
 
-def reduce_max(x: Any, axis: int | tuple[int, ...] | None = None, *, keepdims: bool = False) -> Expr:
+def max(x: Any, axis: int | tuple[int, ...] | None = None, *, keepdims: bool = False) -> Expr:
   """Maximum over axes, propagating NaN and splitting derivatives equally at ties.
 
   Axes and ``keepdims`` follow ``Expr.sum``. Structural zeros participate in sparse
@@ -1408,8 +1418,8 @@ def reduce_max(x: Any, axis: int | tuple[int, ...] | None = None, *, keepdims: b
   return _extreme(x, "max", axis, keepdims)
 
 
-def reduce_min(x: Any, axis: int | tuple[int, ...] | None = None, *, keepdims: bool = False) -> Expr:
-  """Minimum over axes, with the same shape, NaN and derivative rules as ``reduce_max``."""
+def min(x: Any, axis: int | tuple[int, ...] | None = None, *, keepdims: bool = False) -> Expr:
+  """Minimum over axes, with the same shape, NaN and derivative rules as ``sc.max``."""
   return _extreme(x, "min", axis, keepdims)
 
 
@@ -1466,12 +1476,12 @@ def _arg_extreme(x: Any, kind: str, axis: int | None, keepdims: bool) -> Expr:
 
 
 def norm_inf(x: Any) -> Expr:
-  """Maximum absolute entry, propagating NaN. Empty inputs raise ``ValueError``."""
-  return reduce_max(as_expr(x).abs())
+  """Maximum absolute value over every entry, propagating NaN. Empty inputs raise ``ValueError``."""
+  return max(as_expr(x).abs())
 
 
 def norm_1(x: Any) -> Expr:
-  """Sum of absolute entries, with slope zero at zero and value zero for empty inputs."""
+  """Sum of absolute values over every entry, with slope zero at zero and value zero for empty inputs."""
   return as_expr(x).abs().sum()
 
 
@@ -1487,14 +1497,14 @@ def diag(x: Any, k: int = 0) -> Expr:
   k = int(k)
   if len(x.shape) == 1:
     n = x.size + abs(k)
-    rows = np.arange(x.size, dtype=np.int64) + max(-k, 0)
-    cols = np.arange(x.size, dtype=np.int64) + max(k, 0)
+    rows = np.arange(x.size, dtype=np.int64) + builtins.max(-k, 0)
+    cols = np.arange(x.size, dtype=np.int64) + builtins.max(k, 0)
     return _scatter_zero(x, rows * n + cols, (n, n))
   if len(x.shape) == 2:
     rows, cols = x.shape
-    count = max(0, min(rows + min(k, 0), cols - max(k, 0)))
+    count = builtins.max(0, builtins.min(rows + builtins.min(k, 0), cols - builtins.max(k, 0)))
     i = np.arange(count, dtype=np.int64)
-    return gather(x, (i + max(-k, 0)) * cols + i + max(k, 0))
+    return gather(x, (i + builtins.max(-k, 0)) * cols + i + builtins.max(k, 0))
   raise ValueError("diag requires a vector or a matrix")
 
 
@@ -1507,7 +1517,7 @@ def dot(x: Any, y: Any) -> Expr:
     if x.shape != y.shape:
       raise ValueError("sparse dot operands must have the same logical shape")
     return (x * y).sum()
-  return (x.vec() * y.vec()).sum()
+  return (x.ravel() * y.ravel()).sum()
 
 
 def sumsqr(x: Any) -> Expr:
@@ -1758,9 +1768,9 @@ def concat(xs: Iterable[Any], *, axis: int = 0) -> Expr:
   )
 
 
-def vec(x: Any) -> Expr:
+def ravel(x: Any) -> Expr:
   """Flatten ``x`` to rank 1 in row-major order."""
-  return as_expr(x).vec()
+  return as_expr(x).ravel()
 
 
 def _full_like(value: int | float, x: Expr) -> Expr:
@@ -1813,7 +1823,7 @@ def to_dense(value: Any) -> Expr:
   x = as_expr(value)
   if x.type.pattern is None:
     return x
-  return _scatter_zero(values(x).vec(), stored_indices(x.type), x.size).reshape(x.shape)
+  return _scatter_zero(values(x).ravel(), stored_indices(x.type), x.size).reshape(x.shape)
 
 
 def from_dense(value: Any, pattern: CanonicalPattern | SparsityPattern) -> Expr:

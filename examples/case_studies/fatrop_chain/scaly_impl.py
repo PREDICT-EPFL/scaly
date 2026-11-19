@@ -31,7 +31,7 @@ def chain_model(no_masses: int = 6) -> sc.Function:
   @sc.function(sc.arg("x", nx), sc.arg("u", nu), outputs=sc.arg("xdot"), name=f"paper_chain_M{no_masses}")
   def model(x: sc.Expr, u: sc.Expr) -> sc.Expr:
     positions = sc.concat([sc.const(np.zeros(2)), x[: 2 * (no_masses + 1)]])
-    forces = sc.vmap(force, no_masses + 1)(sc.window(positions, 0, 2), sc.window(positions, 2, 2)).vec()
+    forces = sc.vmap(force, no_masses + 1)(sc.window(positions, 0, 2), sc.window(positions, 2, 2)).ravel()
     gravity = sc.const(np.tile([0.0, -GRAVITY], no_masses))
     acceleration = (forces[2:] - forces[: 2 * no_masses]) / MASS + gravity
     return sc.concat([x[2 * (no_masses + 1) :], u, acceleration])
@@ -72,9 +72,9 @@ def build(no_masses: int = 6, horizon: int = 25, duration: float = 4.0) -> sc.Pr
 
   @sc.problem(vars=sc.arg("z", horizon * width + nx), params=sc.arg("x0", nx), name=f"paper_chain_M{no_masses}_N{horizon}")
   def problem(z: sc.Expr, x0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
-    gaps = sc.vmap(gap, horizon)(sc.window(z, 0, width), sc.window(z, nx, width), sc.window(z, width, width)).vec()
+    gaps = sc.vmap(gap, horizon)(sc.window(z, 0, width), sc.window(z, nx, width), sc.window(z, width, width)).ravel()
     costs = sc.vmap(cost, horizon)(sc.window(z, 0, width), sc.window(z, nx, width))
-    controls = z[: horizon * width].reshape((horizon, width))[:, nx:].vec()
+    controls = z[: horizon * width].reshape((horizon, width))[:, nx:].ravel()
     return sc.ProblemSpec(minimize=costs.sum(), eq=(gaps, z[:nx] - x0), ineq=(sc.bounded(controls, lo=-1.0, hi=1.0),))
 
   return problem
