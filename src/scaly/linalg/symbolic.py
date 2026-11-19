@@ -1,6 +1,8 @@
 """The symbolic analysis of a sparse symmetric factorization: ordering, elimination tree and the pattern of L, from a pattern alone.
 
-``analyze`` runs when a graph is built, on the pattern of a sparse type, and never sees a value, so
+``analyze(pattern, ordering)`` is the entry point: it performs the symbolic factorization and
+returns a ``SymbolicAnalysis`` holding its tables. Every other function here is a private step of
+it. It runs when a graph is built, on the pattern of a sparse type, and never sees a value, so
 the pattern it finds is structural and ignores numerical cancellation. The factorizations in
 ``scaly.linalg`` and the solver plugins read its tables to decide what their loops or their
 straight-line code index. It imports nothing above ``scaly.ir``, so it sits below ``Function``.
