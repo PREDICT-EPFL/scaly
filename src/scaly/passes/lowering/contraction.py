@@ -44,7 +44,12 @@ def _emit_dense_matmul(ctx: LowerCtx, node: Expr, epilogue: SeedEpilogue | None 
     out = ctx.alloc_tmp(epilogue.chain[-1])
   name = out.attrs["name"]
   extents = shape if epilogue is None else (len(epilogue.seeds), *shape[1:])
-  outputs, coords = ctx.nest(extents, f"i_{name}")
+  entries = ctx.domains.get(node.id) if epilogue is None else None
+  if entries is None:
+    outputs, coords = ctx.nest(extents, f"i_{name}")
+  else:
+    outputs, (entry,) = ctx.nest((len(entries),), f"i_{name}")
+    coords = ctx.domain_coords(shape, entries, entry)
   packed_coords = coords[:]
   if epilogue is not None:
     coords[0] = ctx.index_at(epilogue.seeds, coords[0], shared=True)
@@ -56,7 +61,7 @@ def _emit_dense_matmul(ctx: LowerCtx, node: Expr, epilogue: SeedEpilogue | None 
 
   a_coords = [*batch_coords(a), coords[batch_rank], k] if len(a.shape) > 1 else [k]
   b_coords = [*batch_coords(b), k, coords[-1]] if len(b.shape) > 1 else [k]
-  slot = _flat(extents, packed_coords) if packed else _flat(shape, coords)
+  slot = _flat(extents, packed_coords) if packed else _flat(shape, coords) if entries is None else ctx.index_at(entries, entry, shared=True)
   target = p.view(out, [slot])
   packed_input = ctx.packed_seed_inputs.get(node.id)
   rhs = ctx.read(b, b_coords) if packed_input is None else p.load(p.view(packed_input, [_flat((b.shape[0], b.shape[1]), (packed_coords[0], k))]))
@@ -76,7 +81,7 @@ def _emit_dense_matmul(ctx: LowerCtx, node: Expr, epilogue: SeedEpilogue | None 
     reductions,
     target,
     p.mul(ctx.read(a, a_coords), rhs),
-    batch_axes=sum(dim != 1 for dim in node.shape[:batch_rank]),
+    batch_axes=sum(dim != 1 for dim in node.shape[:batch_rank]) if entries is None else 0,
     delinearize=node.id in ctx.permutes,
     finish=finish if epilogue else None,
   )

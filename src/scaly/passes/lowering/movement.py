@@ -9,6 +9,7 @@ from ...ir.expr import Expr, ExprOp
 from ...ir.types import _uniform_value
 from .ctx import LowerCtx, lowers, _flat_coordinates, _shape_or_scalar, _shift, _slice_coords
 from .fusion import _contiguous_slice_offset
+from .demand import parts
 from .plans import lower_movement, emit_map
 
 
@@ -81,6 +82,9 @@ def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
     ctx.value_buffers[node.id] = alias.attrs["name"]
     return
   out = ctx.alloc_tmp(node)
+  if (entries := ctx.domains.get(node.id)) is not None:
+    ctx.emit_domain(node, out, entries)
+    return
   # One flat loop, its coordinates as quotients and remainders, rather than a nest of short rows:
   # lanes over such a nest split each row's vector store across cache lines, and the loads that
   # read the copy back stall (chain M=9 ran 1.4 times slower). Until lanes handle nests (#71).
@@ -97,15 +101,33 @@ def _lower_transpose(ctx: LowerCtx, node: Expr) -> None:
   src = node.args[0]
   axes = tuple(int(a) for a in node.attrs["axes"])
   out = ctx.alloc_tmp(node)
+  if (entries := ctx.domains.get(node.id)) is not None:
+    ctx.emit_domain(node, out, entries)
+    return
   ranges, coords = ctx.nest(node.shape, f"i_{out.attrs['name']}")
   source = [coords[axes.index(dim)] for dim in range(len(axes))]
   ctx.emit(ranges, [ctx.write(node, coords, ctx.read(src, source))], delinearize=node.id in ctx.permutes)
 
 
+def _demanded_parts(ctx: LowerCtx, node: Expr) -> bool:
+  """Copy each operand's entries that the consumers of a stack or concatenation read, if they read fewer than all."""
+  if (entries := ctx.domains.get(node.id)) is None:
+    return False
+  out = ctx.alloc_tmp(node)
+  owner, place = parts(node, entries)
+  for i, src in enumerate(node.args):
+    if not np.any(selected := owner == i):
+      continue
+    ranges, (k,) = ctx.nest((int(np.count_nonzero(selected)),), f"j_{out.attrs['name']}_{i}")
+    value = ctx.read_flat(src, ctx.index_at(place[selected], k, shared=True))
+    ctx.emit(ranges, [p.store(p.view(out, [ctx.index_at(entries[selected], k, shared=True)]), value)])
+  return True
+
+
 @lowers(ExprOp.STACK)
 def _lower_stack(ctx: LowerCtx, node: Expr) -> None:
   """Copy input ``i`` to index ``i`` along the new ``axis``."""
-  if _sparse_movement(ctx, node):
+  if _sparse_movement(ctx, node) or _demanded_parts(ctx, node):
     return
   axis = int(node.attrs.get("axis", 0))
   out = ctx.alloc_tmp(node)
@@ -117,7 +139,7 @@ def _lower_stack(ctx: LowerCtx, node: Expr) -> None:
 @lowers(ExprOp.CONCAT)
 def _lower_concat(ctx: LowerCtx, node: Expr) -> None:
   """Copy each input, shifting only the concatenated coordinate."""
-  if _sparse_movement(ctx, node):
+  if _sparse_movement(ctx, node) or _demanded_parts(ctx, node):
     return
   axis = int(node.attrs.get("axis", 0))
   out = ctx.alloc_tmp(node)

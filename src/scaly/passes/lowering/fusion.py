@@ -523,6 +523,9 @@ def _merge_consumers(
     else:
       active = [None]
     kinds = {arg.id: kind for arg, kind in _reads(node)}
+    if node.op == ExprOp.CONCAT and node.id in deferred:
+      # A selected concat reads every part at each entry; a computed part is not evaluated there.
+      kinds = dict.fromkeys(kinds, _MANY)
     if any(use is None for use in active):
       for arg, _ in _reads(node):
         requests.setdefault(arg.id, set()).add(None)

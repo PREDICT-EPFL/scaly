@@ -42,6 +42,7 @@ src/scaly/
       calls.py          Function calls, mapped calls and external calls
       gather.py         gathers and scatters
       fusion.py         which values are evaluated in their readers' loops, and sums of scatters
+      demand.py         which entries of each value its readers use, and where it is computed
       effects.py        prints
     program/             program optimizations                    (ProgramNode -> ProgramNode)
       __init__.py        explicit PASS_PIPELINE and optimize_program
