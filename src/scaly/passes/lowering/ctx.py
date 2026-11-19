@@ -26,8 +26,8 @@ from ...utils.names import NameScope
 from ..affine import affine_index_map
 from ..arith import constant
 from ...ad.rules import ELEMENTWISE
-from .demand import affine, cheap, is_placement, plan_demand
-from .fusion import ALIASES, SeedEpilogue, _contiguous_slice_offset, plan_fusion, product_outputs
+from .demand import affine, cheap, parts, plan_demand
+from .fusion import ALIASES, SeedEpilogue, _contiguous_slice_offset, adds_into_zeros, plan_fusion, product_outputs
 from .plans import MapRegion, compact_reads, has_compact_map, map_regions, plan_seed_map
 from ..arith import fold_program
 from ..program.fold_arith import _fold_index as _fold_bounded
@@ -392,12 +392,11 @@ class LowerCtx:
     for node in topo(self._computed):
       if ExprOp(node.op) == ExprOp.TRANSPOSE or any(a.id in self.deferred and a.id in self.permutes for a in node.args):
         self.permutes.add(node.id)
+    # A loop body that updates a carry in place evaluates the scattered values inside the carry's
+    # scatter (``fused_value``), which the walk does not follow, so it computes every entry.
     if not self.inout_carries:
-      leaves = {leaf.id for leaves in self.sums.values() for leaf in leaves}
-      excluded = absorbed | set(groups) | set(self.seed_epilogues) | set(self.product_outputs)
-      self.domains = plan_demand(
-        topo(self._computed), self._computed, self.deferred | leaves, lambda node, entries: node.id not in excluded and self._narrows(node, entries)
-      )
+      leaves = {leaf.id for chain in self.sums.values() for leaf in chain}
+      self.domains = plan_demand(self._computed, self.deferred | leaves, lambda node, entries: node.id not in groups and self._narrows(node, entries))
     needed = set()
     for node in topo(self._computed):
       operands = node.args
@@ -442,25 +441,43 @@ class LowerCtx:
   # --- helpers --------------------------------------------------------------
 
   def _narrows(self, node: Expr, entries: np.ndarray) -> bool:
-    """Whether a stored node is computed at only the ``entries`` its consumers read: a contraction
-    always, an elementwise op when that is cheaper than computing all of them, and a copy when its
-    entries need no index table. A placement, or a sum of them, stores only some of its values
-    when ``placed_lanes`` allows it."""
+    """Whether a stored node is computed at only the ``entries`` its consumers read.
+
+    A loop over entries that are not an affine run reads them from a table and loses its vector
+    lanes. That pays for an axis reduction and a product with a vector operand, whose entries are
+    each a whole dot product, and for an elementwise value that calls libm when it skips a third of
+    its entries. A product of two matrices, which is vectorized whole along its columns, and any
+    other value narrow only along an affine run. A sum of scatters into zeros stores only some of
+    its values when ``scattered_values`` allows it. Forward helpers keep their seed-support plans."""
     if any(arg.type.pattern is not None for arg in node.args):
       return False
     op = ExprOp(node.op)
-    if node.id in self.sums or op == ExprOp.SCATTER and is_placement(node):
+    if node.id in self.sums or op == ExprOp.SCATTER and adds_into_zeros(node):
       return True
-    if op == ExprOp.MATMUL:
-      return not self.seed_pairs and len(node.args) == 2
     if op == ExprOp.REDUCE:
       support = self.support_of(node.args[0])
       return len(node.attrs["axes"]) != len(node.args[0].shape) and (support is None or len(support) == node.args[0].size)
+    if op == ExprOp.MATMUL:
+      return not self.seed_pairs and len(node.args) == 2 and (any(len(arg.shape) == 1 for arg in node.args) or affine(entries))
     if op in ELEMENTWISE:
-      return not self.seed_pairs and cheap(entries, node.size)
+      return not self.seed_pairs and (affine(entries) or self._calls_libm(node) and cheap(entries, node.size))
+    if op in (ExprOp.CONCAT, ExprOp.STACK):
+      owner, place = parts(node, entries)
+      return all(affine(place[owner == k]) and affine(entries[owner == k]) for k in range(len(node.args)))
     if op == ExprOp.GATHER:
       return node.args[1].value is not None and node.attrs["mode"] != "fill" and affine(entries)
-    return op in (ExprOp.TRANSPOSE, ExprOp.SLICE, ExprOp.CONCAT, ExprOp.STACK) and affine(entries)
+    return op in (ExprOp.TRANSPOSE, ExprOp.SLICE) and affine(entries)
+
+  def _calls_libm(self, node: Expr) -> bool:
+    """Whether evaluating ``node`` calls libm, in its own operation or in a value evaluated in place under it."""
+    stack, seen = [node], set()
+    while stack:
+      expr = stack.pop()
+      if expr.op in ELEMENTWISE and ELEMENTWISE[ExprOp(expr.op)].expensive:
+        return True
+      stack.extend(arg for arg in expr.args if arg.id in self.deferred and arg.id not in seen)
+      seen.update(arg.id for arg in expr.args)
+    return False
 
   def emit_domain(self, node: Expr, out: ProgramNode, entries: np.ndarray) -> None:
     """Store ``node`` at its demanded ``entries`` only, each evaluated by ``compute``."""
@@ -507,9 +524,6 @@ class LowerCtx:
       _RULES[op](self, expr)
       return
     out = self.alloc_tmp(expr)
-    if (entries := self.domains.get(expr.id)) is not None:
-      self.emit_domain(expr, out, entries)
-      return
     ranges, (k,) = self.nest((expr.size,), f"i_{out.attrs['name']}")
     self.emit(ranges, [p.store(p.view(out, [k]), self.compute_flat(expr, k))], delinearize=expr.id in self.permutes)
 
