@@ -354,7 +354,10 @@ def test_float32_derivatives_match_float64_with_float32_leaves(op):
 
   jac32 = sc.jacobian(build("float32"), "out", "x")
   jac64 = sc.jacobian(build("float64"), "out", "x")
-  assert c_api_signature(as_concrete(jac32)).startswith("int ") and "const float**" in c_api_signature(as_concrete(jac32))
+  symbol = c_ident(as_concrete(jac32).name)
+  header = render_c_api_header(jac32)
+  for name in ("x", "y", "jac_out_x"):
+    assert f"float data[6]; }} {symbol}_{name}_t;" in header
   got = np.asarray(jac32(values, other))
   assert got.dtype == np.float32
   np.testing.assert_allclose(got, np.asarray(jac64(values.astype(float), other.astype(float))), rtol=1e-5, atol=1e-6)
