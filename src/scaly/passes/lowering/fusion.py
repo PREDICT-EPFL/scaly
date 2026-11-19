@@ -139,7 +139,9 @@ def product_outputs(roots: Sequence[Expr], outputs: dict[int, str]) -> dict[int,
 
 def _reads(node: Expr) -> list[tuple[Expr, int]]:
   """How ``node`` reads each argument: each element once, some elements several times, or only whole
-  from a buffer. A mixed sparse product reads its dense argument through strided accesses."""
+  from a buffer. A mixed sparse product can defer a transpose into its stored-column traversal.
+  The dense path retains its layout choice because the operand strides determine its reduction schedule.
+  """
   op = ExprOp(node.op)
   if op == ExprOp.MATMUL and len(node.args) == 2 and sum(a.type.pattern is not None for a in node.args) == 1:
     return [(a, _STRIDED if a.type.pattern is None else _BUFFER) for a in node.args]

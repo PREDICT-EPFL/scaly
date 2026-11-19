@@ -720,7 +720,8 @@ class LowerCtx:
       if slots[0] < 0:
         values.append(constant(0, arg.type.dtype))
       elif arg.id in self.deferred and (arg.type.pattern is not None or seeded and self.seed_maps.get(arg.id) is not None):
-        # Traversal agreement makes the same region and iteration valid in the producer.
+        # keep_zeros excludes seed maps from ordinary deferral. A deferred map passed the
+        # traversal agreement check, so this region and iteration also identify its entry.
         reads.append((arg, "stored", (k, p.const_int(number))))
         values.append(None)
       elif seeded and arg.op == ExprOp.CONST and arg.value is not None and np.all((sample := arg.value.reshape(-1)[slots]) == sample[0]):

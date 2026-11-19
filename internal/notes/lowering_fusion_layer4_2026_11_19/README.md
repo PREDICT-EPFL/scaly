@@ -30,8 +30,8 @@ layers now store three 32-wide active planes per mapped stage, so automatic
 mode reserves two 768-double buffers in place of two 1,024-double buffers.
 
 The probes record identical mapped lane capacities on both revisions for
-each horizon and lane request. The root declaration counts exclude constants, callee frames, lane-helper
-scratch and compiler-managed registers. Caller workspace includes the typed
+each horizon and lane request. The root declaration counts exclude constants,
+callee frames, lane-helper scratch and compiler-managed registers. Caller workspace includes the typed
 workspace capacity of the root and its callees. Both are reported separately.
 The horizon 6 case with four requested lanes already uses a scalar call for
 the six trips and keeps no full hidden-layer array in the root. #71 owns
@@ -82,7 +82,14 @@ brings back a pointwise buffer. Storing the product before the activation or
 allocating every logical seed plane fails the two-product storage assertions.
 Restoring the KKT block concatenation gives seven loops again.
 
-The dense product scratch-count regression in the first full run exposed a
-broader repeated-transpose rule than this change needs. The final rule applies
-to mixed sparse products. The existing dense fixture keeps its 21-double
-scratch count and its test is unchanged.
+The first full run caught a reduction in the dense scratch fixture. The broader
+rule removed the transpose copy and reduced its dispatch scratch from 21 to 9
+doubles at one lane, and from 42 to 18 at two lanes. Both versions match NumPy.
+Reading the right transpose in place also changes reduction loads to unit
+stride. The dense scheduler switches from a reduction-outer loop with memory
+accumulators to a reduction-inner loop with scalar accumulators. The mixed
+sparse path keeps its stored-column traversal. Dense scheduling belongs with
+the stride-aware loop order work in [#71](https://github.com/PREDICT-EPFL/scaly/issues/71#issuecomment-7011173432).
+
+The chain M=5 source differs only in generated `it_tNNN` names. Its size and
+caller workspace are equal on both revisions.
