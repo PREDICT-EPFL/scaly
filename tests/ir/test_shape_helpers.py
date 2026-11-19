@@ -133,4 +133,4 @@ def test_reshape_helpers_lower_without_workspace():
 
   module = render_c_module(shape_views, frame_budget=0)
   assert module.workspace_size == 0
-  assert "#define shape_views_SZ_W 0" in module.header
+  assert "#define shape_views_WORKSPACE_BYTES 0" in module.header
