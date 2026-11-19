@@ -33,7 +33,7 @@ def plan_demand(roots: Sequence[Expr], in_place: frozenset[int], narrows: Callab
     computed: Entries = None
     if want is not None and node.type.pattern is None:
       entries = np.flatnonzero(want)
-      if len(entries) < node.size and (node.id in in_place or narrows(node, entries)):
+      if 0 < len(entries) < node.size and (node.id in in_place or narrows(node, entries)):
         computed = domains[node.id] = entries
     for arg, read in zip(node.args, operand_entries(node, computed, placeholder=node.id in in_place), strict=True):
       if arg.id in wanted and wanted[arg.id] is None:
