@@ -81,11 +81,26 @@ _BY_DIGEST: weakref.WeakValueDictionary[str, SymbolicAnalysis] = weakref.WeakVal
 
 
 def analyze(pattern: CanonicalPattern, ordering: Ordering = "amd") -> SymbolicAnalysis:
-  """Analyze the symmetric matrix whose stored coordinates are ``pattern``, under one ordering.
+  """Analyze the ``n x n`` symmetric matrix whose stored coordinates are ``pattern``, under one ordering.
 
-  ``natural`` keeps the given order. ``rcm`` is reverse Cuthill–McKee, SciPy's, which keeps a
-  banded or stage-ordered matrix banded. ``amd`` is approximate minimum degree, which reduces the
-  fill of ``L`` on general patterns.
+  ``pattern`` is a sparse type's pattern (``TensorType.pattern``, or
+  ``SparsityPattern.canonicalize()[0]``). It may store the lower triangle, the upper one, both, or
+  any mix, and an entry stored in one triangle stands for its mirror too. The diagonal need not be
+  stored: the analysis assumes every pivot is nonzero, and ``a_rows`` lists only the diagonal
+  entries that are stored. Values never enter, so the pattern of ``L`` is structural and ignores
+  numerical cancellation.
+
+  ``ordering`` is the symmetric permutation applied before factoring. ``"amd"``, the default, is
+  approximate minimum degree, which keeps the fill of ``L`` small on general patterns. ``"rcm"`` is
+  SciPy's reverse Cuthill–McKee, which keeps a banded or stage-ordered matrix banded.
+  ``"natural"`` keeps the given order.
+
+  The result serves ``L D L^T`` and ``L L^T`` alike: both have the same ordering, elimination tree
+  and pattern of ``L``, and ``D`` is always the full diagonal. The factorization that reads the
+  tables decides which of the two it computes. Calling again with an equal pattern and ordering
+  returns the same object while it is alive.
+
+  Raises ``ValueError`` when ``pattern`` is not square or ``ordering`` is not one of ``ORDERINGS``.
   """
   if ordering not in ORDERINGS:
     raise ValueError(f"ordering must be one of {ORDERINGS}, got {ordering!r}")
