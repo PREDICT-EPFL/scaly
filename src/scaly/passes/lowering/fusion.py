@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
 from functools import reduce
 from operator import or_
 
@@ -14,12 +15,20 @@ from ...function.concrete import ConcreteFunction
 from ...ir.expr import Expr, ExprOp, _index_values, topo
 from ...ir import program as p
 from ...ir.program import ProgramNode
-from ...ir.support import Support
+from ...ir.support import Support, support_indices
 from ...ir.types import stored_indices
+from .plans import compact_reads
 
 ALIASES = frozenset({ExprOp.RESHAPE, ExprOp.STOP_GRADIENT, ExprOp.PACK, ExprOp.VALUES})
 MOVEMENT = ALIASES | {ExprOp.TRANSPOSE, ExprOp.SLICE, ExprOp.GATHER, ExprOp.CONST}
-_ONCE, _MANY, _BUFFER = 0, 1, 2
+_ONCE, _STRIDED, _MANY, _BUFFER = 0, 1, 2, 3
+
+
+@dataclass(frozen=True)
+class SeedEpilogue:
+  chain: tuple[Expr, ...]
+  seeds: np.ndarray
+  packed_consumer: int | None = None
 
 
 def _contiguous_slice_offset(index: tuple[object, ...], in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> int | None:
@@ -77,10 +86,65 @@ def scatter_targets(node: Expr) -> np.ndarray:
   return indices if src.type.pattern is None else indices[stored_indices(src.type)]
 
 
+def product_outputs(roots: Sequence[Expr], outputs: dict[int, str]) -> dict[int, tuple[Expr, np.ndarray, tuple[Expr, ...]]]:
+  """Find one-reader layouts that a stored matrix product can write directly into an output."""
+  layout_ops = (ExprOp.RESHAPE, ExprOp.VALUES, ExprOp.TRANSPOSE, ExprOp.SCATTER)
+  candidates = [root for root in roots if root.id in outputs and root.op in layout_ops]
+  if not candidates:
+    return {}
+  uses: dict[int, int] = {}
+  for node in topo(roots):
+    for arg in node.args:
+      uses[arg.id] = uses.get(arg.id, 0) + 1
+  result = {}
+  root_ids = {root.id for root in roots}
+  for root in candidates:
+    node = root
+    chain = []
+    size = root.type.storage_size
+    while node.op in layout_ops:
+      src = node.args[0]
+      if node.op == ExprOp.SCATTER:
+        if (
+          node.type.pattern is not None
+          or node.args[0].support != frozenset()
+          or node.args[1].value is None
+          or node.attrs["combine"] != "add"
+          or node.attrs["mode"] == "fill"
+        ):
+          break
+        src = node.args[2]
+        if src.type.pattern is not None:
+          break
+      if src.id in root_ids or uses[src.id] != 1 or src.type.storage_size != size:
+        break
+      chain.append(node)
+      node = src
+    if not chain or node.op != ExprOp.MATMUL or len(node.args) != 2 or sum(arg.type.pattern is not None for arg in node.args) != 1:
+      continue
+    identity = np.arange(size, dtype=np.int64)
+    slots = identity
+    for move in chain:
+      if move.op == ExprOp.SCATTER and not np.array_equal(scatter_targets(move), identity):
+        break
+      if move.op == ExprOp.TRANSPOSE or move.op == ExprOp.RESHAPE and move.type.pattern is not None:
+        (reads,) = compact_reads(move)
+        if np.any(reads < 0) or len(np.unique(reads)) != size:
+          break
+        slots = reads[slots]
+    else:
+      result[node.id] = root, np.argsort(slots), tuple(chain)
+  return result
+
+
 def _reads(node: Expr) -> list[tuple[Expr, int]]:
   """How ``node`` reads each argument: each element once, some elements several times, or only whole
-  from a buffer, as calls, prints and sparse plans do."""
+  from a buffer. A mixed sparse product can defer a transpose into its stored-column traversal.
+  The dense path retains its layout choice because the operand strides determine its reduction schedule.
+  """
   op = ExprOp(node.op)
+  if op == ExprOp.MATMUL and len(node.args) == 2 and sum(a.type.pattern is not None for a in node.args) == 1:
+    return [(a, _STRIDED if a.type.pattern is None else _BUFFER) for a in node.args]
   if node.type.pattern is not None or any(a.type.pattern is not None for a in node.args):
     return [(a, _BUFFER) for a in node.args]
   if op in ELEMENTWISE:
@@ -112,19 +176,20 @@ def plan_fusion(
   support_of: Callable[[Expr], Support],
   reads_at: Callable[[Expr, ProgramNode], Sequence[tuple[Expr, ProgramNode]]],
   shares_traversal: Callable[[Expr, Expr], bool],
-) -> tuple[frozenset[int], dict[int, tuple[Expr, ...]], dict[int, tuple[Expr, ...]]]:
+) -> tuple[frozenset[int], dict[int, tuple[Expr, ...]], dict[int, tuple[Expr, ...]], dict[int, SeedEpilogue]]:
   """The deferred node ids, scatter sums keyed by their output id, and consumer loop groups keyed
-  by each member id.
+  by each member id, and supported matrix-vector epilogues keyed by their final operation.
 
   A movement op or a constant is an index remap, deferred unless it is an output or a consumer needs
-  it whole. A strided slice, a transpose or a gather is also stored when one read visits entries
-  repeatedly, or when several reads would duplicate a libm call in the deferred chain beneath it.
+  it whole. A strided slice or a gather is also stored when one read visits entries repeatedly.
+  A remap is stored when several reads would duplicate a libm call in the deferred chain beneath it.
   Several reads of a stored input stay index remaps. A dense elementwise node is deferred when one
   consumer reads each of its elements once, through any chain of deferred movement ops; one that holds a libm call is deferred only into a
   single read, so the call is not duplicated. Agreeing reads can share a deferred value and merge
   independent consumer loops over the same domain. Everything else is stored: reductions, products,
-  scatters, concatenations, calls and outputs. A sparse compact map can defer into its sole reader
-  when their traversals agree. A read stays before a scatter that may overwrite its source.
+  scatters, calls and outputs. A static gather can read a vector concatenation piecewise. A sparse
+  or seed-pair map can defer into its sole reader when their traversals agree. A read stays before
+  a scatter that may overwrite its source.
 
   ``invariant`` holds, for a function mapped or run as a loop body, the input positions each map or
   loop holds the same at every trip. The trip is a range that a node depending only on those inputs
@@ -192,9 +257,12 @@ def plan_fusion(
   # Each node's reads as seen through deferred movement: (consumer id, how it reads, read directly).
   terminal: dict[int, list[tuple[int, int, bool]]] = {}
   for node in reversed(nodes):
+    op = ExprOp(node.op)
     edges: list[tuple[int, int, bool]] = []
     for consumer, kind in readers.get(node.id, ()):
-      if consumer.id in deferred and ExprOp(consumer.op) in MOVEMENT:
+      if consumer.id in deferred and (consumer.op in MOVEMENT or consumer.op == ExprOp.CONCAT):
+        # A selected concat can read a safe placeholder from an unselected segment.
+        kind = _MANY if consumer.op == ExprOp.CONCAT else kind
         edges += [(c, max(kind, k), False) for c, k, _ in terminal[consumer.id]]
       else:
         # A stored alias that is not an output shares its source's buffer.
@@ -205,11 +273,24 @@ def plan_fusion(
     if (
       node.id not in outputs
       and dense
-      and ExprOp(node.op) in MOVEMENT
+      and op in MOVEMENT
       and (node.op != ExprOp.GATHER or node.args[1].value is not None and node.attrs["mode"] != "fill")
       and (len(edges) <= 1 or _free(node) or not any(a.id in inline_costly for a in node.args))
-      and all(k == _ONCE or k == _MANY and _free(node) for _, k, _ in edges)
+      and all(k == _ONCE or k != _BUFFER and _free(node) or k == _STRIDED and op == ExprOp.TRANSPOSE for _, k, _ in edges)
       and not any(crosses_write(node.id, consumer) for consumer, _, _ in edges)
+    ):
+      deferred.add(node.id)
+    if (
+      op == ExprOp.CONCAT
+      and dense
+      and len(node.shape) == 1
+      and all(arg.type.dtype == node.type.dtype for arg in node.args)
+      and node.id not in outputs
+      and len(uses := readers.get(node.id, ())) == 1
+      and uses[0][0].op == ExprOp.GATHER
+      and uses[0][0].args[1].value is not None
+      and uses[0][0].attrs["mode"] != "fill"
+      and all(k != _BUFFER and not crosses_write(node.id, consumer) for consumer, k, _ in edges)
     ):
       deferred.add(node.id)
 
@@ -290,20 +371,72 @@ def plan_fusion(
     lambda node, consumer: hoistable(node.id, consumer) or crosses_write(node.id, consumer),
     keep_zeros,
   )
-  sparse_terminals: dict[int, int] = {}
+  mapped_terminals: dict[int, int] = {}
   for node in reversed(nodes):
     uses = readers.get(node.id, ())
-    if node.type.pattern is None or node.id in outputs or len(uses) != 1:
+    if (node.type.pattern is None and not (seed_pairs and node.op in ELEMENTWISE)) or node.id in outputs or len(uses) != 1:
       continue
     consumer = uses[0][0]
-    terminal_id = sparse_terminals.get(consumer.id, consumer.id)
+    terminal_id = mapped_terminals.get(consumer.id, consumer.id)
     if hoistable(node.id, terminal_id) or crosses_write(node.id, terminal_id) or not shares_traversal(node, consumer):
       continue
-    if scalar and (support := support_of(node)) is not None and len(support) < node.type.storage_size:
+    if node.type.pattern is not None and scalar and (support := support_of(node)) is not None and len(support) < node.type.storage_size:
       continue
     deferred.add(node.id)
-    sparse_terminals[node.id] = terminal_id
-  return frozenset(deferred), sums, groups
+    mapped_terminals[node.id] = terminal_id
+
+  epilogues: dict[int, SeedEpilogue] = {}
+  if seed_pairs:
+    for view in nodes:
+      if view.op != ExprOp.RESHAPE or len(view.shape) != 2 or view.id not in deferred:
+        continue
+      product = view.args[0]
+      if (
+        product.op != ExprOp.MATMUL
+        or product.shape != (*view.shape, 1)
+        or any(arg.type.pattern is not None for arg in product.args)
+        or product.id in outputs
+        or len(readers[product.id]) != 1
+        or (support := support_of(product)) is None
+        or not 0 < len(support) < product.size
+      ):
+        continue
+      seeds = np.unique(support_indices(support) // view.shape[1])
+      if len(seeds) * view.shape[1] != len(support):
+        continue
+      chain = [product, view]
+      while len(uses := readers.get(chain[-1].id, ())) == 1:
+        consumer, kind = uses[0]
+        if (
+          kind != _ONCE
+          or consumer.op not in ELEMENTWISE
+          or consumer.shape != view.shape
+          or consumer.type.dtype != product.type.dtype
+          or support_of(consumer) != support
+          or any(
+            arg.id in mapped_terminals or ((known := support_of(arg)) is not None and len(known) != arg.size)
+            for arg in consumer.args
+            if arg is not chain[-1]
+          )
+        ):
+          break
+        chain.append(consumer)
+        if consumer.id not in deferred:
+          if not hoistable(product.id, consumer.id) and not crosses_write(product.id, consumer.id):
+            epilogues[consumer.id] = SeedEpilogue(tuple(chain), seeds)
+          break
+    products = {plan.chain[0].id: plan for plan in epilogues.values()}
+    for result, plan in epilogues.items():
+      if result in outputs or len(uses := readers.get(result, ())) != 1:
+        continue
+      view = uses[0][0]
+      if view.op != ExprOp.RESHAPE or view.id not in deferred or view.shape != (*plan.chain[-1].shape, 1) or len(readers.get(view.id, ())) != 1:
+        continue
+      consumer = readers[view.id][0][0]
+      following = products.get(consumer.id)
+      if following is not None and consumer.args[1] is view and np.array_equal(plan.seeds, following.seeds):
+        epilogues[result] = replace(plan, packed_consumer=consumer.id)
+  return frozenset(deferred), sums, groups, epilogues
 
 
 def _merge_consumers(

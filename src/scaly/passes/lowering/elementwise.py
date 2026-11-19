@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from ...ir import program as p
-from ...ir.expr import Expr, ExprOp
+from ...ir.expr import Expr
 from ...ad.rules import ELEMENTWISE
 from .ctx import LowerCtx, lowers
+from .contraction import lower_seed_epilogue
 from .gather import lower_scatter_sum
 from .plans import lower_elementwise, lower_supported_elementwise
 
@@ -25,7 +26,10 @@ def _lower_elementwise(ctx: LowerCtx, node: Expr) -> None:
   if (scatters := ctx.sums.get(node.id)) is not None:
     lower_scatter_sum(ctx, node, scatters)
     return
-  if lower_supported_elementwise(ctx, node, ELEMENTWISE[ExprOp(node.op)].program):
+  if (epilogue := ctx.seed_epilogues.get(node.id)) is not None:
+    lower_seed_epilogue(ctx, epilogue)
+    return
+  if lower_supported_elementwise(ctx, node):
     return
   out = ctx.alloc_tmp(node)
   if node.id in ctx.permutes:

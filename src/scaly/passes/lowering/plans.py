@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -12,7 +12,7 @@ from ...ad.rules import ELEMENTWISE
 from ...ir import program as p
 from ...ir.expr import _index_values, Expr, ExprOp, sampled_conditions
 from ...ir.program import ProgramNode, ProgramOp, RangeKind
-from ...ir.support import project_entries, slice_indices, transpose_entries, support_indices, _constant_condition
+from ...ir.support import Support, project_entries, slice_indices, transpose_entries, support_indices, _constant_condition
 from ...ir.types import CanonicalPattern, dtypes, stored_indices, stored_slots
 from ..arith import constant, fold_program
 
@@ -313,24 +313,21 @@ def lower_elementwise(ctx: LowerCtx, node: Expr) -> None:
   emit_map(ctx, node, ctx.compact_reads(node))
 
 
-def lower_supported_elementwise(ctx: LowerCtx, node: Expr, program_op) -> bool:
+def plan_seed_map(node: Expr, support_of: Callable[[Expr], Support]) -> tuple[int, tuple[tuple[MapRegion, tuple[int, int]], ...]] | None:
   """Plan nonzero seed pairs by entry, splitting regions at known-zero operands."""
-  if not ctx.seed_pairs or len(node.shape) < 2:
-    return False
-  supports = [ctx.support_of(arg) for arg in node.args]
-  support = ctx.support_of(node)
+  if node.op not in ELEMENTWISE or len(node.shape) < 2 or any(e.type.pattern is not None for e in (node, *node.args)):
+    return None
+  supports = [support_of(arg) for arg in node.args]
+  support = support_of(node)
   if (support is None or len(support) == node.size) and all(s is None or len(s) == arg.size for arg, s in zip(node.args, supports, strict=True)):
-    return False
+    return None
   logical = np.arange(node.size, dtype=np.int64) if support is None else support_indices(support)
   reads = []
   for arg, known in zip(node.args, supports, strict=True):
     slots = project_entries(logical, arg.shape, node.shape)
     reads.append(slots if known is None else np.where(np.isin(slots, support_indices(known)), slots, -1))
-  out = ctx.alloc_tmp(node)
-  if len(logical) < node.size:
-    ranges, (k,) = ctx.nest((node.size,), f"zero_{out.attrs['name']}")
-    ctx.emit(ranges, [p.store(p.view(out, [k]), constant(0, node.type.dtype))])
   width = int(np.prod(node.shape[1:], dtype=np.int64))
+  regions = []
   for region, count in seed_regions(logical, reads, width):
     entries = len(region.writes) // count
     grid = region.writes.reshape(entries, count)
@@ -339,16 +336,22 @@ def lower_supported_elementwise(ctx: LowerCtx, node: Expr, program_op) -> bool:
       extents = count, entries
     else:
       extents = entries, count
+    regions.append((region, extents))
+  return len(logical), tuple(regions)
+
+
+def lower_supported_elementwise(ctx: LowerCtx, node: Expr) -> bool:
+  plan = ctx.seed_map(node)
+  if plan is None:
+    return False
+  size, regions = plan
+  out = ctx.alloc_tmp(node)
+  if size < node.size:
+    ranges, (k,) = ctx.nest((node.size,), f"zero_{out.attrs['name']}")
+    ctx.emit(ranges, [p.store(p.view(out, [k]), constant(0, node.type.dtype))])
+  for number, (region, extents) in enumerate(regions):
     ranges, (outer, inner) = ctx.nest(extents, f"seed_{out.attrs['name']}")
     k = p.add(p.mul(outer, p.const_int(extents[1])), inner)
-    values = []
-    for arg, slots in zip(node.args, region.reads, strict=True):
-      if slots[0] < 0:
-        values.append(constant(0, arg.type.dtype))
-      elif arg.op == ExprOp.CONST and arg.value is not None and np.all((sample := arg.value.reshape(-1)[slots]) == sample[0]):
-        values.append(constant(sample[0].item(), arg.type.dtype))
-      else:
-        values.append(ctx.read_stored(arg, slots, k))
-    value = fold_program(ProgramNode(program_op, tuple(values), dtype=node.type.dtype))
+    value = fold_program(ctx.compute_map(node, node.args, region, number, k))
     ctx.emit(ranges, [p.store(p.view(out, [ctx.index_at(region.writes, k, shared=True)]), value)])
   return True

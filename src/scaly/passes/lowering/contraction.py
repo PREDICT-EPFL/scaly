@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import numpy as np
 
+from ...ad.rules import ELEMENTWISE
 from ...ir import program as p
 from ...ir.expr import Expr, ExprOp
+from ...ir.program import ProgramNode
 from ...ir.support import support_indices
 from ..program.scalarize import AUTO_SCALAR_OPS_PER_PROC
-from .ctx import LowerCtx, lowers, _flat
+from .ctx import LowerCtx, lowers, _broadcast, _flat
+from .fusion import SeedEpilogue
 from .schedule import emit_reduction
 from .plans import lower_sparse_product
 
@@ -21,9 +24,30 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
     return
   if ctx.seed_pairs and len(a.shape) <= 2 and len(b.shape) <= 2 and _lower_supported_matmul(ctx, node):
     return
-  out = ctx.alloc_tmp(node)
+  _emit_dense_matmul(ctx, node)
+
+
+def lower_seed_epilogue(ctx: LowerCtx, plan: SeedEpilogue) -> None:
+  _emit_dense_matmul(ctx, plan.chain[0], plan)
+
+
+def _emit_dense_matmul(ctx: LowerCtx, node: Expr, epilogue: SeedEpilogue | None = None) -> None:
+  a, b = node.args[:2]
+  shape = node.shape
+  packed = epilogue is not None and epilogue.packed_consumer is not None
+  if epilogue is None:
+    out = ctx.alloc_tmp(node)
+  elif epilogue.packed_consumer is not None:
+    out = ctx.new_private(node.type.dtype, (len(epilogue.seeds), shape[1]))
+    ctx.packed_seed_inputs[epilogue.packed_consumer] = out
+  else:
+    out = ctx.alloc_tmp(epilogue.chain[-1])
   name = out.attrs["name"]
-  outputs, coords = ctx.nest(node.shape, f"i_{name}")
+  extents = shape if epilogue is None else (len(epilogue.seeds), *shape[1:])
+  outputs, coords = ctx.nest(extents, f"i_{name}")
+  packed_coords = coords[:]
+  if epilogue is not None:
+    coords[0] = ctx.index_at(epilogue.seeds, coords[0], shared=True)
   reductions, (k,) = ctx.reduce((a.shape[-1],), f"k_{name}")
   batch_rank = len(node.shape) - (len(a.shape) > 1) - (len(b.shape) > 1)
 
@@ -32,16 +56,35 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
 
   a_coords = [*batch_coords(a), coords[batch_rank], k] if len(a.shape) > 1 else [k]
   b_coords = [*batch_coords(b), k, coords[-1]] if len(b.shape) > 1 else [k]
-  target = p.view(out, [_flat(node.shape, coords)])
+  slot = _flat(extents, packed_coords) if packed else _flat(shape, coords)
+  target = p.view(out, [slot])
+  packed_input = ctx.packed_seed_inputs.get(node.id)
+  rhs = ctx.read(b, b_coords) if packed_input is None else p.load(p.view(packed_input, [_flat((b.shape[0], b.shape[1]), (packed_coords[0], k))]))
+
+  def finish(value: ProgramNode) -> ProgramNode:
+    assert epilogue is not None
+    source = epilogue.chain[1]
+    for expr in epilogue.chain[2:]:
+      args = tuple(value if arg is source else ctx.read(arg, _broadcast(coords[:-1], arg.shape)) for arg in expr.args)
+      value = ProgramNode(ELEMENTWISE[ExprOp(expr.op)].program, args, dtype=expr.type.dtype)
+      source = expr
+    return value
+
   emit_reduction(
     ctx,
     outputs,
     reductions,
     target,
-    p.mul(ctx.read(a, a_coords), ctx.read(b, b_coords)),
+    p.mul(ctx.read(a, a_coords), rhs),
     batch_axes=sum(dim != 1 for dim in node.shape[:batch_rank]),
     delinearize=node.id in ctx.permutes,
+    finish=finish if epilogue else None,
   )
+  if epilogue is not None and not packed:
+    skipped = np.setdiff1d(np.arange(shape[0], dtype=np.int64), epilogue.seeds, assume_unique=True)
+    zeros, (seed, row) = ctx.nest((len(skipped), shape[1]), f"zero_{name}")
+    slot = _flat(shape, [ctx.index_at(skipped, seed, shared=True), row, p.const_int(0)])
+    ctx.emit(zeros, [p.store(p.view(out, [slot]), p.const_float(0, dtype=node.type.dtype))])
 
 
 def _lower_supported_matmul(ctx: LowerCtx, node: Expr) -> bool:
@@ -96,7 +139,10 @@ def _lower_stored_matmul(ctx: LowerCtx, node: Expr) -> None:
   order = np.lexsort((columns, rows))
   active, counts = np.unique(rows[order], return_counts=True)
   pointers = np.concatenate(([0], np.cumsum(counts)))
-  out = ctx.alloc_tmp(node)
+  layout = ctx.product_outputs.get(node.id)
+  target_node = node if layout is None else layout[0]
+  out = ctx.alloc_tmp(target_node)
+  permutation = None if layout is None else ctx.physical_slots(target_node, layout[1])
   name = out.attrs["name"]
   vector = len(dense.shape) == 1
   width = 1 if vector else dense.shape[1] if left else dense.shape[0]
@@ -115,7 +161,8 @@ def _lower_stored_matmul(ctx: LowerCtx, node: Expr) -> None:
       slot = p.add(p.mul(row, p.const_int(width)), column)
     else:
       slot = p.add(p.mul(column, p.const_int(len(active))), row)
-    emit_reduction(ctx, outputs, reductions, ctx.stored_view(node, slot), p.mul(sparse_value, ctx.read(dense, dense_coords)))
+    target = ctx.stored_view(node, slot) if permutation is None else p.view(out, [ctx.index_at(permutation, slot, shared=True)])
+    emit_reduction(ctx, outputs, reductions, target, p.mul(sparse_value, ctx.read(dense, dense_coords)), delinearize=dense.id in ctx.permutes)
 
   if ctx.scalarize and (ctx.fun._effective_lowering == "scalar" or 2 * pattern.nnz * width <= AUTO_SCALAR_OPS_PER_PROC):
     for row, (start, stop) in enumerate(zip(pointers[:-1], pointers[1:], strict=True)):

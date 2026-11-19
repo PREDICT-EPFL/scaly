@@ -1,0 +1,1056 @@
+{
+  "machine": "la015",
+  "python": "3.14.3",
+  "compiler": "Ubuntu clang version 20.1.8 (++20250804090239+87f0227cb601-1~exp1~20250804210352.139)",
+  "cells": [
+    {
+      "workload": "chain",
+      "size": 5,
+      "source_lines": 7906,
+      "source_bytes": 790281,
+      "source_sha256": "af60691e7aeaf1d89d348e98291059a9438aca3af0913b5ee83fe5f389a5c729",
+      "header_sha256": "09f389911c789e78e7b71b5a3551b1be42cef54012e446238574dad10493dd77",
+      "build_ms": 1768.2249720674008,
+      "render_ms": 10363.773677963763,
+      "generation_ms": 12131.998650031164,
+      "compile_ms": 4729.612170951441,
+      "compile_command": [
+        "/usr/bin/clang",
+        "-O3",
+        "-march=native",
+        "-fno-math-errno",
+        "-fveclib=libmvec",
+        "-c",
+        "chain_M5_N40_hess_lower.c",
+        "-o",
+        "kernel.o"
+      ],
+      "workspace_bytes": 533952,
+      "workspace_elements": {
+        "double": 66744
+      },
+      "declared_local_double_slots": 1111,
+      "root_declarations": [
+        [
+          "s1",
+          "double",
+          504
+        ],
+        [
+          "s3",
+          "double",
+          3
+        ],
+        [
+          "s4",
+          "double",
+          18
+        ],
+        [
+          "s5",
+          "double",
+          576
+        ],
+        [
+          "s6",
+          "double",
+          1
+        ],
+        [
+          "s7",
+          "double",
+          1
+        ],
+        [
+          "s8",
+          "double",
+          1
+        ],
+        [
+          "s9",
+          "double",
+          1
+        ],
+        [
+          "s10",
+          "double",
+          1
+        ],
+        [
+          "s11",
+          "double",
+          1
+        ],
+        [
+          "s12",
+          "double",
+          1
+        ],
+        [
+          "s13",
+          "double",
+          1
+        ],
+        [
+          "s14",
+          "double",
+          1
+        ],
+        [
+          "s15",
+          "double",
+          1
+        ]
+      ],
+      "mapped_lane_caps": [
+        {
+          "trips": 40,
+          "caps": [
+            1,
+            1,
+            1,
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "workload": "race_cars",
+      "size": 5,
+      "source_lines": 1178,
+      "source_bytes": 73548,
+      "source_sha256": "425453e50c5f98693818bfb8282bf307eb8f6335bba9572a3896a3df2872f27b",
+      "header_sha256": "df7b1ad2207d02b5c7fe2e5a82adda9d17ce609eec4f3f6652885dd33198c5ce",
+      "build_ms": 216.04583295993507,
+      "render_ms": 744.3898490164429,
+      "generation_ms": 960.435681976378,
+      "compile_ms": 242.5159951671958,
+      "compile_command": [
+        "/usr/bin/clang",
+        "-O3",
+        "-march=native",
+        "-fno-math-errno",
+        "-fveclib=libmvec",
+        "-c",
+        "race_car_closed_loop_N5_hess_lower.c",
+        "-o",
+        "kernel.o"
+      ],
+      "workspace_bytes": 0,
+      "workspace_elements": {},
+      "declared_local_double_slots": 6,
+      "root_declarations": [
+        [
+          "s0",
+          "double",
+          1
+        ],
+        [
+          "s1",
+          "double",
+          1
+        ],
+        [
+          "s2",
+          "double",
+          1
+        ],
+        [
+          "s3",
+          "double",
+          1
+        ],
+        [
+          "s4",
+          "double",
+          1
+        ],
+        [
+          "s5",
+          "double",
+          1
+        ]
+      ],
+      "mapped_lane_caps": [
+        {
+          "trips": 3,
+          "caps": [
+            1,
+            1,
+            2,
+            4
+          ]
+        }
+      ]
+    },
+    {
+      "workload": "npmpc_jac",
+      "size": 100,
+      "source_lines": 1067,
+      "source_bytes": 64593,
+      "source_sha256": "7cf66b465563c97e9c1b0c4fe044734ec9ce6c6299f4f5cefd438ef8cbb9306a",
+      "header_sha256": "ff87a8b0c20e67a3665da890c2b166408b3ce3fd277905841c03a08d7d32c6a5",
+      "build_ms": 320.17285702750087,
+      "render_ms": 917.9991139099002,
+      "generation_ms": 1238.171970937401,
+      "compile_ms": 622.738451929763,
+      "compile_command": [
+        "/usr/bin/clang",
+        "-O3",
+        "-march=native",
+        "-fno-math-errno",
+        "-fveclib=libmvec",
+        "-c",
+        "npmpc_N100_jac.c",
+        "-o",
+        "kernel.o"
+      ],
+      "workspace_bytes": 0,
+      "workspace_elements": {},
+      "declared_local_double_slots": 4848,
+      "root_declarations": [
+        [
+          "s1",
+          "double",
+          768
+        ],
+        [
+          "s2",
+          "double",
+          768
+        ],
+        [
+          "s3",
+          "double",
+          400
+        ],
+        [
+          "s4",
+          "double",
+          256
+        ],
+        [
+          "s5",
+          "double",
+          256
+        ],
+        [
+          "s6",
+          "double",
+          256
+        ],
+        [
+          "s7",
+          "double",
+          256
+        ],
+        [
+          "s8",
+          "double",
+          256
+        ],
+        [
+          "s9",
+          "double",
+          32
+        ],
+        [
+          "s0",
+          "double",
+          1600
+        ]
+      ],
+      "mapped_lane_caps": [
+        {
+          "trips": 100,
+          "caps": [
+            8,
+            8,
+            8,
+            8
+          ]
+        },
+        {
+          "trips": 100,
+          "caps": [
+            8,
+            8,
+            8,
+            8
+          ]
+        },
+        {
+          "trips": 100,
+          "caps": [
+            8,
+            8,
+            8,
+            8
+          ]
+        }
+      ]
+    },
+    {
+      "workload": "npmpc",
+      "size": 100,
+      "source_lines": 1506,
+      "source_bytes": 134005,
+      "source_sha256": "866bac3b5dc25c943f4becb3357589ee3eee9d0870159c52a39cc908c356df04",
+      "header_sha256": "0ac63b9c3d59527d23793c51fb05a2f7ed76f33637ef980e596bfc2e189ead22",
+      "build_ms": 158.41520996764302,
+      "render_ms": 1232.9691471531987,
+      "generation_ms": 1391.3843571208417,
+      "compile_ms": 1115.397669840604,
+      "compile_command": [
+        "/usr/bin/clang",
+        "-O3",
+        "-march=native",
+        "-fno-math-errno",
+        "-fveclib=libmvec",
+        "-c",
+        "npmpc_N100_hess_lower.c",
+        "-o",
+        "kernel.o"
+      ],
+      "workspace_bytes": 157952,
+      "workspace_elements": {
+        "double": 19744
+      },
+      "declared_local_double_slots": 6437,
+      "root_declarations": [
+        [
+          "s4",
+          "double",
+          72
+        ],
+        [
+          "s5",
+          "double",
+          256
+        ],
+        [
+          "s6",
+          "double",
+          256
+        ],
+        [
+          "s7",
+          "double",
+          256
+        ],
+        [
+          "s8",
+          "double",
+          256
+        ],
+        [
+          "s9",
+          "double",
+          256
+        ],
+        [
+          "s10",
+          "double",
+          256
+        ],
+        [
+          "s11",
+          "double",
+          256
+        ],
+        [
+          "s12",
+          "double",
+          768
+        ],
+        [
+          "s13",
+          "double",
+          216
+        ],
+        [
+          "s14",
+          "double",
+          768
+        ],
+        [
+          "s15",
+          "double",
+          768
+        ],
+        [
+          "s16",
+          "double",
+          256
+        ],
+        [
+          "s17",
+          "double",
+          768
+        ],
+        [
+          "s18",
+          "double",
+          256
+        ],
+        [
+          "s19",
+          "double",
+          768
+        ],
+        [
+          "s20",
+          "double",
+          1
+        ],
+        [
+          "s21",
+          "double",
+          1
+        ],
+        [
+          "s22",
+          "double",
+          1
+        ],
+        [
+          "s23",
+          "double",
+          1
+        ],
+        [
+          "s24",
+          "double",
+          1
+        ]
+      ],
+      "mapped_lane_caps": [
+        {
+          "trips": 100,
+          "caps": [
+            4,
+            8,
+            8,
+            8
+          ]
+        },
+        {
+          "trips": 100,
+          "caps": [
+            8,
+            8,
+            8,
+            8
+          ]
+        }
+      ]
+    },
+    {
+      "workload": "npmpc_jac",
+      "size": 6,
+      "source_lines": 1067,
+      "source_bytes": 64427,
+      "source_sha256": "02454f5d809531c3e460d7739fd768155bc6942ac060ba0c834d31432dd4301e",
+      "header_sha256": "1e60c6e1362b633bc178bb4ed96c45ec608ea8637309a422e268581f80036dc5",
+      "build_ms": 119.64120296761394,
+      "render_ms": 831.9505341351032,
+      "generation_ms": 951.5917371027172,
+      "compile_ms": 263.2899160962552,
+      "compile_command": [
+        "/usr/bin/clang",
+        "-O3",
+        "-march=native",
+        "-fno-math-errno",
+        "-fveclib=libmvec",
+        "-c",
+        "npmpc_N6_jac.c",
+        "-o",
+        "kernel.o"
+      ],
+      "workspace_bytes": 0,
+      "workspace_elements": {},
+      "declared_local_double_slots": 3200,
+      "root_declarations": [
+        [
+          "s1",
+          "double",
+          768
+        ],
+        [
+          "s2",
+          "double",
+          768
+        ],
+        [
+          "s3",
+          "double",
+          256
+        ],
+        [
+          "s4",
+          "double",
+          256
+        ],
+        [
+          "s5",
+          "double",
+          256
+        ],
+        [
+          "s6",
+          "double",
+          256
+        ],
+        [
+          "s7",
+          "double",
+          256
+        ],
+        [
+          "s8",
+          "double",
+          256
+        ],
+        [
+          "s9",
+          "double",
+          32
+        ],
+        [
+          "s0",
+          "double",
+          96
+        ]
+      ],
+      "mapped_lane_caps": [
+        {
+          "trips": 6,
+          "caps": [
+            8,
+            8,
+            8,
+            8
+          ]
+        },
+        {
+          "trips": 6,
+          "caps": [
+            8,
+            8,
+            8,
+            8
+          ]
+        },
+        {
+          "trips": 6,
+          "caps": [
+            8,
+            8,
+            8,
+            8
+          ]
+        }
+      ]
+    },
+    {
+      "workload": "kkt",
+      "size": 1,
+      "source_lines": 89,
+      "source_bytes": 3730,
+      "source_sha256": "e74e3e61c0cbfdf4a82f367ebb3784157dec67030eb9598129c6f25126acf45e",
+      "header_sha256": "43e6875a05da454a64fc3bfa4a675825083aea626a5acf6701e571a1bf6ec7d6",
+      "build_ms": 1.0280909482389688,
+      "render_ms": 6.579171866178513,
+      "generation_ms": 7.607262814417481,
+      "compile_ms": 53.79719496704638,
+      "compile_command": [
+        "/usr/bin/clang",
+        "-O3",
+        "-march=native",
+        "-fno-math-errno",
+        "-fveclib=libmvec",
+        "-c",
+        "kkt_assembly.c",
+        "-o",
+        "kernel.o"
+      ],
+      "workspace_bytes": 0,
+      "workspace_elements": {},
+      "declared_local_double_slots": 0,
+      "root_declarations": [],
+      "mapped_lane_caps": []
+    }
+  ],
+  "neural_storage": [
+    {
+      "horizon": 100,
+      "lanes": "auto",
+      "workspace_bytes": 0,
+      "workspace_elements": {},
+      "declared_local_double_slots": 4848,
+      "root_declarations": [
+        [
+          "s1",
+          "double",
+          768
+        ],
+        [
+          "s2",
+          "double",
+          768
+        ],
+        [
+          "s3",
+          "double",
+          400
+        ],
+        [
+          "s4",
+          "double",
+          256
+        ],
+        [
+          "s5",
+          "double",
+          256
+        ],
+        [
+          "s6",
+          "double",
+          256
+        ],
+        [
+          "s7",
+          "double",
+          256
+        ],
+        [
+          "s8",
+          "double",
+          256
+        ],
+        [
+          "s9",
+          "double",
+          32
+        ],
+        [
+          "s0",
+          "double",
+          1600
+        ]
+      ],
+      "mapped_lane_caps": [
+        {
+          "trips": 100,
+          "caps": [
+            8,
+            8,
+            8,
+            8
+          ]
+        },
+        {
+          "trips": 100,
+          "caps": [
+            8,
+            8,
+            8,
+            8
+          ]
+        },
+        {
+          "trips": 100,
+          "caps": [
+            8,
+            8,
+            8,
+            8
+          ]
+        }
+      ]
+    },
+    {
+      "horizon": 100,
+      "lanes": 2,
+      "workspace_bytes": 0,
+      "workspace_elements": {},
+      "declared_local_double_slots": 2920,
+      "root_declarations": [
+        [
+          "s1",
+          "double",
+          400
+        ],
+        [
+          "s2",
+          "double",
+          192
+        ],
+        [
+          "s3",
+          "double",
+          400
+        ],
+        [
+          "s4",
+          "double",
+          64
+        ],
+        [
+          "s5",
+          "double",
+          64
+        ],
+        [
+          "s6",
+          "double",
+          64
+        ],
+        [
+          "s7",
+          "double",
+          64
+        ],
+        [
+          "s8",
+          "double",
+          64
+        ],
+        [
+          "s9",
+          "double",
+          8
+        ],
+        [
+          "s0",
+          "double",
+          1600
+        ]
+      ],
+      "mapped_lane_caps": [
+        {
+          "trips": 100,
+          "caps": [
+            2,
+            2,
+            2,
+            2
+          ]
+        },
+        {
+          "trips": 100,
+          "caps": [
+            2,
+            2,
+            2,
+            2
+          ]
+        },
+        {
+          "trips": 100,
+          "caps": [
+            2,
+            2,
+            2,
+            2
+          ]
+        }
+      ]
+    },
+    {
+      "horizon": 100,
+      "lanes": 4,
+      "workspace_bytes": 0,
+      "workspace_elements": {},
+      "declared_local_double_slots": 3440,
+      "root_declarations": [
+        [
+          "s1",
+          "double",
+          400
+        ],
+        [
+          "s2",
+          "double",
+          384
+        ],
+        [
+          "s3",
+          "double",
+          400
+        ],
+        [
+          "s4",
+          "double",
+          128
+        ],
+        [
+          "s5",
+          "double",
+          128
+        ],
+        [
+          "s6",
+          "double",
+          128
+        ],
+        [
+          "s7",
+          "double",
+          128
+        ],
+        [
+          "s8",
+          "double",
+          128
+        ],
+        [
+          "s9",
+          "double",
+          16
+        ],
+        [
+          "s0",
+          "double",
+          1600
+        ]
+      ],
+      "mapped_lane_caps": [
+        {
+          "trips": 100,
+          "caps": [
+            4,
+            4,
+            4,
+            4
+          ]
+        },
+        {
+          "trips": 100,
+          "caps": [
+            4,
+            4,
+            4,
+            4
+          ]
+        },
+        {
+          "trips": 100,
+          "caps": [
+            4,
+            4,
+            4,
+            4
+          ]
+        }
+      ]
+    },
+    {
+      "horizon": 6,
+      "lanes": "auto",
+      "workspace_bytes": 0,
+      "workspace_elements": {},
+      "declared_local_double_slots": 3200,
+      "root_declarations": [
+        [
+          "s1",
+          "double",
+          768
+        ],
+        [
+          "s2",
+          "double",
+          768
+        ],
+        [
+          "s3",
+          "double",
+          256
+        ],
+        [
+          "s4",
+          "double",
+          256
+        ],
+        [
+          "s5",
+          "double",
+          256
+        ],
+        [
+          "s6",
+          "double",
+          256
+        ],
+        [
+          "s7",
+          "double",
+          256
+        ],
+        [
+          "s8",
+          "double",
+          256
+        ],
+        [
+          "s9",
+          "double",
+          32
+        ],
+        [
+          "s0",
+          "double",
+          96
+        ]
+      ],
+      "mapped_lane_caps": [
+        {
+          "trips": 6,
+          "caps": [
+            8,
+            8,
+            8,
+            8
+          ]
+        },
+        {
+          "trips": 6,
+          "caps": [
+            8,
+            8,
+            8,
+            8
+          ]
+        },
+        {
+          "trips": 6,
+          "caps": [
+            8,
+            8,
+            8,
+            8
+          ]
+        }
+      ]
+    },
+    {
+      "horizon": 6,
+      "lanes": 2,
+      "workspace_bytes": 0,
+      "workspace_elements": {},
+      "declared_local_double_slots": 872,
+      "root_declarations": [
+        [
+          "s1",
+          "double",
+          192
+        ],
+        [
+          "s2",
+          "double",
+          192
+        ],
+        [
+          "s3",
+          "double",
+          64
+        ],
+        [
+          "s4",
+          "double",
+          64
+        ],
+        [
+          "s5",
+          "double",
+          64
+        ],
+        [
+          "s6",
+          "double",
+          64
+        ],
+        [
+          "s7",
+          "double",
+          64
+        ],
+        [
+          "s8",
+          "double",
+          64
+        ],
+        [
+          "s9",
+          "double",
+          8
+        ],
+        [
+          "s0",
+          "double",
+          96
+        ]
+      ],
+      "mapped_lane_caps": [
+        {
+          "trips": 6,
+          "caps": [
+            2,
+            2,
+            2,
+            2
+          ]
+        },
+        {
+          "trips": 6,
+          "caps": [
+            2,
+            2,
+            2,
+            2
+          ]
+        },
+        {
+          "trips": 6,
+          "caps": [
+            2,
+            2,
+            2,
+            2
+          ]
+        }
+      ]
+    },
+    {
+      "horizon": 6,
+      "lanes": 4,
+      "workspace_bytes": 0,
+      "workspace_elements": {},
+      "declared_local_double_slots": 176,
+      "root_declarations": [
+        [
+          "s0",
+          "double",
+          96
+        ],
+        [
+          "s1",
+          "double",
+          24
+        ],
+        [
+          "s3",
+          "double",
+          24
+        ],
+        [
+          "s2",
+          "double",
+          32
+        ]
+      ],
+      "mapped_lane_caps": []
+    }
+  ]
+}

@@ -140,6 +140,75 @@ def test_matmul_operand_read_once_is_inlined() -> None:
 
 
 @needs_cc
+@pytest.mark.parametrize("width", [None, 5])
+def test_folded_matmul_seeds_keep_their_logical_layout(width):
+  rows, cols = (0, 0, 1, 2, 2), (0, 3, 2, 1, 3)
+  pattern = CanonicalPattern((3, 4), rows, cols)
+  weights = np.array([1.5, 2.0, -1.0, 0.75, -0.5])
+  shape = (4,) if width is None else (4, width)
+
+  @sc.function(sc.arg("x", shape), sc.arg("seeds", (2, *shape)), name=f"folded_seeds_{width}")
+  def derivative(x, seeds):
+    w = sc.pack(weights, pattern)
+    return sc.jvp_many(w @ x, x, seeds).block()
+
+  w = np.zeros((3, 4))
+  w[rows, cols] = weights
+  seeds = np.random.default_rng(69).normal(size=(2, *shape))
+  expected = np.stack([w @ seed for seed in seeds])
+  actual = derivative(np.zeros(shape), seeds)
+  np.testing.assert_allclose(actual if width is None else actual.toarray(), expected, atol=1e-14)
+  assert not _privates(_lowered(derivative))
+  assert not any(n.op in (ProgramOp.DIV, ProgramOp.MOD) for n in walk_program(main_proc(lower_function(derivative))))
+
+
+@needs_cc
+def test_seed_pointwise_maps_share_the_active_pairs():
+  mask = np.array([[1, 1, 1, 1], [0, 0, 0, 0], [1, 1, 1, 1]], dtype=float)
+
+  @sc.function(sc.arg("x", 4), sc.arg("d", (3, 4)), name="seed_layout_inner")
+  def inner(x, d):
+    return (((d * x.cos()) * (2 + x)) / (1 + x * x)).block()
+
+  @sc.function(sc.arg("x", (2, 4)), sc.arg("d", (2, 3, 4)), name="seed_layout_map")
+  def mapped(x, d):
+    return sc.vmap(inner, 2)(x, d * mask).block()
+
+  rng = np.random.default_rng(69)
+  x, d = rng.normal(size=(2, 4)), rng.normal(size=(2, 3, 4))
+  np.testing.assert_allclose(mapped(x, d), (d * mask) * (np.cos(x) * (2 + x) / (1 + x * x))[:, None, :], atol=1e-14)
+  seen: dict[str, ProgramNode] = {}
+  lower_function(mapped, observe=seen.__setitem__)
+  inner_proc = next(s for s in seen["lowered"].args if s.attrs.get("name", "").startswith("seed_layout_inner"))
+  assert not any(s.attrs["shape"] == (3, 4) for s in _privates(inner_proc))
+
+
+@needs_cc
+def test_seed_contraction_applies_the_activation_before_storing():
+  mask = np.array([[1, 1, 1, 1], [0, 0, 0, 0], [1, 1, 1, 1]], dtype=float)
+
+  @sc.function(sc.arg("x", 4), sc.arg("d", (3, 4)), sc.arg("w", (4, 4)), name="seed_activation_inner")
+  def inner(x, d, w):
+    return (sc.jvp_many(w @ (w @ x).sin(), x, d) * x.cos()).block()
+
+  @sc.function(sc.arg("x", (2, 4)), sc.arg("d", (2, 3, 4)), sc.arg("w", (4, 4)), name="seed_activation_map")
+  def mapped(x, d, w):
+    return sc.vmap(inner, 2)(x, d * mask, sc.broadcast(w)).block()
+
+  rng = np.random.default_rng(69)
+  x, d, w = rng.normal(size=(2, 4)), rng.normal(size=(2, 3, 4)), rng.normal(size=(4, 4))
+  hidden = ((d * mask) @ w.T) * np.cos(x @ w.T)[:, None, :]
+  np.testing.assert_allclose(mapped(x, d, w), (hidden @ w.T) * np.cos(x)[:, None, :], atol=1e-14)
+  seen: dict[str, ProgramNode] = {}
+  lower_function(mapped, observe=seen.__setitem__)
+  inner_proc = next(s for s in seen["lowered"].args if s.attrs.get("name", "").startswith("seed_activation_inner"))
+  shapes = [s.attrs["shape"] for s in _privates(inner_proc)]
+  assert (3, 4, 1) not in shapes
+  assert (3, 4) not in shapes
+  assert (2, 4) in shapes
+
+
+@needs_cc
 @pytest.mark.parametrize("expensive", [False, True])
 def test_a_libm_call_is_not_duplicated_by_two_reads(expensive: bool) -> None:
   op = (lambda v: v.sin()) if expensive else (lambda v: v * 3.0)
