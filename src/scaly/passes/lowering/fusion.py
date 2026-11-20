@@ -86,6 +86,17 @@ def scatter_targets(node: Expr) -> np.ndarray:
   return indices if src.type.pattern is None else indices[stored_indices(src.type)]
 
 
+def adds_into_zeros(node: Expr) -> bool:
+  """Whether a scatter adds the values of a static index table into zeros, dense."""
+  return (
+    node.type.pattern is None
+    and node.args[0].support == frozenset()
+    and node.args[1].value is not None
+    and node.attrs["combine"] == "add"
+    and node.attrs["mode"] != "fill"
+  )
+
+
 def product_outputs(roots: Sequence[Expr], outputs: dict[int, str]) -> dict[int, tuple[Expr, np.ndarray, tuple[Expr, ...]]]:
   """Find one-reader layouts that a stored matrix product can write directly into an output."""
   layout_ops = (ExprOp.RESHAPE, ExprOp.VALUES, ExprOp.TRANSPOSE, ExprOp.SCATTER)
@@ -158,7 +169,7 @@ def _reads(node: Expr) -> list[tuple[Expr, int]]:
     indices = _index_values(node).reshape(-1)
     return [(node.args[0], _ONCE if len(np.unique(indices)) == len(indices) else _MANY)]
   if op == ExprOp.SCATTER:
-    if node.args[0].support == frozenset() and node.args[1].value is not None and node.attrs["combine"] == "add" and node.attrs["mode"] != "fill":
+    if adds_into_zeros(node):
       return [(node.args[2], _ONCE)]
     return [(a, _BUFFER) for a in node.args]
   if op in ALIASES | {ExprOp.TRANSPOSE, ExprOp.SLICE, ExprOp.REDUCE, ExprOp.STACK, ExprOp.CONCAT}:
@@ -300,15 +311,7 @@ def plan_fusion(
     edges = terminal[arg.id]
     if ExprOp(arg.op) != ExprOp.SCATTER or arg.id in outputs or arg.size != parent.size or len(edges) != 1 or edges[0][:2] != (parent.id, _ONCE):
       return None
-    return (
-      arg
-      if arg.type.pattern is None
-      and arg.args[0].support == frozenset()
-      and arg.args[1].value is not None
-      and arg.attrs["combine"] == "add"
-      and arg.attrs["mode"] != "fill"
-      else None
-    )
+    return arg if adds_into_zeros(arg) else None
 
   chains: dict[int, tuple[Expr, ...]] = {}
   extended: set[int] = set()
@@ -523,6 +526,9 @@ def _merge_consumers(
     else:
       active = [None]
     kinds = {arg.id: kind for arg, kind in _reads(node)}
+    if node.op == ExprOp.CONCAT and node.id in deferred:
+      # A selected concat reads every part at each entry; a computed part is not evaluated there.
+      kinds = dict.fromkeys(kinds, _MANY)
     if any(use is None for use in active):
       for arg, _ in _reads(node):
         requests.setdefault(arg.id, set()).add(None)

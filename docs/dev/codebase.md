@@ -42,6 +42,7 @@ src/scaly/
       calls.py          Function calls, mapped calls and external calls
       gather.py         gathers and scatters
       fusion.py         which values are evaluated in their readers' loops, and sums of scatters
+      demand.py         which entries of each value its readers use, and where it is computed
       effects.py        prints
     program/             program optimizations                    (ProgramNode -> ProgramNode)
       __init__.py        explicit PASS_PIPELINE and optimize_program
@@ -189,6 +190,11 @@ passes need to know about it.
 Every expression op also needs a support classification in `OP_INFO`: reuse its `pattern_rule`
 or set `support_rule`. For deliberately unknown support, add the op to the unknown set in
 `tests/test_op_coverage.py`.
+
+A lowering rule may load from an operand only the entries `operand_entries` in
+`passes/lowering/demand.py` gives for it, since an operand can be computed only at those. A rule
+that reads more widens what `operand_entries` returns for its op. An op it does not name is read
+whole.
 
 | To add | Touch |
 | --- | --- |

@@ -12,6 +12,7 @@ from ...ir.program import ProgramNode, ProgramOp, RangeKind
 from ...ir.types import dtypes
 from ..arith import constant
 from .ctx import LowerCtx, lowers, _size_of, _flat_coordinates
+from .demand import affine, scattered_values
 from .fusion import scatter_targets
 from .plans import lower_movement
 from .in_place import fused_value, scatter_reuse
@@ -78,6 +79,9 @@ def _lower_gather(ctx: LowerCtx, node: Expr) -> None:
     return
   idx = _index_values(node).reshape(-1)
   out = ctx.alloc_tmp(node)
+  if (entries := ctx.domains.get(node.id)) is not None:
+    ctx.emit_domain(node, out, entries)
+    return
   ranges, (k,) = ctx.nest((len(idx),), f"i_{out.attrs['name']}")
   ctx.emit(ranges, [p.store(p.view(out, [k]), ctx.read_flat(src, ctx.index_at(idx, k)))], delinearize=node.id in ctx.permutes)
 
@@ -137,21 +141,37 @@ def _lower_scatter(ctx: LowerCtx, node: Expr) -> None:
 
 def lower_scatter_sum(ctx: LowerCtx, node: Expr, scatters: Sequence[Expr]) -> None:
   """Zero ``node``'s buffer once, then let each scatter store into it, or accumulate when it repeats
-  an index or follows another scatter."""
+  an index or follows another scatter.
+
+  Where the consumers read only some entries, a scatter may store only the values that land on them
+  (``scattered_values``), and the entries written and not overwritten by the first scatter's stores are
+  zeroed alone when they are evenly spaced."""
   out = ctx.alloc_tmp(node)
-  zname = ctx.names.allocate(f"z_{out.attrs['name']}")
-  zrng = p.range_(zname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL)
-  z = p.var(zname)
-  ctx.statements.append(p.for_(zrng, [p.store(p.view(out, [z]), constant(0, node.type.dtype))]))
-  for k, leaf in enumerate(scatters):
-    idx = scatter_targets(leaf)
+  entries = ctx.domains.get(node.id)
+  writes = [scatter_targets(leaf) for leaf in scatters]
+  lanes = [scattered_values(leaf, entries) for leaf in scatters]
+  # A scatter repeating any index adds into zeros, as it does whole, even where it stores fewer
+  # values, so that each entry keeps the sum and the sign of zero of the whole scatter.
+  adds = [k > 0 or len(np.unique(targets)) != len(targets) for k, targets in enumerate(writes)]
+  zeros = None
+  if entries is not None:
+    written = np.union1d(entries, np.concatenate([idx[kept] for idx, kept in zip(writes, lanes, strict=True)]))
+    zeros = written if adds[0] else np.setdiff1d(written, writes[0][lanes[0]])
+    zeros = zeros if affine(zeros) else None
+  if zeros is None or len(zeros):
+    zname = ctx.names.allocate(f"z_{out.attrs['name']}")
+    zrng = p.range_(zname, 0, _size_of(node.shape) if zeros is None else len(zeros), kind=RangeKind.GLOBAL)
+    z = p.var(zname) if zeros is None else ctx.index_at(zeros, p.var(zname), shared=True)
+    ctx.statements.append(p.for_(zrng, [p.store(p.view(out, [z]), constant(0, node.type.dtype))]))
+  for leaf, targets, kept, add in zip(scatters, writes, lanes, adds, strict=True):
+    idx = targets[kept]
     iname = ctx.names.allocate(f"i_{out.attrs['name']}")
     repeated = len(set(idx.tolist())) != len(idx)
     irng = p.range_(iname, 0, len(idx), kind=RangeKind.REDUCE if repeated else RangeKind.GLOBAL)
     i = p.var(iname)
     target = p.view(out, [ctx.index_at(idx, i)])
-    value = ctx.read_stored(leaf.args[2], np.arange(len(idx), dtype=np.int64), i)
-    stmt = p.store(target, p.add(p.load(target), value) if repeated or k else value)
+    value = ctx.read_stored(leaf.args[2], kept, i)
+    stmt = p.store(target, p.add(p.load(target), value) if add else value)
     if leaf.id in ctx.permutes:
       ctx.emit([irng], [stmt], delinearize=True)
     else:
