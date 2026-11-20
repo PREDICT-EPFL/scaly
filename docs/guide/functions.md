@@ -143,10 +143,10 @@ print(scale(3))                                   # 6
 
 A call binds the dtype of its expression or NumPy array. A Python number binds
 the dtype `np.asarray` gives it, so `scale(3)` runs an int64 instance. Each dtype
-gives its own instance. A float64 instance keeps the name a plain shape hole
-would give it, and other dtypes add `f32`, `i64` and so on. A fixed dtype is
-still written with a `TensorType`, and `instantiate` binds an open dtype only
-through one: `scale.instantiate((sc.TensorType((3,), sc.dtypes.float32),))`.
+gives its own instance. When every open dtype binds float64, the instance name
+has no dtype in it. Otherwise each open dtype adds one, such as `f32` or `i64`.
+A `TensorType` fixes a dtype, and `instantiate` binds an open dtype only through
+one: `scale.instantiate((sc.TensorType((3,), sc.dtypes.float32),))`.
 
 Each input binds its dtype separately, and expressions of different dtypes do
 not mix. A body that multiplies a float32 input by a float64 one raises
@@ -162,8 +162,9 @@ print(apply(np.eye(2, dtype=np.float32), np.array([1.0, 2.0])).dtype)  # float32
 ```
 
 An integer array binds an instance that behaves as if the input were declared
-with an integer `TensorType`: its arithmetic stays integer and its derivative is
-zero. An output declared without a shape takes its dtype from the body. One
+with an integer `TensorType`. An operation that needs floating operands, such as
+`/`, raises and asks for `sc.cast`, and the derivative with respect to the input
+is zero. An output declared without a shape takes its dtype from the body. One
 declared with a shape is float64 unless it also says `dtype=...`.
 
 ### Bare helpers

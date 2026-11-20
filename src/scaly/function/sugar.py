@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from collections.abc import Iterator
 from typing import Any, cast, overload
 
 import numpy as np
@@ -391,7 +392,7 @@ def cond(selector: Any, branches: tuple[Function | ConcreteFunction, ...], *oper
   actuals = None
   for fn in branches:
     source = Function._from_instance(fn) if isinstance(fn, ConcreteFunction) else fn
-    branch, prepared = source._prepare_arguments(_symbolic(operands), "cond")
+    branch, prepared = source._prepare_arguments(_symbolic(_hole_constants(operands, _dtype_holes(source))), "cond")
     leaves = branch.input_tree.flatten_symbolic(prepared, "cond")
     if actuals is None:
       actuals = tuple(leaves)
@@ -427,6 +428,26 @@ def _whole(item: Any) -> Any:
   return tuple(_whole(part) for part in item) if isinstance(item, tuple) else broadcast(item)
 
 
+def _dtype_holes(source: Function) -> Iterator[bool]:
+  """Whether each flat input leaf of ``source`` leaves its dtype to the call."""
+  return iter(() if source.inputs is None else tuple(_dtype_hole(decl) for decl in source.inputs.decls))
+
+
+def _hole_constants(item: Any, holes: Iterator[bool]) -> Any:
+  """Make each Python or NumPy leaf bound to a dtype hole a constant of the dtype ``np.asarray`` gives it.
+
+  The loop and ``cond`` builders turn the remaining leaves into constants of the declared dtype.
+  """
+  if isinstance(item, tuple):
+    return tuple(_hole_constants(part, holes) for part in item)
+  if isinstance(item, _Broadcast):
+    return _Broadcast(_hole_constants(item.value, holes))
+  if isinstance(item, _Window):
+    return _Window(_hole_constants(item.value, holes), item.start, item.stride)
+  hole = next(holes, False)
+  return Expr.const(np.asarray(item)) if hole and not isinstance(item, Expr) and not sparse.issparse(item) else item
+
+
 def _symbolic(item: Any) -> Any:
   """Make every leaf of a tree of loop slices an expression, keeping its marker."""
   if isinstance(item, tuple):
@@ -458,11 +479,14 @@ def _loop(
     raise ValueError(f"{what}: {'max_iter' if cond is not None else 'length'} must be non-negative")
   if max_trajectory is not None and max_trajectory < 0:
     raise ValueError(f"{what}: max_trajectory must be non-negative")
-  inits = init if isinstance(init, tuple) else (init,)
+  source = Function._from_instance(body) if isinstance(body, ConcreteFunction) else body
+  holes = _dtype_holes(source)
+  inits = _hole_constants(init if isinstance(init, tuple) else (init,), holes)
   leaves = [as_expr(leaf) for leaf in _leaves(inits)]
   step = (broadcast(Expr.const(np.int64(0))),) if index else ()
-  source = Function._from_instance(body) if isinstance(body, ConcreteFunction) else body
-  callee, actuals, layouts, _ = _map_arguments(source, length, what, (*_whole(inits), *step, *_symbolic(xs)))
+  if index:
+    next(holes, False)
+  callee, actuals, layouts, _ = _map_arguments(source, length, what, (*_whole(inits), *step, *_symbolic(_hole_constants(xs, holes))))
   n_carry, skip = len(leaves), len(leaves) + int(index)
   outers = tuple(actuals[skip:])
   trips = () if trip is None else (trip if isinstance(trip, Expr) else Expr.const(np.int64(trip)),)

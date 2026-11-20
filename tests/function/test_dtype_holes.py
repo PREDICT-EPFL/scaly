@@ -179,3 +179,49 @@ def test_outputs_may_leave_their_dtype_to_the_trace() -> None:
   assert fixed(np.ones(2)).dtype == np.float64
   with pytest.raises(TypeError, match="expected dtype float64 for 'y', got float32"):
     fixed(np.ones(2, np.float32))
+
+
+def test_a_name_records_which_leaf_bound_each_dtype() -> None:
+  pair: Any = sc.function(sc.arg("x", 2, dtype=...), sc.arg("y", 2, dtype=...), name="pair")(lambda x, y: (x, y))
+  a, b = np.ones(2, np.float32), np.ones(2)
+  pair(a, b)
+  pair(b, a)
+  pair(b, b)
+  assert sorted(i.name for i in pair.instances.values()) == ["pair_f32_f64_t9e26d8", "pair_f64_f32_t9e26d8", "pair_t9e26d8"]
+
+
+def test_python_loop_values_bind_like_np_asarray() -> None:
+  step: Any = sc.function(sc.arg("c", (), dtype=...))(lambda c: c + 1)
+  below: Any = sc.function(sc.arg("c", (), dtype=...))(lambda c: c < 4)
+  add: Any = sc.function(sc.arg("c", (), dtype=...), sc.arg("x", (), dtype=...))(lambda c, x: (c + x,))
+
+  @sc.function()
+  def loops() -> Any:
+    counted, _ = sc.scan(step, 1, length=3)
+    looped, _ = sc.while_loop(below, step, 1, max_iter=10)
+    summed, _ = sc.scan(add, np.int64(1), (sc.broadcast(2),), length=2)
+    return counted, looped, summed
+
+  results: Any = loops()
+  assert [np.asarray(r).dtype for r in results] == [np.int64] * 3
+  assert [int(r) for r in results] == [4, 4, 5]
+
+
+def test_seeds_and_multipliers_take_the_bound_source_types() -> None:
+  square: Any = sc.function(sc.arg("x", dtype=...), outputs=sc.arg("y"), name="square")(lambda x: x * x)
+  a = np.array([2.0, 3.0], np.float32)
+  for seed in (a, a.astype(np.float64)):
+    for result in (
+      sc.adjoint(square)(a, seed),
+      square.factory("pull", ["x", "lam:y"], [sc.factory.Adj("y", "x")])(a, seed),
+      sc.forward(square)(a, seed),
+      square.factory("push", ["x", "fwd:x"], [sc.factory.Fwd("y", "x")])(a, seed),
+    ):
+      assert np.asarray(result).dtype == np.float32
+      np.testing.assert_array_equal(result, 2 * a * a)
+  hessian: Any = sc.lagrangian_hessian(square)
+  np.testing.assert_array_equal(hessian(a, np.ones(2)), np.diag([2.0, 2.0]))
+  symbolic = sc.adjoint(square).symbolic_call(sc.sym("x", 2, dtype=f32), sc.sym("lam", 2, dtype=f32))
+  assert symbolic.type.dtype == f32
+  with pytest.raises(ValueError, match="expected dtype float32"):
+    sc.adjoint(square).symbolic_call(sc.sym("x", 2, dtype=f32), sc.sym("lam", 2))

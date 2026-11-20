@@ -991,6 +991,9 @@ Nothing ties two holed leaves together: the body is traced with the bound types,
 combines a float32 leaf with a float64 one without `sc.cast` raises [#25]'s mixed-dtype error and no
 instance is made. An integer binding gives the instance a concrete integer `TensorType` would:
 integer arithmetic, mixing refused without a cast, a zero derivative with respect to that leaf.
+An instance name has no dtype token when every dtype hole binds float64, and otherwise one token
+per dtype hole, `f64` included, so two bindings never share a name. Seeds and multipliers whose
+dtype is open take the bound source's dtype, as [#12] says.
 Rejected: a hole inside `TensorType`, which would put an unbound value in the compiler's own type
 and still needs a shape; a bare `arg` leaving its dtype open, which would turn today's float64
 conversion of integer and float32 arguments into new instances; refusing integer bindings, which

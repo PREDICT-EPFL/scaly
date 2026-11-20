@@ -32,9 +32,10 @@ def _types(skeleton: Any) -> tuple[TensorType, ...]:
   return tuple(_leaves(skeleton))
 
 
-# The instance-name token of a dtype bound to a dtype hole. float64 has none, so a float64 binding
-# keeps the name a plain shape hole gives it.
-_DTYPE_TOKENS = {"float32": "f32", "int32": "i32", "int64": "i64", "bool": "b", "uint8": "u8"}
+# The instance-name token of a dtype bound to a dtype hole. When every dtype hole binds float64 the
+# name has no dtype token, as for a plain shape hole. Otherwise every dtype hole has one, float64
+# included, so the tokens say which leaf bound which dtype.
+_DTYPE_TOKENS = {"float32": "f32", "float64": "f64", "int32": "i32", "int64": "i64", "bool": "b", "uint8": "u8"}
 
 
 def _bound_dtype(value: Any) -> DType:
@@ -46,10 +47,12 @@ def _bound_dtype(value: Any) -> DType:
 
 def _mangle(name: str, skeleton: Any, types: tuple[TensorType, ...], decls: tuple[TensorType | None, ...] | None = None) -> str:
   tokens = []
-  for decl, type_ in zip(decls if decls is not None else (None,) * len(types), types, strict=True):
+  decls = decls if decls is not None else (None,) * len(types)
+  dtype_tokens = any(_dtype_hole(decl) and type_.dtype != dtypes.float64 for decl, type_ in zip(decls, types, strict=True))
+  for decl, type_ in zip(decls, types, strict=True):
     if _shape_hole(decl):
       tokens.append("x".join(map(str, type_.shape)) if type_.shape else "s")
-    if _dtype_hole(decl) and type_.dtype != dtypes.float64:
+    if _dtype_hole(decl) and dtype_tokens:
       tokens.append(_DTYPE_TOKENS[type_.dtype.name])
     if _pattern_hole(decl) or decl is None and type_.pattern is not None:
       tokens.append(f"p{type_.pattern.digest[:8]}" if type_.pattern is not None else "pdense")
@@ -278,7 +281,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
         return declarations[key[4:]]
       if key.startswith("lam:"):
         decl = None if self.outputs is None else self.outputs.decls[self.outputs.index(key[4:])]
-        return _Hole(shape_hole=True, pattern_hole=True) if decl is None and layouts.get(key) in (None, "csc", "csr") else decl
+        return _Hole(shape_hole=True, dtype_hole=True, pattern_hole=True) if decl is None and layouts.get(key) in (None, "csc", "csr") else decl
       raise ValueError(f"unknown factory input: {key!r}")
 
     input_layouts = dict(zip(source_inputs.names, source_inputs._layout_decls, strict=True))
@@ -361,10 +364,42 @@ class _Derived(Function[Any, Any, Any, Any]):
   _source: Function[Any, Any, Any, Any]
   _transform: Callable[[ConcreteFunction[Any, Any, Any, Any]], ConcreteFunction[Any, Any, Any, Any]]
   _source_skeleton: Callable[[Any], Any]
+  _transformed: dict[ConcreteFunction[Any, Any, Any, Any], ConcreteFunction[Any, Any, Any, Any]] = field(init=False, default_factory=dict)
+
+  def _transformed_instance(self, skeleton: Any) -> ConcreteFunction[Any, Any, Any, Any]:
+    source = self._source._bind(self._source_skeleton(skeleton), self.name)
+    if source not in self._transformed:
+      self._transformed[source] = self._transform(source)
+    return self._transformed[source]
+
+  def _bind(self, skeleton: Any, what: str) -> ConcreteFunction[Any, Any, Any, Any]:
+    """Give each seed or multiplier whose dtype the declaration leaves open the bound source's dtype.
+
+    The arguments of the source alone select its instance, so an open seed dtype takes the dtype
+    of the leaf it seeds, as a declared one would. A numerical seed is then converted as for any
+    declared leaf, and a symbolic seed of another dtype is rejected by the instance.
+    """
+    if self.inputs is None or skeleton in self._argument_cache:
+      return super()._bind(skeleton, what)
+    if _structure(self.inputs.unflatten(self.inputs.decls)) != _structure(skeleton):
+      raise ValueError(f"{what}: value does not have the declared structure of {self.inputs.names}")
+    expected = self._transformed_instance(skeleton).input_tree.types
+    types = _types(skeleton)
+    if len(expected) == len(types):
+      bound = self.inputs.unflatten(
+        tuple(
+          replace(type_, dtype=want.dtype)
+          if (decl is None or _dtype_hole(decl)) and type_.shape == want.shape and type_.dtype != want.dtype
+          else type_
+          for decl, type_, want in zip(self.inputs.decls, types, expected, strict=True)
+        )
+      )
+      if bound != skeleton:
+        self._argument_cache[skeleton] = super()._bind(bound, what)
+    return super()._bind(skeleton, what)
 
   def _derive(self, skeleton: Any) -> ConcreteFunction[Any, Any, Any, Any]:
-    source = self._source._bind(self._source_skeleton(skeleton), self.name)
-    instance = self._transform(source)
+    instance = self._transformed_instance(skeleton)
     expected = _skeleton(instance.input_tree, instance.input_tree.types)
 
     def compatible(left: Any, right: Any) -> bool:
