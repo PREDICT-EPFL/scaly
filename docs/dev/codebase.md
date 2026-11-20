@@ -107,7 +107,8 @@ src/scaly/
 
   linalg/                linear algebra as library Functions over LOOP, with custom derivative rules
     dense.py             triangular solves, Cholesky, LDL^T and LU, their solves and rules, stacks over leading axes
-    entry.py             the solve entry point, choosing a factorization by matrix type and assume
+    entry.py             the solve, cholesky and ldl entry points, choosing dense or sparse by matrix type
+    sparse.py            sparse Cholesky and LDL^T and their solves, loops over the symbolic analysis' tables
     symbolic.py          orderings, elimination tree and the pattern of L for sparse factorizations, from a pattern alone
 
   viz/

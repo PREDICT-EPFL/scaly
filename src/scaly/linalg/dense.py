@@ -491,44 +491,13 @@ def solve_triangular(T: Any, b: Any, *, lower: bool, trans: bool = False, unit_d
 
 
 def cholesky(A: Any) -> tuple[Expr, Expr]:
-  """Factor a symmetric positive definite ``A`` as ``L L^T``, returning ``(L, status)``.
-
-  Only the lower triangle of ``A`` is read, and an entry below the diagonal stands for itself
-  and its mirror. ``A`` is a float32 or float64 square matrix, or a stack of them over leading axes. ``L`` is lower
-  triangular with zeros above the diagonal, and has the dtype of ``A``.
-
-  ``status`` holds one int32 per matrix. It is 0 when every pivot is usable, and otherwise
-  ``j + 1`` for the first unusable pivot ``j`` counted from zero, so pivots are numbered from one
-  as LAPACK numbers them. A pivot is unusable when it is not
-  greater than the machine epsilon of ``A``'s dtype times the diagonal entry of ``A`` it came from, which includes
-  zero, negative and NaN pivots. The entries of ``L`` from an unusable pivot on are meaningless.
-
-  ``L`` is differentiable in ``A``. The derivative of an entry below the diagonal is the sum of
-  the derivatives with respect to the two mirrored entries it stands for. The reverse derivative
-  reuses ``L``, and the forward derivative factors ``A`` once more.
-  """
+  """The dense case of ``scaly.linalg.cholesky``."""
   A = as_expr(A)
   return _mapped(_cholesky, _square("cholesky", A), A)
 
 
 def ldl(A: Any) -> tuple[Expr, Expr, Expr]:
-  """Factor a symmetric quasi-definite ``A`` as ``L D L^T`` without pivoting, returning ``(L, d, status)``.
-
-  Only the lower triangle of ``A`` is read, as in `cholesky`. ``A`` is a float32 or float64 square matrix, or
-  a stack of them over leading axes. ``L`` is unit lower triangular, with ones on the diagonal and
-  zeros above it, and ``d`` holds the diagonal of ``D``. Without pivoting the factorization exists
-  for quasi-definite matrices, such as ``[[P, B^T], [B, -R]]`` with ``P`` and ``R`` positive definite,
-  and its pivots may have either sign. Another symmetric matrix can give small pivots that pass
-  the status check and factors with no accurate digits.
-
-  ``status`` follows `cholesky`, with a pivot unusable when its magnitude is not greater than
-  machine epsilon times the magnitude of the diagonal entry of ``A`` it came from, or when it is
-  infinite.
-
-  The factors are meant to be read, not differentiated: differentiate `solve` instead. They have
-  a forward rule, which factors ``A`` once more for every direction, and no reverse rule, so a
-  gradient through them differentiates the loops of the factorization.
-  """
+  """The dense case of ``scaly.linalg.ldl``."""
   A = as_expr(A)
   LD, status = _mapped(_ldl, _square("ldl", A), A)
   n = A.shape[-1]
