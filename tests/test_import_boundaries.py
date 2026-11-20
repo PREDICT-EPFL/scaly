@@ -17,8 +17,8 @@ from scaly.ir.expr_spec import spec_expr
 from scaly.ir.program import ProgramNode, ProgramOp
 from scaly.ir.program_spec import spec_program_full
 from scaly.ir.spec import Rule, Spec, VerifyError
-from scaly.linalg.dense import cholesky, ldl, lu_factor, solve_triangular
-from scaly.linalg.entry import solve
+from scaly.linalg.dense import lu_factor, solve_triangular
+from scaly.linalg.entry import cholesky, ldl, solve
 from scaly.solvers.paths import SolverLibraryError
 from scaly.solvers.ocp import DiscreteOCP, StageConstraint
 from scaly.solvers.problem import NO_LB, NO_UB, Bounded, Problem, ProblemSpec

@@ -99,8 +99,8 @@ def test_solve_checks_its_arguments() -> None:
     linalg.solve(k, b, assume="her")
   with pytest.raises(ValueError, match="right-hand side has shape"):
     linalg.solve(k, sc.sym("c", N + 1), assume="pos")
-  with pytest.raises(TypeError, match="dense matrix"):
-    linalg.solve(sc.sparsify(sc.sym("S", (N, N)) * sc.const(np.eye(N))), b, assume="pos")
+  with pytest.raises(ValueError, match="assume 'pos' or 'sym'"):
+    linalg.solve(sc.sparsify(sc.sym("S", (N, N)) * sc.const(np.eye(N))), b, assume="gen")
   with pytest.raises(ValueError, match="right-hand side has shape"):
     linalg.solve(k, sc.sym("s", ()), assume="pos")
   with pytest.raises(TypeError, match="float32 or float64 matrix"):

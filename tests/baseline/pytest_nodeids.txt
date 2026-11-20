@@ -2566,8 +2566,12 @@ tests/codegen/test_cpp.py::test_cpp_header_declares_namespace_buffers_and_conste
 tests/codegen/test_cpp.py::test_cpp_workspace_parameter_does_not_shadow_exported_entry
 tests/codegen/test_cpp.py::test_headers_split_names_shared_by_an_input_and_an_output
 tests/codegen/test_cpp.py::test_headers_survive_buffer_names_that_collide_with_the_wrapper
-tests/codegen/test_embedded.py::test_cortex_m_float32_solve_links_no_double_precision_helper[cortex_m4]
-tests/codegen/test_embedded.py::test_cortex_m_float32_solve_links_no_double_precision_helper[cortex_m7]
+tests/codegen/test_embedded.py::test_cortex_m_float32_solve_links_no_double_precision_helper[cortex_m4-dense]
+tests/codegen/test_embedded.py::test_cortex_m_float32_solve_links_no_double_precision_helper[cortex_m4-sparse pos]
+tests/codegen/test_embedded.py::test_cortex_m_float32_solve_links_no_double_precision_helper[cortex_m4-sparse sym]
+tests/codegen/test_embedded.py::test_cortex_m_float32_solve_links_no_double_precision_helper[cortex_m7-dense]
+tests/codegen/test_embedded.py::test_cortex_m_float32_solve_links_no_double_precision_helper[cortex_m7-sparse pos]
+tests/codegen/test_embedded.py::test_cortex_m_float32_solve_links_no_double_precision_helper[cortex_m7-sparse sym]
 tests/codegen/test_embedded.py::test_cortex_m_oracle_has_only_libm_symbols[cortex_m4]
 tests/codegen/test_embedded.py::test_cortex_m_oracle_has_only_libm_symbols[cortex_m7]
 tests/codegen/test_embedded.py::test_embedded_values_and_jacobian_match_numpy
@@ -4176,6 +4180,63 @@ tests/linalg/test_ldl_lu.py::test_solve_derivatives_match_the_unrolled_reference
 tests/linalg/test_ldl_lu.py::test_the_lu_forward_rule_survives_a_tiny_pivot
 tests/linalg/test_ldl_lu.py::test_the_primal_loops_update_their_carries_in_place[gen-loops1]
 tests/linalg/test_ldl_lu.py::test_the_primal_loops_update_their_carries_in_place[sym-loops0]
+tests/linalg/test_sparse.py::test_a_scipy_matrix_takes_any_right_hand_side[pos-float32]
+tests/linalg/test_sparse.py::test_a_scipy_matrix_takes_any_right_hand_side[pos-float64]
+tests/linalg/test_sparse.py::test_a_scipy_matrix_takes_any_right_hand_side[sym-float32]
+tests/linalg/test_sparse.py::test_a_scipy_matrix_takes_any_right_hand_side[sym-float64]
+tests/linalg/test_sparse.py::test_a_subnormal_pivot_scales_its_column_without_overflow
+tests/linalg/test_sparse.py::test_a_value_and_its_gradient_share_one_factorization[pos-cholesky]
+tests/linalg/test_sparse.py::test_a_value_and_its_gradient_share_one_factorization[sym-ldl]
+tests/linalg/test_sparse.py::test_an_unusable_pivot_sets_the_status_in_the_reordered_numbering[cholesky-amd]
+tests/linalg/test_sparse.py::test_an_unusable_pivot_sets_the_status_in_the_reordered_numbering[cholesky-natural]
+tests/linalg/test_sparse.py::test_an_unusable_pivot_sets_the_status_in_the_reordered_numbering[cholesky-rcm]
+tests/linalg/test_sparse.py::test_an_unusable_pivot_sets_the_status_in_the_reordered_numbering[ldl-amd]
+tests/linalg/test_sparse.py::test_an_unusable_pivot_sets_the_status_in_the_reordered_numbering[ldl-natural]
+tests/linalg/test_sparse.py::test_an_unusable_pivot_sets_the_status_in_the_reordered_numbering[ldl-rcm]
+tests/linalg/test_sparse.py::test_either_triangle_stands_for_its_mirror[both]
+tests/linalg/test_sparse.py::test_either_triangle_stands_for_its_mirror[upper]
+tests/linalg/test_sparse.py::test_every_loop_updates_its_carries_in_place[pos-cholesky]
+tests/linalg/test_sparse.py::test_every_loop_updates_its_carries_in_place[sym-ldl]
+tests/linalg/test_sparse.py::test_factors_and_solves_match_scipy[arrow, hub first-amd]
+tests/linalg/test_sparse.py::test_factors_and_solves_match_scipy[arrow, hub first-natural]
+tests/linalg/test_sparse.py::test_factors_and_solves_match_scipy[arrow, hub first-rcm]
+tests/linalg/test_sparse.py::test_factors_and_solves_match_scipy[arrow, hub last-amd]
+tests/linalg/test_sparse.py::test_factors_and_solves_match_scipy[arrow, hub last-natural]
+tests/linalg/test_sparse.py::test_factors_and_solves_match_scipy[arrow, hub last-rcm]
+tests/linalg/test_sparse.py::test_factors_and_solves_match_scipy[banded-amd]
+tests/linalg/test_sparse.py::test_factors_and_solves_match_scipy[banded-natural]
+tests/linalg/test_sparse.py::test_factors_and_solves_match_scipy[banded-rcm]
+tests/linalg/test_sparse.py::test_factors_and_solves_match_scipy[block-tridiagonal-amd]
+tests/linalg/test_sparse.py::test_factors_and_solves_match_scipy[block-tridiagonal-natural]
+tests/linalg/test_sparse.py::test_factors_and_solves_match_scipy[block-tridiagonal-rcm]
+tests/linalg/test_sparse.py::test_factors_and_solves_match_scipy[random-amd]
+tests/linalg/test_sparse.py::test_factors_and_solves_match_scipy[random-natural]
+tests/linalg/test_sparse.py::test_factors_and_solves_match_scipy[random-rcm]
+tests/linalg/test_sparse.py::test_float32_matrices_factor_and_solve_in_float32
+tests/linalg/test_sparse.py::test_ordering_applies_to_sparse_matrices_only
+tests/linalg/test_sparse.py::test_quasi_definite_solves_match_scipy[arrow, hub first-amd]
+tests/linalg/test_sparse.py::test_quasi_definite_solves_match_scipy[arrow, hub first-natural]
+tests/linalg/test_sparse.py::test_quasi_definite_solves_match_scipy[arrow, hub first-rcm]
+tests/linalg/test_sparse.py::test_quasi_definite_solves_match_scipy[arrow, hub last-amd]
+tests/linalg/test_sparse.py::test_quasi_definite_solves_match_scipy[arrow, hub last-natural]
+tests/linalg/test_sparse.py::test_quasi_definite_solves_match_scipy[arrow, hub last-rcm]
+tests/linalg/test_sparse.py::test_quasi_definite_solves_match_scipy[banded-amd]
+tests/linalg/test_sparse.py::test_quasi_definite_solves_match_scipy[banded-natural]
+tests/linalg/test_sparse.py::test_quasi_definite_solves_match_scipy[banded-rcm]
+tests/linalg/test_sparse.py::test_quasi_definite_solves_match_scipy[block-tridiagonal-amd]
+tests/linalg/test_sparse.py::test_quasi_definite_solves_match_scipy[block-tridiagonal-natural]
+tests/linalg/test_sparse.py::test_quasi_definite_solves_match_scipy[block-tridiagonal-rcm]
+tests/linalg/test_sparse.py::test_quasi_definite_solves_match_scipy[random-amd]
+tests/linalg/test_sparse.py::test_quasi_definite_solves_match_scipy[random-natural]
+tests/linalg/test_sparse.py::test_quasi_definite_solves_match_scipy[random-rcm]
+tests/linalg/test_sparse.py::test_reverse_over_reverse_matches_forward_over_reverse[pos]
+tests/linalg/test_sparse.py::test_reverse_over_reverse_matches_forward_over_reverse[sym]
+tests/linalg/test_sparse.py::test_solve_derivatives_match_finite_differences[pos-0-amd]
+tests/linalg/test_sparse.py::test_solve_derivatives_match_finite_differences[pos-0-natural]
+tests/linalg/test_sparse.py::test_solve_derivatives_match_finite_differences[sym-2-amd]
+tests/linalg/test_sparse.py::test_solve_derivatives_match_finite_differences[sym-2-natural]
+tests/linalg/test_sparse.py::test_the_factor_outputs_are_declared_nondifferentiable[cholesky]
+tests/linalg/test_sparse.py::test_the_factor_outputs_are_declared_nondifferentiable[ldl]
 tests/linalg/test_symbolic.py::test_amd_fill_is_within_superlus_minimum_degree_fill[arrow-mask5]
 tests/linalg/test_symbolic.py::test_amd_fill_is_within_superlus_minimum_degree_fill[banded-mask4]
 tests/linalg/test_symbolic.py::test_amd_fill_is_within_superlus_minimum_degree_fill[grid-mask0]
@@ -4341,6 +4402,8 @@ tests/passes/lowering/test_fusion.py::test_sparse_fusion_requires_the_same_store
 tests/passes/lowering/test_fusion.py::test_value_read_by_two_agreeing_consumers_is_computed_once
 tests/passes/lowering/test_fusion.py::test_value_read_several_times_per_element_is_stored[broadcast]
 tests/passes/lowering/test_fusion.py::test_value_read_several_times_per_element_is_stored[matmul_operand]
+tests/passes/lowering/test_in_place.py::test_a_hinted_copy_of_the_inner_result_keeps_the_update
+tests/passes/lowering/test_in_place.py::test_a_hinted_copy_read_after_a_later_loop_keeps_the_old_value
 tests/passes/lowering/test_in_place.py::test_alias_created_before_update_is_read_after_it
 tests/passes/lowering/test_in_place.py::test_batched_integer_indices_remain_provable
 tests/passes/lowering/test_in_place.py::test_disjoint_later_read
@@ -4349,6 +4412,7 @@ tests/passes/lowering/test_in_place.py::test_disjointness_keeps_steps_separate
 tests/passes/lowering/test_in_place.py::test_dynamic_index_keeps_an_in_place_loop_rolled
 tests/passes/lowering/test_in_place.py::test_float_index_cannot_prove_disjointness
 tests/passes/lowering/test_in_place.py::test_floor_regression_numpy_result
+tests/passes/lowering/test_in_place.py::test_inner_loop_threads_the_carry_in_place
 tests/passes/lowering/test_in_place.py::test_inout_carry_is_not_hoisted
 tests/passes/lowering/test_in_place.py::test_inout_parameter_and_call_contract
 tests/passes/lowering/test_in_place.py::test_inplace_helper_name_does_not_collide_with_user_function
@@ -4357,6 +4421,7 @@ tests/passes/lowering/test_in_place.py::test_last_use
 tests/passes/lowering/test_in_place.py::test_lengths_and_reverse_preserve_input[0-False]
 tests/passes/lowering/test_in_place.py::test_lengths_and_reverse_preserve_input[1-True]
 tests/passes/lowering/test_in_place.py::test_lengths_and_reverse_preserve_input[5-True]
+tests/passes/lowering/test_in_place.py::test_old_carry_read_after_the_inner_loop_refuses
 tests/passes/lowering/test_in_place.py::test_overlapping_later_gather_refuses
 tests/passes/lowering/test_in_place.py::test_print_alias_reads_the_entering_carry
 tests/passes/lowering/test_in_place.py::test_print_alias_stacks_the_entering_carry
@@ -5503,6 +5568,7 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.ir.types]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.ir]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.linalg.dense]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.linalg.entry]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.linalg.sparse]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.linalg.symbolic]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.linalg]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.affine]

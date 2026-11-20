@@ -1,8 +1,9 @@
 # Linear algebra
 
-`scaly.linalg` solves dense linear systems inside a function: triangular solves, the Cholesky,
+`scaly.linalg` solves linear systems inside a function: triangular solves, the Cholesky,
 \(L D L^T\) and LU factorizations, and `solve` for positive definite, symmetric quasi-definite and
-general matrices. They build calls of Scaly
+general matrices. Cholesky, \(L D L^T\) and their solves also take a
+[sparse matrix](#sparse-matrices). They build calls of Scaly
 functions written with [loops](control_flow.md), so the generated C contains the factorization
 itself and calls no BLAS or LAPACK library. Their results are differentiable.
 
@@ -104,9 +105,9 @@ NumPy or SciPy without raising an error. Two of the arguments have no default to
 
 `lu_factor` returns the same `lu` and `piv` as `scipy.linalg.lu_factor`, followed by a status.
 `scipy.linalg.ldl` pivots and returns `(lu, d, perm)` with `d` a block diagonal matrix, while
-`linalg.ldl` returns `(L, d, status)` with `d` the vector of pivots. All of them take dense
-float32 or float64 matrices, as [below](#float32-matrices) explains, and raise `TypeError` for
-sparse or integer ones.
+`linalg.ldl` returns `(L, d, status)` with `d` the vector of pivots. All of them take float32 or
+float64 matrices, as [below](#float32-matrices) explains, and raise `TypeError` for integer ones.
+`lu_factor`, `solve_triangular` and `solve(..., assume="gen")` take only dense matrices.
 
 ## Only the lower triangle is read
 
@@ -211,6 +212,73 @@ print(status)
 # [0 0 1 0]
 ```
 
+## Sparse matrices
+
+A matrix with a [stored pattern](sparse_matrices.md) passes through the same functions:
+`cholesky`, `ldl`, and `solve` with `"pos"` or `"sym"`. The factorization then computes only the
+entries of the factor that the pattern allows, and its work grows with those entries rather than
+with the cube of the order. The arrow matrix below couples its first unknown to every other one,
+as a constraint couples the variables of a quadratic program:
+
+```python
+from scipy import sparse
+
+K_value = sparse.csc_array(np.array([
+    [-2.0, 1.0, 1.0, 1.0, 1.0],
+    [1.0, 4.0, 0.0, 0.0, 0.0],
+    [1.0, 0.0, 4.0, 0.0, 0.0],
+    [1.0, 0.0, 0.0, 4.0, 0.0],
+    [1.0, 0.0, 0.0, 0.0, 4.0],
+]))
+K_type = sc.TensorType((5, 5), pattern=sc.const(K_value).type.pattern)
+
+@sc.function(sc.arg("K", K_type), sc.arg("b", 5),
+             outputs=sc.group(sc.arg("x", 5), sc.arg("status", status_type)))
+def arrow_solve(K: sc.Expr, b: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    return linalg.solve(K, b, assume="sym")
+
+print(arrow_solve(K_value, np.ones(5)))
+# (array([0.  , 0.25, 0.25, 0.25, 0.25]), array(0, dtype=int32))
+```
+
+`b` and `x` stay dense. As for a dense matrix, only the lower triangle is read, but the pattern
+may store the lower triangle, the upper one or both. An entry stored in one triangle stands for
+its mirror, and of a pair stored in both, the lower entry is read.
+
+Elimination can create nonzeros where the matrix has none, called fill. Which entries fill depends
+on the order of the unknowns, so the sparse factorization first reorders them symmetrically,
+factoring \(P K P^T\) for a permutation \(P\). `ordering` chooses it when the function is
+traced, from the pattern alone. `"amd"`, the default, is approximate minimum degree, which keeps
+the fill small on general patterns. `"rcm"`, reverse Cuthill-McKee, keeps a banded matrix banded,
+such as one whose unknowns are ordered stage by stage. `"natural"` keeps the given order. Eliminating
+the arrow's first unknown first fills the whole lower triangle, while minimum degree eliminates it
+near the end and leaves no fill:
+
+```python
+for ordering in ("natural", "amd"):
+    @sc.function(sc.arg("K", K_type),
+                 outputs=sc.group(sc.arg("L"), sc.arg("d", 5), sc.arg("status", status_type)))
+    def arrow_factor(K: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+        return linalg.ldl(K, ordering=ordering)
+
+    L, d, status = arrow_factor(K_value)
+    print(ordering, L.nnz)
+# natural 15
+# amd 9
+```
+
+`solve` applies the permutation itself, so its result does not depend on the ordering beyond
+rounding. The factors do. `L` is a sparse matrix of \(P K P^T\), in the reordered numbering, whose
+pattern holds the entries the factorization may fill and the diagonal. `d` is a dense vector in the
+same numbering, and so is the position of the first unusable pivot in the status. `ordering` with a
+dense matrix raises `TypeError`, and a sparse matrix takes no stack over leading axes.
+
+The derivatives of a sparse solve are those of a dense one, with \(\bar K\) on the entries the
+factorization reads and zero on the mirrored entries it does not. Forward mode solves
+\(dx = K^{-1}(db - dK\, x)\) with the factor of the solve instead of differentiating the steps of
+the factorization. The sparse `L` and `d` are meant to be read, not differentiated, and a
+derivative should go through `solve`.
+
 ## Float32 matrices
 
 Every routine computes in the dtype of its matrix, float32 or float64, and returns factors and
@@ -292,7 +360,10 @@ derivative should go through `solve`.
 ## Generated code
 
 Each factorization and substitution is a `scan` over the columns or rows of the matrix, with
-inner loops whose trip counts depend on the step, so the loops cover only one triangle. The LU
+inner loops whose trip counts depend on the step, so the loops cover only one triangle. A sparse
+factorization reads its trip counts and the rows it updates from constant tables of the pattern,
+column by column: it loads a column of the matrix into a dense work vector, subtracts the earlier
+columns that reach it, and stores the column of the factor. The LU
 factorization computes each column from the earlier ones, searches it for the pivot and exchanges
 two rows of the matrix at the pivot's run-time position. The
 factor and the solution are updated in place. The loops themselves have the same size at every

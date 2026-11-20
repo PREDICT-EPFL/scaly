@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 
 from ...ad.rules import ELEMENTWISE
 from ...ir import program as p
-from ...ir.expr import Expr, ExprOp, _index_values
+from ...ir.expr import Expr, ExprOp, _index_values, callees_of, invocation_key, topo
 from ...ir.program import ProgramNode, ProgramOp
 from ...function.concrete import ConcreteFunction
 from ...ir.types import dtypes
@@ -131,8 +133,56 @@ def _safe_link(
   return True
 
 
-def carry_reuse(fun: ConcreteFunction, n_carry: int, length: int, index: bool, excluded: set[int]) -> dict[int, tuple[Expr, ...]]:
-  """Return proved scatter chains, keyed by the carry input position."""
+# Readers that lowering always stores, so a reader computed before a loop never runs after it.
+_STORED_READERS = {ExprOp.LOOP, ExprOp.CALL, ExprOp.COND, ExprOp.EXTERN, ExprOp.SCATTER}
+
+
+def _stored_reader(node: Expr) -> bool:
+  return node.op in _STORED_READERS or node.op == ExprOp.GATHER and (node.args[1].value is None or node.attrs["mode"] == "fill")
+
+
+def _safe_loop_link(nodes: tuple[Expr, ...], link: Expr, versions: set[Expr], outputs: tuple[Expr, ...]) -> bool:
+  """A carry of an inner loop can run in the buffer of its initial value when nothing else reads that value
+  after the loop: every other reader is stored and is computed before the loop, which depends on it."""
+  versions = _aliases(nodes, versions)
+  carry = link.attrs["output"]
+  if any(arg in versions for position, arg in enumerate(link.args) if position != carry) or any(out in versions for out in outputs):
+    return False
+  # A loop result built twice, under different lowering hints, is one value with two nodes: either could
+  # take the buffer, and a read of the other escapes the reader checks. Such a chain is not proved.
+  if any(_duplicated(nodes, version) for version in (*versions, link) if version.op == ExprOp.LOOP):
+    return False
+  key = invocation_key(link)
+  before = {node.id for node in topo(link.args)}
+  for node in nodes:
+    if node in versions or callees_of(node) and invocation_key(node) == key or not any(arg in versions for arg in node.args):
+      continue
+    if node.id not in before or not _stored_reader(node):
+      return False
+  return True
+
+
+def _duplicated(nodes: tuple[Expr, ...], result: Expr) -> bool:
+  """Whether another node is the same result of the same loop invocation."""
+  key, output = invocation_key(result), result.attrs["output"]
+  return any(node is not result and node.op == ExprOp.LOOP and node.attrs["output"] == output and invocation_key(node) == key for node in nodes)
+
+
+def _loop_trajectories(nodes: tuple[Expr, ...], link: Expr) -> set[int]:
+  """The carries of ``link``'s loop whose trajectories some node reads."""
+  key, count = invocation_key(link), len(link.attrs["callee"].results)
+  outputs = {int(node.attrs["output"]) for node in nodes if node.op == ExprOp.LOOP and invocation_key(node) == key}
+  return {c for c in range(link.attrs["n_carry"]) if count + 1 + c in outputs}
+
+
+def carry_reuse(
+  fun: ConcreteFunction, n_carry: int, length: int, index: bool, excluded: set[int], inner: Callable[[Expr, set[int]], frozenset[int]] | None = None
+) -> dict[int, tuple[Expr, ...]]:
+  """Return proved chains of scatters and inner loops, keyed by the carry input position.
+
+  ``inner(loop, trajectories)`` gives the carries an inner loop proves in place, without it an inner
+  loop ends a chain. Such a loop is a link when it threads the carry through one of those carries.
+  """
   nodes = tuple(fun.nodes)
   batches: dict[int, np.ndarray] | None = None
   proved: dict[int, tuple[Expr, ...]] = {}
@@ -141,15 +191,32 @@ def carry_reuse(fun: ConcreteFunction, n_carry: int, length: int, index: bool, e
       continue
     chain: list[Expr] = []
     current = fun.outputs[k]
-    while current.op == ExprOp.SCATTER and current.attrs["mode"] != "fill" and current.type.pattern is None:
-      chain.append(current)
-      current = current.args[0]
+    while True:
+      if current.op == ExprOp.SCATTER and current.attrs["mode"] != "fill" and current.type.pattern is None:
+        chain.append(current)
+        current = current.args[0]
+      elif (
+        inner is not None
+        and current.op == ExprOp.LOOP
+        and (carry := int(current.attrs["output"])) < current.attrs["n_carry"]
+        and carry in inner(current, _loop_trajectories(nodes, current))
+      ):
+        chain.append(current)
+        current = current.args[carry]
+      else:
+        break
     if current is not fun.inputs[k]:
       continue
     chain.reverse()
     versions = {current}
     safe = True
     for link in chain:
+      if link.op == ExprOp.LOOP:
+        if not _safe_loop_link(nodes, link, versions, tuple(fun.outputs)):
+          safe = False
+          break
+        versions.add(link)
+        continue
       later = nodes[nodes.index(link) + 1 :]
       if any(any(arg in versions for arg in node.args) for node in later):
         if batches is None:

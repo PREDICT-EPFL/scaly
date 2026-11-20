@@ -150,11 +150,26 @@ def test_float32_solve_matches_numpy() -> None:
   np.testing.assert_allclose(x, np.linalg.solve(k.astype(np.float64), b), rtol=1e-5)
 
 
+# An arrow matrix, its hub last, as a constraint couples the variables of a small QP: the sparse
+# factorization's loops, the work column and the analysis' tables all reach the generated C.
+_ARROW = sc.SparsityPattern.from_mask(np.tril(np.eye(5, dtype=bool) | (np.arange(5) == 4)[:, None])).canonicalize()[0]
+
+
+def _embedded_sparse_solve(assume: str) -> sc.Function:
+  @sc.function(sc.arg("K", sc.TensorType((5, 5), F32, pattern=_ARROW)), sc.arg("b", sc.TensorType((5,), F32)), name=f"embedded_sparse_solve_{assume}")
+  def solve(K: sc.Expr, b: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    return linalg.solve(K, b, assume=assume)
+
+  return solve
+
+
+@pytest.mark.parametrize("solve", ["dense", "sparse pos", "sparse sym"])
 @pytest.mark.parametrize("cpu", ["cortex_m4", "cortex_m7"])
-def test_cortex_m_float32_solve_links_no_double_precision_helper(tmp_path, cpu) -> None:
+def test_cortex_m_float32_solve_links_no_double_precision_helper(tmp_path, cpu, solve) -> None:
   if sys.platform != "linux" or not all(shutil.which(tool) for tool in ("zig", "nm")):
     pytest.skip("the Cortex-M check needs Linux, Zig and GNU binutils")
-  module = write_module(embedded_solve, tmp_path, dialect="c", lanes=1, frame_budget=0)
+  function = embedded_solve if solve == "dense" else _embedded_sparse_solve(solve.split()[1])
+  module = write_module(function, tmp_path, dialect="c", lanes=1, frame_budget=0)
   assert "double" not in module.source
   obj = tmp_path / "solve.o"
   _compile(tmp_path / module.source_name, obj, cpu)

@@ -624,9 +624,10 @@ Zig spells Clang's `thumbv7em-none-eabihf` target as
 feature enables the single-precision floating-point unit. Use
 `-mcpu=cortex_m7+vfp4d16sp` for the M7. Disabling unwind tables avoids an
 unwind-runtime dependency, and `SCALY_PRINTF` removes generated prints.
-Zig supplies no bare-metal `math.h`, so the example includes declarations of
-its two libm functions in `examples/embedded/math.h`. An application can use
-its board toolchain's math header instead. This object needs only `sinf` and
+Zig supplies no bare-metal `math.h`, so the example includes a minimal one,
+`examples/embedded/math.h`, with the libm declarations the embedded examples use
+and the `isfinite` macro that `linalg.ldl` and the solves' pivot tests need. An
+application can use its board toolchain's math header instead. This object needs only `sinf` and
 `cosf`, which the final application must link from a hard-float target libm.
 
 `frame_budget=0` in Python, or `--frame-budget 0` on the command line, puts all

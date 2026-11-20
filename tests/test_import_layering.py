@@ -89,6 +89,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.linalg": 5,
   "scaly.linalg.dense": 5,
   "scaly.linalg.entry": 5,
+  "scaly.linalg.sparse": 5,
   "scaly.passes.program": 6,
   "scaly.passes.program._common": 6,
   "scaly.passes.program.fold_arith": 6,
