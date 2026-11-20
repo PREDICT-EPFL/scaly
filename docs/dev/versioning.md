@@ -54,7 +54,9 @@ A fully declared Function keeps its declared name. `@sc.function()` on a body wi
 counts as fully declared, so its body runs at the decorator and its instance takes the plain name.
 An instance of a function with open input shapes is named `<name>_<shapes>_t<nesting>`, where the shapes are the bound open shapes in
 declaration order, written `3x4` for a matrix and `s` for a scalar, and the nesting is a six-digit
-hexadecimal digest of the parameter tree. A bare function includes all of its input shapes. The
+hexadecimal digest of the parameter tree. An input whose dtype is left open adds `f32`, `i32`,
+`i64` or `b` after its shape when it binds float32, int32, int64 or bool, and nothing when it binds
+float64. A bare function includes all of its input shapes. The
 name never contains `__`, which C++ reserves. The declaration alone decides whether an instance
 name carries this suffix, never the order of calls, and a derivative given an explicit name
 inherits the suffix of its source instance. Two instances of one function that would share a name

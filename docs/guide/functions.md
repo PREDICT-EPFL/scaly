@@ -126,6 +126,46 @@ An open input is a differentiable float64 array. A `TensorType` in place of the
 shape fixes the dtype or marks an input as never differentiated, and fixes the
 shape with it.
 
+### Leaving the dtype open
+
+`dtype=...` leaves an input's dtype to the call, as a missing shape leaves its
+shape. A function written once then runs in float32 as well as float64:
+
+```python
+@sc.function(sc.arg("x", dtype=...))
+def scale(x: sc.Expr) -> sc.Expr:
+    return 2 * x
+
+print(scale(np.ones(2, dtype=np.float32)).dtype)  # float32
+print(scale(np.ones(2)).dtype)                    # float64
+print(scale(3))                                   # 6
+```
+
+A call binds the dtype of its expression or NumPy array. A Python number binds
+the dtype `np.asarray` gives it, so `scale(3)` runs an int64 instance. Each dtype
+gives its own instance. A float64 instance keeps the name a plain shape hole
+would give it, and other dtypes add `f32`, `i64` and so on. A fixed dtype is
+still written with a `TensorType`, and `instantiate` binds an open dtype only
+through one: `scale.instantiate((sc.TensorType((3,), sc.dtypes.float32),))`.
+
+Each input binds its dtype separately, and expressions of different dtypes do
+not mix. A body that multiplies a float32 input by a float64 one raises
+`TypeError: mixed dtypes float32 and float64; convert one with sc.cast`, and no
+instance is created. A body that should accept the mixture casts explicitly:
+
+```python
+@sc.function(sc.arg("A", dtype=...), sc.arg("b", dtype=...))
+def apply(A: sc.Expr, b: sc.Expr) -> sc.Expr:
+    return A @ sc.cast(b, A.type.dtype)
+
+print(apply(np.eye(2, dtype=np.float32), np.array([1.0, 2.0])).dtype)  # float32
+```
+
+An integer array binds an instance that behaves as if the input were declared
+with an integer `TensorType`: its arithmetic stays integer and its derivative is
+zero. An output declared without a shape takes its dtype from the body. One
+declared with a shape is float64 unless it also says `dtype=...`.
+
 ### Bare helpers
 
 A decorator with no declarations at all reads the parameter structure and shapes
