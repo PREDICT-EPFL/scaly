@@ -6,8 +6,8 @@ from collections.abc import Callable
 from typing import Any
 
 from ..function.model import Function
-from ..ir.expr import Expr, as_expr
-from .dense import _general, _mapped, _positive, _right_hand_side, _square, _symmetric
+from ..ir.expr import Expr
+from .dense import _general, _mapped, _positive, _symmetric, _system
 
 _DENSE: dict[str, Callable[[int], Function]] = {"pos": lambda n: _positive, "sym": lambda n: _symmetric, "gen": _general}
 
@@ -20,8 +20,9 @@ def solve(K: Any, b: Any, *, assume: str) -> tuple[Expr, Expr]:
   `cholesky`. ``"sym"`` means symmetric quasi-definite, factored by `ldl` without pivoting.
   ``"gen"`` means general, factored by `lu_factor` with partial pivoting. The rules of each
   factorization for reading the lower triangle and for ``status`` apply here. ``K`` is
-  a float64 square matrix, or a stack of them over leading axes. ``b`` is shaped ``(*batch, n)`` or
-  ``(*batch, n, k)``, and ``x`` has its shape.
+  a float32 or float64 square matrix, or a stack of them over leading axes. ``b`` is shaped ``(*batch, n)`` or
+  ``(*batch, n, k)``, and ``x`` has its shape. ``b`` has the dtype of ``K``, which a Python number or
+  list takes, and so has ``x``.
 
   ``x`` is differentiable in ``K`` and ``b``. The reverse derivative reuses the factorization
   of the solve: ``b_bar = K^{-T} x_bar`` and ``K_bar = -b_bar x^T``, with the two mirrored
@@ -29,10 +30,8 @@ def solve(K: Any, b: Any, *, assume: str) -> tuple[Expr, Expr]:
   derivatives use the forward rule of the factorization and follow the substitutions. The
   derivative is meaningless when ``status`` is nonzero.
   """
-  K = as_expr(K)
   if assume not in _DENSE:
     raise ValueError(f"solve: assume must be one of {sorted(_DENSE)}, got {assume!r}")
-  batch = _square("solve", K)
-  B, vector = _right_hand_side("solve", K, b)
+  K, B, batch, vector = _system("solve", K, b)
   X, status = _mapped(_DENSE[assume](K.shape[-1]), batch, K, B)
   return (X.reshape(X.shape[:-1]) if vector else X), status

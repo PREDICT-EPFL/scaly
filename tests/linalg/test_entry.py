@@ -23,7 +23,7 @@ def test_solve_and_its_gradient_over_a_stage_axis() -> None:
   k = np.stack([_spd(rng) for _ in range(3)])
   b = rng.normal(size=(3, N, 2))
   k[2, 1, 1] = -50.0
-  status_type = sc.TensorType((3,), sc.dtypes.int64)
+  status_type = sc.TensorType((3,), sc.dtypes.int32)
 
   @sc.function(
     sc.arg("K", (3, N, N)), sc.arg("b", (3, N, 2)), outputs=sc.group(sc.arg("x", (3, N, 2)), sc.arg("status", status_type), sc.arg("c", ()))
@@ -103,5 +103,5 @@ def test_solve_checks_its_arguments() -> None:
     linalg.solve(sc.sparsify(sc.sym("S", (N, N)) * sc.const(np.eye(N))), b, assume="pos")
   with pytest.raises(ValueError, match="right-hand side has shape"):
     linalg.solve(k, sc.sym("s", ()), assume="pos")
-  with pytest.raises(TypeError, match="float64 matrix"):
-    linalg.solve(sc.sym("F", (N, N), dtype=sc.dtypes.float32), b, assume="pos")
+  with pytest.raises(TypeError, match="float32 or float64 matrix"):
+    linalg.solve(sc.sym("F", (N, N), dtype=sc.dtypes.int32), b, assume="pos")
