@@ -113,7 +113,7 @@ def test_the_pivot_test_uses_the_epsilon_of_the_matrix_dtype(name, a) -> None:
     def fn(A, b):
       return _routine(name, A, b)[-1]
 
-    return int(fn(a.astype(dtype.numpy()), np.ones(n, dtype=dtype.numpy())))
+    return int(np.asarray(fn(a.astype(dtype.numpy()), np.ones(n, dtype=dtype.numpy()))))
 
   assert status(sc.dtypes.float32) == 2
   assert status(sc.dtypes.float64) == 0
@@ -168,7 +168,7 @@ def test_float32_derivatives_match_float64_finite_differences(name) -> None:
   np.testing.assert_allclose(forward, jac, rtol=1e-3, atol=1e-4 * np.abs(jac).max())
   x = _reference(name, p.astype(np.float64))
   cost_x = x * x + x[-1] * np.eye(N)[0] + x[0] * np.eye(N)[-1]
-  np.testing.assert_allclose(gradient, jac.T @ cost_x, rtol=1e-3, atol=1e-4 * np.abs(jac.T @ cost_x).max())
+  np.testing.assert_allclose(np.asarray(gradient), jac.T @ cost_x, rtol=1e-3, atol=1e-4 * np.abs(jac.T @ cost_x).max())
   np.testing.assert_allclose(second, hess, rtol=2e-3, atol=1e-3 * np.abs(hess).max())
 
 
