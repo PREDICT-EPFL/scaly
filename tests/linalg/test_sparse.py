@@ -22,6 +22,7 @@ from scaly.ir.expr import ExprOp, topo
 from scaly.ir.program import ProgramOp, walk_program
 from scaly.ir.types import CanonicalPattern
 from scaly.linalg import symbolic
+from scaly.linalg.sparse import _factorization
 from scaly.linalg.symbolic import ORDERINGS, Ordering
 from scaly.passes.lowering import lower_function
 
@@ -282,6 +283,17 @@ def test_solve_derivatives_match_finite_differences(assume: str, negative: int, 
   dense = _cost_function(pattern, assume, None)
   np.testing.assert_allclose(g, sc.gradient(dense, "c", "p")(p), rtol=1e-11, atol=1e-13)
   np.testing.assert_allclose(hessian(p), sc.hessian(dense, "c", "p")(p), rtol=1e-10, atol=1e-12)
+
+
+@pytest.mark.parametrize("routine", ["cholesky", "ldl"])
+def test_the_factor_outputs_are_declared_nondifferentiable(routine: str) -> None:
+  """As the dense factors are, so that #477's check reaches them: a derivative goes through ``solve``."""
+  a = _values(PATTERNS["random"](), np.random.default_rng(12))
+  factor = _factorization(routine, "amd", _sparse_type(a))
+  assert factor.outputs is not None
+  *factors, status = factor.outputs.decls
+  assert factors and all(type_ is not None and not type_.diff for type_ in factors)
+  assert status is not None and status.dtype == sc.dtypes.int32
 
 
 @pytest.mark.parametrize("assume", ["pos", "sym"])

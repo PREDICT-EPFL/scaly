@@ -100,8 +100,8 @@ def cholesky(A: Any, *, ordering: Ordering | None = None) -> tuple[Expr, Expr]:
   ``L`` is differentiable in ``A``. The derivative of an entry below the diagonal is the sum of
   the derivatives with respect to the two mirrored entries it stands for. The reverse derivative
   of a dense factor reuses ``L``, and its forward derivative factors ``A`` once more. A sparse
-  factor has no rules of its own, so a derivative through it differentiates the loops of the
-  factorization: differentiate `solve` instead.
+  ``L`` is meant to be read, not differentiated, and is declared nondifferentiable: differentiate
+  `solve` instead.
   """
   A = as_expr(A)
   ordering = _ordering("cholesky", A, ordering)
@@ -129,7 +129,7 @@ def ldl(A: Any, *, ordering: Ordering | None = None) -> tuple[Expr, Expr, Expr]:
   The factors are meant to be read, not differentiated: differentiate `solve` instead. Dense
   factors have a forward rule, which factors ``A`` once more for every direction, and no reverse
   rule, so a gradient through them differentiates the loops of the factorization. Sparse factors
-  have no rules, and every derivative through them differentiates those loops.
+  are declared nondifferentiable.
   """
   A = as_expr(A)
   ordering = _ordering("ldl", A, ordering)

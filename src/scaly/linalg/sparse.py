@@ -369,10 +369,14 @@ def _sampled_cotangent(B_bar: Expr, X: Expr, size: int, pattern: CanonicalPatter
 # the dtype of the matrix. Sparse values cross their boundaries in canonical, row-major order.
 
 
+def _type_pattern(type_: TensorType) -> CanonicalPattern:
+  """The pattern of a sparse type, which a sparse declaration guarantees."""
+  assert type_.pattern is not None
+  return type_.pattern
+
+
 def _pattern(A: Expr) -> CanonicalPattern:
-  """The pattern of a sparse leaf, which a sparse declaration guarantees."""
-  assert A.type.pattern is not None
-  return A.type.pattern
+  return _type_pattern(A.type)
 
 
 def _matrix(name: str) -> Any:
@@ -380,16 +384,29 @@ def _matrix(name: str) -> Any:
 
 
 @cache
-def _factorization(kind: str, ordering: Ordering) -> Function:
-  outputs = (arg("L", dtype=..., pattern=..., layout="csr"), *((arg("d", dtype=...),) if kind == "ldl" else ()), arg("status", _STATUS))
+def _factorization(kind: str, ordering: Ordering, matrix: TensorType) -> Function:
+  """The factorization of one matrix type, whose factor outputs are declared nondifferentiable.
 
-  @function(_matrix("A"), outputs=group(*outputs), name=f"sparse_{kind}_{ordering}")
+  The outputs' types depend on the analysis of the pattern, so the Function is built for each
+  type rather than as a template over its pattern.
+  """
+  tables = _tables(_type_pattern(matrix), ordering)
+  analysis = tables.analysis
+  n, dtype = analysis.n, matrix.dtype
+  factor_type = TensorType((n, n), dtype, diff=False, pattern=_factor_layout(analysis)[0])
+  outputs = (
+    arg("L", factor_type, layout="csr"),
+    *((arg("d", TensorType((n,), dtype, diff=False)),) if kind == "ldl" else ()),
+    arg("status", _STATUS),
+  )
+  token = f"{'f32_' if dtype == dtypes.float32 else ''}p{_type_pattern(matrix).digest[:8]}"
+
+  @function(arg("A", matrix, layout="csr"), outputs=group(*outputs), name=f"sparse_{kind}_{ordering}_{token}")
   def factor(A: Expr) -> tuple[Expr, ...]:
-    tables = _tables(_pattern(A), ordering)
     Lx, d, status = _factor_parts(kind, values(A), tables)
     if kind == "cholesky":
-      return _factor_value(Lx, d, tables.analysis), status
-    return _factor_value(Lx, _like(d, np.ones(tables.analysis.n)), tables.analysis), d, status
+      return _factor_value(Lx, d, analysis), status
+    return _factor_value(Lx, _like(d, np.ones(n)), analysis), d, status
 
   return factor
 
@@ -443,14 +460,19 @@ def _sparse_matrix(name: str, A: Expr) -> None:
     raise ValueError(f"{name} needs a square matrix, got shape {A.shape}")
 
 
+def _declared(A: Expr) -> TensorType:
+  """The type a factorization declares for its matrix: ``A``'s shape, dtype and pattern."""
+  return TensorType(A.shape, A.type.dtype, pattern=A.type.pattern)
+
+
 def cholesky(A: Expr, ordering: Ordering) -> tuple[Expr, Expr]:
   _sparse_matrix("cholesky", A)
-  return _factorization("cholesky", ordering)(A)
+  return _factorization("cholesky", ordering, _declared(A))(A)
 
 
 def ldl(A: Expr, ordering: Ordering) -> tuple[Expr, Expr, Expr]:
   _sparse_matrix("ldl", A)
-  return _factorization("ldl", ordering)(A)
+  return _factorization("ldl", ordering, _declared(A))(A)
 
 
 def solve(K: Expr, B: Expr, assume: str, ordering: Ordering) -> tuple[Expr, Expr]:

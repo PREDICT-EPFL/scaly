@@ -4226,6 +4226,8 @@ tests/linalg/test_sparse.py::test_solve_derivatives_match_finite_differences[pos
 tests/linalg/test_sparse.py::test_solve_derivatives_match_finite_differences[pos-0-natural]
 tests/linalg/test_sparse.py::test_solve_derivatives_match_finite_differences[sym-2-amd]
 tests/linalg/test_sparse.py::test_solve_derivatives_match_finite_differences[sym-2-natural]
+tests/linalg/test_sparse.py::test_the_factor_outputs_are_declared_nondifferentiable[cholesky]
+tests/linalg/test_sparse.py::test_the_factor_outputs_are_declared_nondifferentiable[ldl]
 tests/linalg/test_symbolic.py::test_amd_fill_is_within_superlus_minimum_degree_fill[arrow-mask5]
 tests/linalg/test_symbolic.py::test_amd_fill_is_within_superlus_minimum_degree_fill[banded-mask4]
 tests/linalg/test_symbolic.py::test_amd_fill_is_within_superlus_minimum_degree_fill[grid-mask0]

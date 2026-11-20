@@ -276,8 +276,8 @@ dense matrix raises `TypeError`, and a sparse matrix takes no stack over leading
 The derivatives of a sparse solve are those of a dense one, with \(\bar K\) on the entries the
 factorization reads and zero on the mirrored entries it does not. Forward mode solves
 \(dx = K^{-1}(db - dK\, x)\) with the factor of the solve instead of differentiating the steps of
-the factorization. The sparse factors have no rules of their own, so a derivative through `L` or
-`d` differentiates the loops of the factorization.
+the factorization. The sparse `L` and `d` are meant to be read, not differentiated, and a
+derivative should go through `solve`.
 
 ## Float32 matrices
 
