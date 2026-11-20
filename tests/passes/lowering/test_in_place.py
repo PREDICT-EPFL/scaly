@@ -561,3 +561,46 @@ def test_old_carry_read_after_the_inner_loop_refuses():
 
   with pytest.raises(NotImplementedError, match="carry"):
     lower_function(_threaded(after))
+
+
+@sc.function(sc.arg("v", 4), sc.arg("i", _INDEX))
+def _bump_at(v, i):
+  return sc.scatter(v, i, sc.gather(v, i) + 1.0, combine="set")
+
+
+def test_a_hinted_copy_of_the_inner_result_keeps_the_update():
+  """``updated.block()`` is the same loop result as ``updated`` under another node: lowering may give
+  it the buffer, so the enclosing carry must not count on the loop writing its own."""
+
+  @sc.function(sc.arg("v", 4), sc.arg("trip", _INDEX))
+  def step(v, trip):
+    updated, _ = sc.scan(_bump_at, v, length=4, trip=trip, index=True)
+    return updated, updated.block().sum()
+
+  @sc.function(sc.arg("v", 4), sc.arg("trip", _INDEX))
+  def run(v, trip):
+    return sc.scan(step, v, (sc.broadcast(trip),), length=2)
+
+  carry, (sums,) = run(np.array([0.0, 1.0, 2.0, 3.0]), np.array(3, dtype=np.int64))
+  np.testing.assert_array_equal(carry, [2.0, 3.0, 4.0, 3.0])
+  np.testing.assert_array_equal(sums, [9.0, 12.0])
+
+
+def test_a_hinted_copy_read_after_a_later_loop_keeps_the_old_value():
+  """A read of ``middle.block()`` after the second loop reads ``middle``, which that loop must not overwrite."""
+
+  @sc.function(sc.arg("s", ()), sc.arg("v", 4), sc.arg("trip", _INDEX))
+  def step(s, v, trip):
+    middle, _ = sc.scan(_bump_at, v, length=4, trip=trip, index=True)
+    hinted = middle.block()
+    before = sc.gather(hinted, trip - 1)
+    final, _ = sc.scan(_bump_at, middle, length=4, trip=trip + (before > 0).cast(sc.dtypes.int64) - 1, index=True)
+    return before, final, hinted.sum()
+
+  @sc.function(sc.arg("v", 4), sc.arg("trip", _INDEX))
+  def run(v, trip):
+    return sc.scan(step, (sc.const(0.0), v), (sc.broadcast(trip),), length=2)
+
+  (_, carry), (sums,) = run(np.array([0.0, 1.0, 2.0, 3.0]), np.array(3, dtype=np.int64))
+  np.testing.assert_array_equal(carry, [4.0, 5.0, 6.0, 3.0])
+  np.testing.assert_array_equal(sums, [9.0, 15.0])

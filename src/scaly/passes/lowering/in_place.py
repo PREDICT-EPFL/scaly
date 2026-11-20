@@ -148,6 +148,10 @@ def _safe_loop_link(nodes: tuple[Expr, ...], link: Expr, versions: set[Expr], ou
   carry = link.attrs["output"]
   if any(arg in versions for position, arg in enumerate(link.args) if position != carry) or any(out in versions for out in outputs):
     return False
+  # A loop result built twice, under different lowering hints, is one value with two nodes: either could
+  # take the buffer, and a read of the other escapes the reader checks. Such a chain is not proved.
+  if any(_duplicated(nodes, version) for version in (*versions, link) if version.op == ExprOp.LOOP):
+    return False
   key = invocation_key(link)
   before = {node.id for node in topo(link.args)}
   for node in nodes:
@@ -156,6 +160,12 @@ def _safe_loop_link(nodes: tuple[Expr, ...], link: Expr, versions: set[Expr], ou
     if node.id not in before or not _stored_reader(node):
       return False
   return True
+
+
+def _duplicated(nodes: tuple[Expr, ...], result: Expr) -> bool:
+  """Whether another node is the same result of the same loop invocation."""
+  key, output = invocation_key(result), result.attrs["output"]
+  return any(node is not result and node.op == ExprOp.LOOP and node.attrs["output"] == output and invocation_key(node) == key for node in nodes)
 
 
 def _loop_trajectories(nodes: tuple[Expr, ...], link: Expr) -> set[int]:

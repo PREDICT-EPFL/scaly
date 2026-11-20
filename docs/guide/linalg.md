@@ -251,8 +251,8 @@ factoring \(P K P^T\) for a permutation \(P\). `ordering` chooses it when the fu
 traced, from the pattern alone. `"amd"`, the default, is approximate minimum degree, which keeps
 the fill small on general patterns. `"rcm"`, reverse Cuthill-McKee, keeps a banded matrix banded,
 such as one whose unknowns are ordered stage by stage. `"natural"` keeps the given order. Eliminating
-the arrow's first unknown first fills the whole lower triangle, while minimum degree moves it last
-and leaves no fill:
+the arrow's first unknown first fills the whole lower triangle, while minimum degree eliminates it
+near the end and leaves no fill:
 
 ```python
 for ordering in ("natural", "amd"):

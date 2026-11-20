@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import scipy.sparse
+
 from ..function.model import Function
 from ..ir.expr import Expr, _operands, as_expr, promote_dtype
 from . import dense, sparse
@@ -50,7 +52,8 @@ def solve(K: Any, b: Any, *, assume: str, ordering: Ordering | None = None) -> t
   substitutions. Those of a sparse solve are ``dx = K^{-1} (db - dK x)``, solved with the same
   factorization. The derivative is meaningless when ``status`` is nonzero.
   """
-  K, b = _operands(K, b)
+  # A SciPy matrix becomes a sparse expression first, so that a Python ``b`` takes its dtype.
+  K, b = _operands(as_expr(K) if scipy.sparse.issparse(K) else K, b)
   ordering = _ordering("solve", K, ordering)
   if ordering is not None:
     if assume not in ("pos", "sym"):

@@ -4176,6 +4176,11 @@ tests/linalg/test_ldl_lu.py::test_solve_derivatives_match_the_unrolled_reference
 tests/linalg/test_ldl_lu.py::test_the_lu_forward_rule_survives_a_tiny_pivot
 tests/linalg/test_ldl_lu.py::test_the_primal_loops_update_their_carries_in_place[gen-loops1]
 tests/linalg/test_ldl_lu.py::test_the_primal_loops_update_their_carries_in_place[sym-loops0]
+tests/linalg/test_sparse.py::test_a_scipy_matrix_takes_any_right_hand_side[pos-float32]
+tests/linalg/test_sparse.py::test_a_scipy_matrix_takes_any_right_hand_side[pos-float64]
+tests/linalg/test_sparse.py::test_a_scipy_matrix_takes_any_right_hand_side[sym-float32]
+tests/linalg/test_sparse.py::test_a_scipy_matrix_takes_any_right_hand_side[sym-float64]
+tests/linalg/test_sparse.py::test_a_subnormal_pivot_scales_its_column_without_overflow
 tests/linalg/test_sparse.py::test_a_value_and_its_gradient_share_one_factorization[pos-cholesky]
 tests/linalg/test_sparse.py::test_a_value_and_its_gradient_share_one_factorization[sym-ldl]
 tests/linalg/test_sparse.py::test_an_unusable_pivot_sets_the_status_in_the_reordered_numbering[cholesky-amd]
@@ -4393,6 +4398,8 @@ tests/passes/lowering/test_fusion.py::test_sparse_fusion_requires_the_same_store
 tests/passes/lowering/test_fusion.py::test_value_read_by_two_agreeing_consumers_is_computed_once
 tests/passes/lowering/test_fusion.py::test_value_read_several_times_per_element_is_stored[broadcast]
 tests/passes/lowering/test_fusion.py::test_value_read_several_times_per_element_is_stored[matmul_operand]
+tests/passes/lowering/test_in_place.py::test_a_hinted_copy_of_the_inner_result_keeps_the_update
+tests/passes/lowering/test_in_place.py::test_a_hinted_copy_read_after_a_later_loop_keeps_the_old_value
 tests/passes/lowering/test_in_place.py::test_alias_created_before_update_is_read_after_it
 tests/passes/lowering/test_in_place.py::test_batched_integer_indices_remain_provable
 tests/passes/lowering/test_in_place.py::test_disjoint_later_read

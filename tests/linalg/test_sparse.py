@@ -383,3 +383,27 @@ def test_every_loop_updates_its_carries_in_place(assume: str, kind: str) -> None
     if proc.op == ProgramOp.PROC and proc.attrs["name"].startswith(tuple(loops)):
       private = [node for node in walk_program(proc) if node.op == ProgramOp.BUFFER and node.attrs.get("address_space") == "private"]
       assert all(int(np.prod(node.attrs["shape"])) <= 2 for node in private), proc.attrs["name"]
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.float32])
+@pytest.mark.parametrize("assume", ["pos", "sym"])
+def test_a_scipy_matrix_takes_any_right_hand_side(assume: str, dtype: type) -> None:
+  """A SciPy matrix is converted first, so a Python ``b`` takes its dtype, and a NumPy or symbolic one is accepted."""
+  K = sparse.eye_array(2, dtype=dtype)
+  ones = np.ones(2, dtype=dtype)
+  for b in (ones, sc.const(ones), [1, 1]):
+    x, status = linalg.solve(K, b, assume=assume)
+    assert x.type.dtype == sc.dtypes.from_name(np.dtype(dtype).name) and status.type.dtype == sc.dtypes.int32
+
+
+def test_a_subnormal_pivot_scales_its_column_without_overflow() -> None:
+  """``1 / pivot`` overflows for a subnormal pivot, so the column is divided by the pivot, as dense LDL^T does."""
+  a = 1e-310 * np.array([[2.0, 0.0], [1.0, 2.0]])
+
+  @sc.function(sc.arg("K", _sparse_type(a)), sc.arg("b", 2), outputs=sc.group(sc.arg("x", 2), sc.arg("status", STATUS)))
+  def solve(K, b):
+    return linalg.solve(K, b, assume="sym", ordering="natural")
+
+  x, status = solve(sparse.csc_array(a), 1e-310 * np.ones(2))
+  assert status == 0
+  np.testing.assert_allclose(x, [1 / 3, 1 / 3], rtol=1e-12)

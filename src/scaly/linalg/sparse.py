@@ -44,12 +44,13 @@ class _Tables:
     return tuple(Expr.const(self.arrays[name], dtype=dtypes.int64) for name in names)
 
 
-_BY_ANALYSIS: weakref.WeakKeyDictionary[LDLSymbolic, _Tables] = weakref.WeakKeyDictionary()
+# By digest and weakly held, so the tables live only as long as a Function that reads them.
+_BY_DIGEST: weakref.WeakValueDictionary[str, _Tables] = weakref.WeakValueDictionary()
 
 
 def _tables(pattern: CanonicalPattern, ordering: Ordering) -> _Tables:
   analysis = symbolic.ldl(pattern, ordering)
-  if (cached := _BY_ANALYSIS.get(analysis)) is not None:
+  if (cached := _BY_DIGEST.get(analysis.digest)) is not None:
     return cached
   n = analysis.n
   l_ptr, l_rows = np.asarray(analysis.l_ptr, dtype=np.int64), np.asarray(analysis.l_rows, dtype=np.int64)
@@ -71,7 +72,7 @@ def _tables(pattern: CanonicalPattern, ordering: Ordering) -> _Tables:
     "r_pos": by_row.astype(np.int64),
     "diagonal": diagonal,
   }
-  return _BY_ANALYSIS.setdefault(analysis, _Tables(analysis, arrays))
+  return _BY_DIGEST.setdefault(analysis.digest, _Tables(analysis, arrays))
 
 
 def _group(names: tuple[str, ...]) -> Any:
@@ -165,11 +166,14 @@ def _update(kind: str) -> Function:
   arg("start", _INDEX),
   name="sparse_factor_store",
 )
-def _store(Lx: Expr, w: Expr, t: Expr, l_rows: Expr, scale: Expr, start: Expr) -> tuple[Expr, Expr]:
-  """``Lx[p] = w[i] * scale`` and ``w[i] = 0`` for entry ``p = start + t`` of the column, at row ``i = l_rows[p]``."""
+def _store(Lx: Expr, w: Expr, t: Expr, l_rows: Expr, pivot: Expr, start: Expr) -> tuple[Expr, Expr]:
+  """``Lx[p] = w[i] / pivot`` and ``w[i] = 0`` for entry ``p = start + t`` of the column, at row ``i = l_rows[p]``.
+
+  A division rather than a product with ``1 / pivot``, whose reciprocal overflows for a subnormal pivot.
+  """
   p = start + t
   i = gather(l_rows, p)
-  return scatter(Lx, p, gather(w, i) * scale, combine="set"), scatter(w, i, _like(w, 0.0), combine="set")
+  return scatter(Lx, p, gather(w, i) / pivot, combine="set"), scatter(w, i, _like(w, 0.0), combine="set")
 
 
 @cache
@@ -201,7 +205,7 @@ def _column(kind: str) -> Function:
       unusable, value = _unusable(pivot, diagonal), pivot
     else:
       unusable, value = ~(pivot > _eps(A) * diagonal.abs()), pivot.sqrt()
-    Lx, w = _ragged(_store, (Lx, w), l_ptr, j, n, broadcast(l_rows), broadcast(1.0 / value))
+    Lx, w = _ragged(_store, (Lx, w), l_ptr, j, n, broadcast(l_rows), broadcast(value))
     status = where(unusable & equal(status, 0), _status(j + 1), status)
     return Lx, scatter(d, j, value, combine="set"), w, status
 
