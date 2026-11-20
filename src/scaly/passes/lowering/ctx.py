@@ -360,7 +360,10 @@ class LowerCtx:
     from .in_place import same_index_sources
 
     self.fused_scatter = {
-      node.id: sources for chain in self.inout_carries.values() for node in chain if (sources := same_index_sources(self.fun, node))
+      node.id: sources
+      for chain in self.inout_carries.values()
+      for node in chain
+      if node.op == ExprOp.SCATTER and (sources := same_index_sources(self.fun, node))
     }
     deferred = set().union(*self.fused_scatter.values())
 
@@ -419,9 +422,12 @@ class LowerCtx:
       rule = _RULES.get(ExprOp(node.op))
       if rule is None:
         raise LoweringError(f"Expression op {node.op!r} is not yet lowered to Program IR")
+      # A loop lowers every result of its invocation at once, so each one in a chain takes its buffer now.
+      members = self.used_results.get(invocation_key(node), [node]) if callees_of(node) else [node]
       for k, chain in self.inout_carries.items():
-        if node in chain:
-          self.value_buffers[node.id] = self.value_buffers[self.fun.inputs[k].id]
+        for member in members:
+          if member in chain:
+            self.value_buffers[member.id] = self.value_buffers[self.fun.inputs[k].id]
       rule(self, node)
 
   # --- helpers --------------------------------------------------------------

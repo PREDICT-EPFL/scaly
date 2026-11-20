@@ -93,6 +93,11 @@ def _ragged(body: Function, carry: Any, ptr: Expr, j: Expr, length: int, *xs: An
 # The factorization, left-looking: column j of the permuted matrix goes into a dense work column w,
 # each column k with an entry in row j of L subtracts its contribution from row j down, and w then
 # holds the pivot and column j of L, whose entries are cleared from w for the next column.
+#
+# Every carry of these loops, and of the substitutions below, is updated in place: the inner loops
+# thread the work column through the column step, which lowering proves link by link. The loops do
+# not demand it with ``in_place``, which a derivative storing their trajectories would contradict;
+# tests/linalg/test_sparse.py checks it in the generated C instead.
 
 
 @function(
@@ -209,7 +214,11 @@ def _factor_parts(kind: str, A: Expr, tables: _Tables) -> tuple[Expr, Expr, Expr
   zeros = lambda size: Expr.const(np.zeros(size, dtype=A.type.dtype.numpy()), dtype=A.type.dtype)  # noqa: E731
   init = (zeros(analysis.nnz_l), zeros(analysis.n), zeros(analysis.n), _status(0))
   (Lx, d, _, status), _ = scan(
-    _column(kind), init, (broadcast(A), _whole(tables.exprs(_A_TABLES)), _whole(tables.exprs(_L_TABLES))), length=analysis.n, index=True
+    _column(kind),
+    init,
+    (broadcast(A), _whole(tables.exprs(_A_TABLES)), _whole(tables.exprs(_L_TABLES))),
+    length=analysis.n,
+    index=True,
   )
   return Lx, d, status
 

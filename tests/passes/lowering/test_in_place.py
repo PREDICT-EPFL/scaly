@@ -501,3 +501,63 @@ def test_dynamic_index_keeps_an_in_place_loop_rolled():
 
   np.testing.assert_array_equal(run(np.arange(4.0), np.array(2.0)), [0, 1, 5, 3])
   assert _inout(run)
+
+
+# A carry threaded through an inner loop, as a left-looking factorization threads its work column:
+# the inner loop proves its own carry in place, so the outer body's carry runs in the same buffer.
+
+_INDEX = sc.TensorType((), sc.dtypes.int64)
+
+
+@sc.function(sc.arg("v", 8), sc.arg("t", _INDEX), sc.arg("j", _INDEX))
+def _bump(v, t, j):
+  return sc.scatter(v, t + j, sc.gather(v, t + j) + 1.0, combine="set")
+
+
+def _threaded(after):
+  """``v[j:2j] += 1`` by an inner loop of run-time trip count ``j``, then ``after(old, new, j)``."""
+
+  @sc.function(sc.arg("v", 8), sc.arg("j", _INDEX))
+  def step(v, j):
+    bumped, _ = sc.scan(_bump, v, (sc.broadcast(j),), length=4, trip=j, index=True)
+    return after(v, bumped, j)
+
+  return _loop(step, 8, length=4, index=True)
+
+
+def _threaded_reference(after) -> np.ndarray:
+  v = np.arange(8.0)
+  for j in range(4):
+    bumped = v.copy()
+    bumped[j : 2 * j] += 1
+    v = after(v, bumped, j)
+  return v
+
+
+def test_inner_loop_threads_the_carry_in_place():
+  def after(old, new, j):
+    pivot = sc.gather(new, j)  # a run-time read of the new version, stored before the update
+    return sc.scatter(new, j, pivot * 2.0, combine="set")
+
+  def reference(old, new, j):
+    new[j] *= 2.0
+    return new
+
+  fn = _threaded(after)
+  np.testing.assert_array_equal(fn(np.arange(8.0)), _threaded_reference(reference))
+  body = next(proc for proc in lower_function(fn).args if proc.op == ProgramOp.PROC and proc.attrs["name"].startswith("step_inplace"))
+  # Neither loop copies the carry: the body has no private vector, and the inner loop runs on its parameter.
+  assert not any(
+    node.op == ProgramOp.BUFFER and node.attrs.get("address_space") == "private" and node.attrs["shape"] == (8,) for node in walk_program(body)
+  )
+  calls = [node for node in walk_program(body) if node.op == ProgramOp.CALL]
+  assert [call.attrs["inout"] for call in calls] == [(0,)]
+  assert calls[0].args[0].attrs["buffer"] == body.args[0].attrs["name"]
+
+
+def test_old_carry_read_after_the_inner_loop_refuses():
+  def after(old, new, j):
+    return sc.scatter(new, j, sc.gather(old, j + 4) * 2.0, combine="set")  # reads the old version afterwards
+
+  with pytest.raises(NotImplementedError, match="carry"):
+    lower_function(_threaded(after))

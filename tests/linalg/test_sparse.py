@@ -4,6 +4,10 @@ the solves against finite differences and against the dense solve of the same ma
 
 from __future__ import annotations
 
+from typing import Any, cast
+
+import re
+
 import numpy as np
 import pytest
 import scipy.linalg
@@ -12,10 +16,14 @@ from scipy.sparse.linalg import spsolve
 
 import scaly as sc
 from scaly import linalg
+from scaly.codegen import render_c_source
 from scaly.function.model import as_concrete
 from scaly.ir.expr import ExprOp, topo
+from scaly.ir.program import ProgramOp, walk_program
+from scaly.ir.types import CanonicalPattern
 from scaly.linalg import symbolic
-from scaly.linalg.symbolic import ORDERINGS
+from scaly.linalg.symbolic import ORDERINGS, Ordering
+from scaly.passes.lowering import lower_function
 
 from .test_symbolic import _arrow, _banded, _multistage, _random
 
@@ -47,13 +55,18 @@ def _symmetric(a: np.ndarray) -> np.ndarray:
   return np.tril(a) + np.tril(a, -1).T
 
 
-def _sparse_type(a: sparse.sparray | np.ndarray) -> sc.TensorType:
-  return sc.TensorType(a.shape, pattern=sc.const(sparse.csc_array(a)).type.pattern)
+def _pattern(a: np.ndarray) -> CanonicalPattern:
+  """The pattern of the nonzero entries of ``a``, which a CSC array of it stores."""
+  return sc.SparsityPattern.from_mask(a != 0).canonicalize()[0]
 
 
-def _factor_and_solve(K: sparse.sparray, ordering: str):
-  n = K.shape[0]
-  K_type = _sparse_type(K)
+def _sparse_type(a: np.ndarray) -> sc.TensorType:
+  return sc.TensorType(a.shape, pattern=_pattern(a))
+
+
+def _factor_and_solve(a: np.ndarray, ordering: Ordering):
+  n = a.shape[0]
+  K_type = _sparse_type(a)
   outputs = sc.group(
     sc.group(sc.arg("L_pos"), sc.arg("status_pos", STATUS)),
     sc.group(sc.arg("L_sym"), sc.arg("d", n), sc.arg("status_sym", STATUS)),
@@ -73,15 +86,15 @@ def _factor_and_solve(K: sparse.sparray, ordering: str):
 
 @pytest.mark.parametrize("ordering", ORDERINGS)
 @pytest.mark.parametrize("name", list(PATTERNS))
-def test_factors_and_solves_match_scipy(name: str, ordering: str) -> None:
+def test_factors_and_solves_match_scipy(name: str, ordering: Ordering) -> None:
   rng = np.random.default_rng(1)
   mask = PATTERNS[name]()
   n = mask.shape[0]
   a = _values(mask, rng)
   K = sparse.csc_array(a)
   b = rng.normal(size=(n, 2))
-  run = _factor_and_solve(K, ordering)
-  analysis = symbolic.ldl(sc.const(K).type.pattern, ordering)
+  run = _factor_and_solve(a, ordering)
+  analysis = symbolic.ldl(_pattern(a), ordering)
   perm = np.asarray(analysis.perm)
   permuted = _symmetric(a)[np.ix_(perm, perm)]
 
@@ -108,13 +121,13 @@ def test_factors_and_solves_match_scipy(name: str, ordering: str) -> None:
 
 @pytest.mark.parametrize("ordering", ORDERINGS)
 @pytest.mark.parametrize("name", list(PATTERNS))
-def test_quasi_definite_solves_match_scipy(name: str, ordering: str) -> None:
+def test_quasi_definite_solves_match_scipy(name: str, ordering: Ordering) -> None:
   rng = np.random.default_rng(2)
   mask = PATTERNS[name]()
   n = mask.shape[0]
   a = _values(mask, rng, negative=n // 3)
   K = sparse.csc_array(a)
-  K_type = _sparse_type(K)
+  K_type = _sparse_type(a)
 
   @sc.function(sc.arg("K", K_type), sc.arg("b", n), outputs=sc.group(sc.arg("x", n), sc.arg("d", n), sc.arg("status", STATUS)))
   def run(K, b):
@@ -145,7 +158,7 @@ def test_either_triangle_stands_for_its_mirror(stored: str) -> None:
   def solve(m: np.ndarray) -> np.ndarray:
     K = sparse.csc_array(m)
 
-    @sc.function(sc.arg("K", _sparse_type(K)), sc.arg("b", n), outputs=sc.arg("x", n))
+    @sc.function(sc.arg("K", _sparse_type(m)), sc.arg("b", n), outputs=sc.arg("x", n))
     def run(K, b):
       return linalg.solve(K, b, assume="sym")[0]
 
@@ -154,25 +167,22 @@ def test_either_triangle_stands_for_its_mirror(stored: str) -> None:
   np.testing.assert_allclose(solve(other), solve(a), rtol=1e-13, atol=1e-14)
 
 
-def _status_of(m: np.ndarray, routine: str, ordering: str) -> int:
-  K = sparse.csc_array(m)
-
-  @sc.function(sc.arg("K", _sparse_type(K)), outputs=sc.arg("status", STATUS))
+def _status_of(m: np.ndarray, routine: str, ordering: Ordering) -> int:
+  @sc.function(sc.arg("K", _sparse_type(m)), outputs=sc.arg("status", STATUS))
   def run(K):
     return getattr(linalg, routine)(K, ordering=ordering)[-1]
 
-  return int(run(K))
+  return int(np.asarray(run(sparse.csc_array(m))))
 
 
 @pytest.mark.parametrize("ordering", ORDERINGS)
 @pytest.mark.parametrize("routine", ["cholesky", "ldl"])
-def test_an_unusable_pivot_sets_the_status_in_the_reordered_numbering(routine: str, ordering: str) -> None:
+def test_an_unusable_pivot_sets_the_status_in_the_reordered_numbering(routine: str, ordering: Ordering) -> None:
   rng = np.random.default_rng(4)
   mask = PATTERNS["arrow, hub last"]()
   a = _values(mask, rng)
   n = a.shape[0]
-  pattern = sc.const(sparse.csc_array(a)).type.pattern
-  iperm = symbolic.ldl(pattern, ordering).iperm
+  iperm = symbolic.ldl(_pattern(a), ordering).iperm
   assert _status_of(a, routine, ordering) == 0
 
   # Column 3 touches only the hub, so its pivot is its own diagonal entry wherever the ordering puts it.
@@ -192,8 +202,7 @@ def test_an_unusable_pivot_sets_the_status_in_the_reordered_numbering(routine: s
 
   # A diagonal entry the pattern does not store is a zero pivot.
   unstored = np.where(np.eye(n, dtype=bool) & (np.arange(n) == 4)[:, None], 0.0, a)
-  K = sparse.csc_array(unstored)
-  assert K.nnz == sparse.csc_array(a).nnz - 1
+  assert _pattern(unstored).nnz == _pattern(a).nnz - 1
   assert _status_of(unstored, routine, ordering) == iperm[4] + 1
 
 
@@ -202,7 +211,7 @@ def test_float32_matrices_factor_and_solve_in_float32() -> None:
   a = _values(PATTERNS["banded"](), rng)
   n = a.shape[0]
   K = sparse.csc_array(a.astype(np.float32))
-  K_type = sc.TensorType((n, n), dtype=sc.dtypes.float32, pattern=sc.const(K).type.pattern)
+  K_type = sc.TensorType((n, n), dtype=sc.dtypes.float32, pattern=_pattern(a))
 
   @sc.function(
     sc.arg("K", K_type), sc.arg("b", sc.TensorType((n,), sc.dtypes.float32)), outputs=sc.group(sc.arg("x"), sc.arg("L"), sc.arg("status", STATUS))
@@ -212,7 +221,7 @@ def test_float32_matrices_factor_and_solve_in_float32() -> None:
     return x, linalg.cholesky(K, ordering="rcm")[0], status
 
   b = rng.normal(size=n).astype(np.float32)
-  x, L, status = run(K, b)
+  x, L, status = cast(tuple[np.ndarray, Any, np.ndarray], run(K, b))
   assert status == 0 and x.dtype == np.float32 and L.dtype == np.float32
   np.testing.assert_allclose(x, np.linalg.solve(_symmetric(a), b), rtol=1e-5, atol=1e-6)
 
@@ -223,25 +232,24 @@ def test_float32_matrices_factor_and_solve_in_float32() -> None:
 DERIVATIVE_MASK = _random(7, 0.3, 7)
 
 
-def _point(negative: int) -> tuple[sc.TensorType, np.ndarray]:
+def _point(negative: int) -> tuple[CanonicalPattern, np.ndarray]:
   rng = np.random.default_rng(8)
   a = _values(DERIVATIVE_MASK, rng, negative=negative)
-  K = sparse.csc_array(a)
-  pattern = sc.const(K).type.pattern
+  pattern = _pattern(a)
   stored = a[np.asarray(pattern.rows), np.asarray(pattern.cols)]
-  return sc.TensorType(a.shape, pattern=pattern), np.concatenate([stored, rng.normal(size=a.shape[0])])
+  return pattern, np.concatenate([stored, rng.normal(size=a.shape[0])])
 
 
 def _cost(x: sc.Expr) -> sc.Expr:
   return (x * x * x).sum() / 3.0 + x[0] * x[-1]
 
 
-def _cost_function(K_type: sc.TensorType, assume: str, ordering: str | None):
-  n, nnz = K_type.shape[0], K_type.pattern.nnz
+def _cost_function(pattern: CanonicalPattern, assume: str, ordering: Ordering | None):
+  n, nnz = pattern.shape[0], pattern.nnz
 
   @sc.function(sc.arg("p", nnz + n), outputs=sc.arg("c", ()))
   def cost(p):
-    K = sc.pack(p[:nnz], K_type.pattern)
+    K = sc.pack(p[:nnz], pattern)
     if ordering is None:
       x = linalg.solve(K.to_dense(), p[nnz:], assume=assume)[0]
     else:
@@ -258,9 +266,9 @@ def _central(f, p: np.ndarray, h: float) -> np.ndarray:
 
 @pytest.mark.parametrize("ordering", ["amd", "natural"])
 @pytest.mark.parametrize(("assume", "negative"), [("pos", 0), ("sym", 2)])
-def test_solve_derivatives_match_finite_differences(assume: str, negative: int, ordering: str) -> None:
-  K_type, p = _point(negative)
-  cost = _cost_function(K_type, assume, ordering)
+def test_solve_derivatives_match_finite_differences(assume: str, negative: int, ordering: Ordering) -> None:
+  pattern, p = _point(negative)
+  cost = _cost_function(pattern, assume, ordering)
   gradient = sc.gradient(cost, "c", "p")
   forward = sc.jacobian(cost, "c", "p")
   hessian = sc.hessian(cost, "c", "p")
@@ -271,15 +279,15 @@ def test_solve_derivatives_match_finite_differences(assume: str, negative: int, 
   np.testing.assert_allclose(hessian(p), _central(gradient, p, 1e-6), rtol=1e-6, atol=1e-8)
 
   # The dense solve reads the same lower triangle, so it is the same function of p.
-  dense = _cost_function(K_type, assume, None)
+  dense = _cost_function(pattern, assume, None)
   np.testing.assert_allclose(g, sc.gradient(dense, "c", "p")(p), rtol=1e-11, atol=1e-13)
   np.testing.assert_allclose(hessian(p), sc.hessian(dense, "c", "p")(p), rtol=1e-10, atol=1e-12)
 
 
 @pytest.mark.parametrize("assume", ["pos", "sym"])
 def test_reverse_over_reverse_matches_forward_over_reverse(assume: str) -> None:
-  K_type, p = _point(0 if assume == "pos" else 2)
-  cost = _cost_function(K_type, assume, "amd")
+  pattern, p = _point(0 if assume == "pos" else 2)
+  cost = _cost_function(pattern, assume, "amd")
   gradient = sc.gradient(cost, "c", "p")
   weights = np.random.default_rng(9).normal(size=p.size)
 
@@ -292,10 +300,10 @@ def test_reverse_over_reverse_matches_forward_over_reverse(assume: str) -> None:
 
 @pytest.mark.parametrize(("assume", "kind"), [("pos", "cholesky"), ("sym", "ldl")])
 def test_a_value_and_its_gradient_share_one_factorization(assume: str, kind: str) -> None:
-  K_type, p = _point(0)
-  n = K_type.shape[0]
+  pattern, p = _point(0)
+  n = pattern.shape[0]
 
-  @sc.function(sc.arg("K", K_type), sc.arg("b", n))
+  @sc.function(sc.arg("K", sc.TensorType((n, n), pattern=pattern)), sc.arg("b", n))
   def value_and_gradient(K, b):
     value = _cost(linalg.solve(K, b, assume=assume)[0])
     return value, *sc.vjp((value,), (K, b), (sc.const(1.0),))
@@ -315,13 +323,18 @@ def test_a_value_and_its_gradient_share_one_factorization(assume: str, kind: str
 
 
 def test_ordering_applies_to_sparse_matrices_only() -> None:
-  K = sparse.csc_array(_values(PATTERNS["banded"](), np.random.default_rng(10)))
+  K = _values(PATTERNS["banded"](), np.random.default_rng(10))
   n = K.shape[0]
   ones = sc.const(np.ones(n))
   cases = [
     ((n, n), lambda A: linalg.cholesky(A, ordering="amd")[0], TypeError, "ordering applies to a sparse matrix"),
     ((n, n), lambda A: linalg.solve(A, ones, assume="pos", ordering="natural")[0], TypeError, "ordering applies to a sparse matrix"),
-    (_sparse_type(K), lambda K: linalg.ldl(K, ordering="metis")[0], ValueError, "ordering must be one of"),
+    (
+      _sparse_type(K),
+      lambda K: linalg.ldl(K, ordering="metis")[0],  # ty: ignore[invalid-argument-type]
+      ValueError,
+      "ordering must be one of",
+    ),
     (_sparse_type(K), lambda K: linalg.solve(K, ones, assume="gen")[0], ValueError, "assume 'pos' or 'sym'"),
     (_sparse_type(K), lambda K: linalg.solve(K, K, assume="pos")[0], TypeError, "dense right-hand side"),
     (_sparse_type(K), lambda K: linalg.solve(K, sc.const(np.ones(n + 1)), assume="pos")[0], ValueError, "right-hand side has shape"),
@@ -329,3 +342,32 @@ def test_ordering_applies_to_sparse_matrices_only() -> None:
   for type_, body, error, message in cases:
     with pytest.raises(error, match=message):
       as_concrete(sc.function(sc.arg("A", type_))(body))
+
+
+@pytest.mark.parametrize(("assume", "kind"), [("pos", "cholesky"), ("sym", "ldl")])
+def test_every_loop_updates_its_carries_in_place(assume: str, kind: str) -> None:
+  """The loop structure of a left-looking factorization: one step per column that loads the column,
+  updates it from the earlier ones and stores it, every carry in place, so no step copies a vector."""
+  a = _values(PATTERNS["block-tridiagonal"](), np.random.default_rng(11))
+  n = a.shape[0]
+
+  @sc.function(sc.arg("K", _sparse_type(a)), sc.arg("b", n), outputs=sc.arg("x", n))
+  def solve(K, b):
+    return linalg.solve(K, b, assume=assume)[0]
+
+  loops = {
+    "sparse_factor_load",
+    f"sparse_{kind}_update",
+    "sparse_factor_axpy",
+    "sparse_factor_store",
+    f"sparse_{kind}_column",
+    "sparse_solve_axpy",
+    f"sparse_{kind}_forward",
+    f"sparse_{kind}_backward",
+  }
+  assert set(re.findall(r"static inline void (sparse_\w+?)_\d\w*?_inplace\w*_raw\(", render_c_source(solve))) == loops
+  # Inside the procedures of those loops, no buffer holds more than one value: nothing is copied.
+  for proc in lower_function(solve).args:
+    if proc.op == ProgramOp.PROC and proc.attrs["name"].startswith(tuple(loops)):
+      private = [node for node in walk_program(proc) if node.op == ProgramOp.BUFFER and node.attrs.get("address_space") == "private"]
+      assert all(int(np.prod(node.attrs["shape"])) <= 2 for node in private), proc.attrs["name"]

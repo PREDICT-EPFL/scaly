@@ -4186,6 +4186,8 @@ tests/linalg/test_sparse.py::test_an_unusable_pivot_sets_the_status_in_the_reord
 tests/linalg/test_sparse.py::test_an_unusable_pivot_sets_the_status_in_the_reordered_numbering[ldl-rcm]
 tests/linalg/test_sparse.py::test_either_triangle_stands_for_its_mirror[both]
 tests/linalg/test_sparse.py::test_either_triangle_stands_for_its_mirror[upper]
+tests/linalg/test_sparse.py::test_every_loop_updates_its_carries_in_place[pos-cholesky]
+tests/linalg/test_sparse.py::test_every_loop_updates_its_carries_in_place[sym-ldl]
 tests/linalg/test_sparse.py::test_factors_and_solves_match_scipy[arrow, hub first-amd]
 tests/linalg/test_sparse.py::test_factors_and_solves_match_scipy[arrow, hub first-natural]
 tests/linalg/test_sparse.py::test_factors_and_solves_match_scipy[arrow, hub first-rcm]
@@ -4397,6 +4399,7 @@ tests/passes/lowering/test_in_place.py::test_disjointness_keeps_steps_separate
 tests/passes/lowering/test_in_place.py::test_dynamic_index_keeps_an_in_place_loop_rolled
 tests/passes/lowering/test_in_place.py::test_float_index_cannot_prove_disjointness
 tests/passes/lowering/test_in_place.py::test_floor_regression_numpy_result
+tests/passes/lowering/test_in_place.py::test_inner_loop_threads_the_carry_in_place
 tests/passes/lowering/test_in_place.py::test_inout_carry_is_not_hoisted
 tests/passes/lowering/test_in_place.py::test_inout_parameter_and_call_contract
 tests/passes/lowering/test_in_place.py::test_inplace_helper_name_does_not_collide_with_user_function
@@ -4405,6 +4408,7 @@ tests/passes/lowering/test_in_place.py::test_last_use
 tests/passes/lowering/test_in_place.py::test_lengths_and_reverse_preserve_input[0-False]
 tests/passes/lowering/test_in_place.py::test_lengths_and_reverse_preserve_input[1-True]
 tests/passes/lowering/test_in_place.py::test_lengths_and_reverse_preserve_input[5-True]
+tests/passes/lowering/test_in_place.py::test_old_carry_read_after_the_inner_loop_refuses
 tests/passes/lowering/test_in_place.py::test_overlapping_later_gather_refuses
 tests/passes/lowering/test_in_place.py::test_print_alias_reads_the_entering_carry
 tests/passes/lowering/test_in_place.py::test_print_alias_stacks_the_entering_carry

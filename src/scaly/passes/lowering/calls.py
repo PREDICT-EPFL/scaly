@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 
 from ...ir import program as p
@@ -210,13 +212,26 @@ def _proc_results(ctx: LowerCtx, fn: ConcreteFunction, buffers: list[ProgramNode
   return buffers + [ctx.new_private(r.type.dtype, r.type.storage_shape) for r in results[len(buffers) :]]
 
 
+def _inner_reuse(ctx: LowerCtx) -> Callable[[Expr, set[int]], frozenset[int]]:
+  """The carries an inner loop proves in place, as its own lowering will find them."""
+
+  def proved(loop: Expr, trajectories: set[int]) -> frozenset[int]:
+    callee = loop.attrs["callee"]
+    normalized = _normalize_function(callee, residuals=callee in ctx.residuals)
+    return frozenset(carry_reuse(normalized, loop.attrs["n_carry"], loop.attrs["length"], loop.attrs["index"], trajectories, proved))
+
+  return proved
+
+
 @lowers(ExprOp.LOOP)
 def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
   """One carried range ``[call cond; break_if !flag;] call body`` that writes every used result.
 
   A carry lives in two alternating slots, or in ``length + 1`` slots, slot ``j`` entering step ``j``
-  (``j + 1`` in reverse), when its trajectory is used. Stacked outputs and trajectory slots past
-  the trip count are zeroed only when a condition or a trip operand can end the loop early.
+  (``j + 1`` in reverse), when its trajectory is used. A carry the body updates in place has one
+  slot, and runs in the buffer of its initial value when its result already shares that buffer, a
+  link of an enclosing procedure's in-place carry. Stacked outputs and trajectory slots past the
+  trip count are zeroed only when a condition or a trip operand can end the loop early.
   """
   if all(is_map(sibling) for sibling in ctx.used_results[invocation_key(node)]):
     _lower_map(ctx, node)
@@ -240,7 +255,7 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
   traj = {c for c in range(n_carry) if count_output + 1 + c in used}
   symbol = ctx.symbols[callee]
   normalized = _normalize_function(callee, residuals=callee in ctx.residuals)
-  chains = carry_reuse(normalized, n_carry, length, index, traj)
+  chains = carry_reuse(normalized, n_carry, length, index, traj, _inner_reuse(ctx))
   reuse = set(chains)
   for j in node.attrs["in_place"]:
     if j not in reuse:
@@ -276,8 +291,15 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
     ctx.buf_of(arg)
   before_loop = len(ctx.statements)
   existing_buffers = list(ctx.buffers.values())
+  # A carry whose result already holds its initial value's buffer: an in-place link of the enclosing procedure.
+  direct = {
+    j
+    for j in reuse - traj
+    if j in used and used[j].id in ctx.value_buffers and ctx.value_buffers[used[j].id] == ctx.raw_buf_of(carries[j]).attrs["name"]
+  }
   slots = [
-    ctx.new_private(c.type.dtype, ((length + 1 if j in traj else 1 if j in reuse else 2) * sizes[j],)) for j, c in enumerate(callee.inputs[:n_carry])
+    ctx.raw_buf_of(c_init) if j in direct else ctx.new_private(c.type.dtype, ((length + 1 if j in traj else 1 if j in reuse else 2) * sizes[j],))
+    for j, (c, c_init) in enumerate(zip(callee.inputs[:n_carry], carries, strict=True))
   ]
 
   def slot(j: int, at: ProgramNode) -> ProgramNode:
@@ -296,7 +318,8 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
       ctx.emit(ranges, [p.store(p.view(dst, [p.add(dst_at, e)]), p.load(p.view(src, [p.add(src_at, e)])))])
 
   for j, init in enumerate(carries):
-    copy(slots[j], slot(j, p.const_int(0)), ctx.buf_of(init), p.const_int(0), sizes[j])
+    if j not in direct:
+      copy(slots[j], slot(j, p.const_int(0)), ctx.buf_of(init), p.const_int(0), sizes[j])
   ys = []
   for y in range(n_ys):
     out = results[n_carry + y].type
@@ -353,7 +376,7 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
   ctx.statements.append(p.for_(rng, [statement for statement in body if statement.op != ProgramOp.BUFFER], exit_var=cond is not None))
   taken = i if cond is not None else count
   for j in range(n_carry):
-    if j in used:
+    if j in used and j not in direct:
       copy(ctx.alloc_tmp(used[j]), p.const_int(0), slots[j], slot(j, taken), sizes[j])
   if count_output in used:
     ctx.statements.append(p.store(p.view(ctx.alloc_tmp(used[count_output]), [p.const_int(0)]), taken))
@@ -373,7 +396,7 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
         ctx.statements.append(p.for_(p.range_(e, start, stop), [p.store(p.view(buf, [p.var(e)]), _zero(type_.dtype))]))
 
   hints = {sibling.lowering for sibling in siblings}
-  if not early and not hints & {"block", "opaque"}:
+  if not early and not direct and not hints & {"block", "opaque"}:
     procs = {proc.attrs["name"]: proc for proc in ctx.callees.values()}
     cost = _loop_cost(p.proc("loop_step", (), body), procs)
     if cost is not None and ("scalar" in hints or length * cost <= STATIC_LOOP_BUDGET):
