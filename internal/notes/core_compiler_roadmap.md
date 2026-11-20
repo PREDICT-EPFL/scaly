@@ -982,6 +982,20 @@ sparse leaf also accepts its values vector directly, which is the fast path. Wit
 The declaration spelling is `arg(name, shape, pattern=...)`, with `shape` optional and CSC the
 default layout. `instantiate` binds it with a concrete `TensorType`, including the pattern.
 
+**[#511]. Dtype holes.** Settled 2026-11-20. The declaration spelling mirrors [#44]'s:
+`arg(name, shape, dtype=...)`, which takes only `...`; a concrete dtype still goes through a
+`TensorType`, and a bare `arg` stays float64, so today's instance names do not change. Each leaf
+binds its own dtype: from an expression's dtype, a NumPy argument's, or a Python number's as
+`np.asarray` reads it (float64, int64 or bool), since a hole has no dtype for a weak scalar to take.
+Nothing ties two holed leaves together: the body is traced with the bound types, so a body that
+combines a float32 leaf with a float64 one without `sc.cast` raises [#25]'s mixed-dtype error and no
+instance is made. An integer binding gives the instance a concrete integer `TensorType` would:
+integer arithmetic, mixing refused without a cast, a zero derivative with respect to that leaf.
+Rejected: a hole inside `TensorType`, which would put an unbound value in the compiler's own type
+and still needs a shape; a bare `arg` leaving its dtype open, which would turn today's float64
+conversion of integer and float32 arguments into new instances; refusing integer bindings, which
+is a constraint on holes and deferred with them.
+
 **[#58]. Function-level `sc.jvp` and `sc.vjp`.** Arity ladders, built through `lift` and
 `Function.build`, so AD-built callees keep their trees and stop being `Any`-typed at run time. After
 [#19]. Closes [#13]'s second half, as recorded in `refactorings.md`.
@@ -1734,4 +1748,5 @@ writing the guide).
 [#495]: https://github.com/PREDICT-EPFL/scaly/issues/495
 [#496]: https://github.com/PREDICT-EPFL/scaly/issues/496
 [#497]: https://github.com/PREDICT-EPFL/scaly/issues/497
+[#511]: https://github.com/PREDICT-EPFL/scaly/issues/511
 [#442]: https://github.com/PREDICT-EPFL/scaly/issues/442
