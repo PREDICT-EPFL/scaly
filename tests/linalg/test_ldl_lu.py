@@ -43,7 +43,7 @@ def test_ldl_matches_scipy_over_a_stack() -> None:
   a = np.stack([_quasi_definite(rng) for _ in range(2)])
 
   @sc.function(
-    sc.arg("A", (2, N, N)), outputs=sc.group(sc.arg("L", (2, N, N)), sc.arg("d", (2, N)), sc.arg("status", sc.TensorType((2,), sc.dtypes.int64)))
+    sc.arg("A", (2, N, N)), outputs=sc.group(sc.arg("L", (2, N, N)), sc.arg("d", (2, N)), sc.arg("status", sc.TensorType((2,), sc.dtypes.int32)))
   )
   def factor(A):
     return linalg.ldl(A)
@@ -65,7 +65,7 @@ def test_lu_factor_matches_scipy_over_a_stack() -> None:
   @sc.function(
     sc.arg("A", (2, N, N)),
     outputs=sc.group(
-      sc.arg("lu", (2, N, N)), sc.arg("piv", sc.TensorType((2, N), sc.dtypes.int64)), sc.arg("status", sc.TensorType((2,), sc.dtypes.int64))
+      sc.arg("lu", (2, N, N)), sc.arg("piv", sc.TensorType((2, N), sc.dtypes.int64)), sc.arg("status", sc.TensorType((2,), sc.dtypes.int32))
     ),
   )
   def factor(A):
@@ -191,7 +191,7 @@ def test_solve_and_its_gradient_over_a_stage_axis(assume) -> None:
   @sc.function(
     sc.arg("K", (3, N, N)),
     sc.arg("b", (3, N, 2)),
-    outputs=sc.group(sc.arg("x", (3, N, 2)), sc.arg("status", sc.TensorType((3,), sc.dtypes.int64)), sc.arg("c", ())),
+    outputs=sc.group(sc.arg("x", (3, N, 2)), sc.arg("status", sc.TensorType((3,), sc.dtypes.int32)), sc.arg("c", ())),
   )
   def solve(K, b):
     x, status = linalg.solve(K, b, assume=assume)

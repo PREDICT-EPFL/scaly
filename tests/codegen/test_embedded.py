@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 import scaly as sc
+from scaly import linalg
 from examples.embedded_oracle import oracle
 from scaly.codegen import write_module
 from scaly.ir.program import ProgramOp, walk_program
@@ -130,3 +131,31 @@ def test_cortex_m_oracle_has_only_libm_symbols(tmp_path, cpu) -> None:
   _compile(bad_source, bad_obj, cpu)
   with pytest.raises(AssertionError, match="symbols outside target libm.*malloc"):
     _check_symbols(bad_obj)
+
+
+F32 = sc.dtypes.float32
+
+
+@sc.function(sc.arg("K", sc.TensorType((4, 4), F32)), sc.arg("b", sc.TensorType((4,), F32)), name="embedded_solve")
+def embedded_solve(K: sc.Expr, b: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+  return linalg.solve(K, b, assume="pos")
+
+
+def test_float32_solve_matches_numpy() -> None:
+  rng = np.random.default_rng(0)
+  m = rng.normal(size=(4, 4))
+  k, b = (m @ m.T + 4 * np.eye(4)).astype(np.float32), rng.normal(size=4).astype(np.float32)
+  x, status = embedded_solve(k, b)
+  assert x.dtype == np.float32 and status.dtype == np.int32 and status == 0
+  np.testing.assert_allclose(x, np.linalg.solve(k.astype(np.float64), b), rtol=1e-5)
+
+
+@pytest.mark.parametrize("cpu", ["cortex_m4", "cortex_m7"])
+def test_cortex_m_float32_solve_links_no_double_precision_helper(tmp_path, cpu) -> None:
+  if sys.platform != "linux" or not all(shutil.which(tool) for tool in ("zig", "nm")):
+    pytest.skip("the Cortex-M check needs Linux, Zig and GNU binutils")
+  module = write_module(embedded_solve, tmp_path, dialect="c", lanes=1, frame_budget=0)
+  assert "double" not in module.source
+  obj = tmp_path / "solve.o"
+  _compile(tmp_path / module.source_name, obj, cpu)
+  assert undefined_symbols(obj) <= {"sqrtf", "fabsf"}, f"symbols outside target libm: {sorted(undefined_symbols(obj))}"

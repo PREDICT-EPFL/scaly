@@ -13,7 +13,7 @@ import scipy.linalg
 import scaly as sc
 from scaly import linalg
 from scaly.codegen import write_module
-from scaly.ir.program import walk_program
+from scaly.ir.program import ProgramOp, walk_program
 
 from .test_dense import N, _spd, _triangular
 from .test_ldl_lu import _needs_swaps, _quasi_definite, _symmetric
@@ -71,10 +71,24 @@ def test_float32_results_match_float64_on_the_same_data(name, batch) -> None:
   assert name == "triangular" or [np.asarray(s).dtype for s in statuses] == [np.int32]
 
 
+# Statements carry a placeholder dtype; only declarations of buffers and scalar values have one that matters.
+STATEMENTS = {
+  ProgramOp.PROGRAM,
+  ProgramOp.PROC,
+  ProgramOp.BLOCK,
+  ProgramOp.FOR,
+  ProgramOp.RANGE,
+  ProgramOp.CALL,
+  ProgramOp.PRINT,
+  ProgramOp.BREAK_IF,
+  ProgramOp.IF,
+}
+
+
 @pytest.mark.parametrize("name", list(MATRICES))
 def test_an_all_float32_call_lowers_without_float64(tmp_path: Path, name) -> None:
   module = write_module(_typed(name, (2,), sc.dtypes.float32), tmp_path, dialect="c")
-  wide = {str(n.op) for n in walk_program(module.program) if n.dtype == sc.dtypes.float64}
+  wide = {str(n.op) for n in walk_program(module.program) if n.op not in STATEMENTS and n.dtype == sc.dtypes.float64}
   assert not wide, f"float64 values in the lowered program: {sorted(wide)}"
 
 

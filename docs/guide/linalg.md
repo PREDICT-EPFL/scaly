@@ -16,7 +16,7 @@ import numpy as np
 import scaly as sc
 from scaly import linalg
 
-status_type = sc.TensorType((), sc.dtypes.int64)
+status_type = sc.TensorType((), sc.dtypes.int32)
 
 @sc.function(sc.arg("A", (3, 2)), sc.arg("y", 3),
              outputs=sc.group(sc.arg("x", 2), sc.arg("status", status_type)))
@@ -104,8 +104,9 @@ NumPy or SciPy without raising an error. Two of the arguments have no default to
 
 `lu_factor` returns the same `lu` and `piv` as `scipy.linalg.lu_factor`, followed by a status.
 `scipy.linalg.ldl` pivots and returns `(lu, d, perm)` with `d` a block diagonal matrix, while
-`linalg.ldl` returns `(L, d, status)` with `d` the vector of pivots. All of them take float64 matrices and right-hand sides, and raise `TypeError` for float32 or sparse
-ones.
+`linalg.ldl` returns `(L, d, status)` with `d` the vector of pivots. All of them take dense
+float32 or float64 matrices, as [below](#float32-matrices) explains, and raise `TypeError` for
+sparse or integer ones.
 
 ## Only the lower triangle is read
 
@@ -131,11 +132,12 @@ fixes the derivative with respect to `K`, as [below](#derivatives) explains.
 
 Elimination divides by pivots, the diagonal values left after the earlier columns have been
 eliminated. For a positive definite matrix every pivot is positive, and a Cholesky pivot is
-unusable when it is not greater than machine epsilon times the diagonal entry of `K` it came from.
+unusable when it is not greater than the machine epsilon of `K`'s dtype times the diagonal entry
+of `K` it came from.
 That includes zero, negative and NaN pivots, and pivots so small relative to their diagonal entry that the
 cancellation behind them has left no accurate digits.
 
-The status is 0 when every pivot is usable. Otherwise it is the position of the first unusable
+The status is an int32, 0 when every pivot is usable. Otherwise it is the position of the first unusable
 pivot, counted from one as LAPACK counts them. The factorization does not stop there, so the
 later entries of the factor and the whole solution are meaningless. Only the status says so,
 since they need not be NaN:
@@ -199,7 +201,7 @@ returns a status of shape `(N,)`, one per matrix. The matrices are solved indepe
 
 ```python
 @sc.function(sc.arg("K", (4, 2, 2)), sc.arg("b", (4, 2)),
-             outputs=sc.group(sc.arg("x", (4, 2)), sc.arg("status", sc.TensorType((4,), sc.dtypes.int64))))
+             outputs=sc.group(sc.arg("x", (4, 2)), sc.arg("status", sc.TensorType((4,), sc.dtypes.int32))))
 def stage_solves(K: sc.Expr, b: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return linalg.solve(K, b, assume="pos")
 
@@ -208,6 +210,35 @@ x, status = stage_solves(K, np.ones((4, 2)))
 print(status)
 # [0 0 1 0]
 ```
+
+## Float32 matrices
+
+Every routine computes in the dtype of its matrix, float32 or float64, and returns factors and
+solutions of that dtype. A function built from a float32 matrix uses single-precision arithmetic
+throughout, which is what a microcontroller with a single-precision floating-point unit, such as
+a Cortex-M4, needs. The right-hand side has the matrix's dtype too. A Python number or list takes
+it, while a float64 array beside a float32 matrix raises `TypeError`, as any expression mixing the
+two does, and asks for `sc.cast`.
+
+The pivot test uses the machine epsilon of the matrix's dtype, about \(1.2 \times 10^{-7}\) for
+float32 against \(2.2 \times 10^{-16}\) for float64. A matrix that factors in float64 can
+therefore report an unusable pivot in float32. Here the off-diagonal entry rounds to 1 in float32,
+which leaves a zero second pivot:
+
+```python
+@sc.function(sc.arg("K", (2, 2), dtype=...), outputs=sc.arg("status", status_type))
+def cholesky_status(K: sc.Expr) -> sc.Expr:
+    L, status = linalg.cholesky(K)
+    return status
+
+K = np.array([[1.0, 0.0], [0.99999999, 1.0]])
+print(cholesky_status(K), cholesky_status(K.astype(np.float32)))
+# 0 2
+```
+
+`dtype=...` leaves the dtype of `K` to the call, as described in
+[Leaving the dtype open](functions.md#leaving-the-dtype-open), so the same function runs in both
+precisions.
 
 ## Derivatives
 

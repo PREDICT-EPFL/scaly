@@ -18,7 +18,7 @@ from scaly import linalg
 from scaly.codegen import render_c_source
 
 N = 4
-STATUS = sc.TensorType((), sc.dtypes.int64)
+STATUS = sc.TensorType((), sc.dtypes.int32)
 
 
 def _spd(rng: np.random.Generator, n: int = N) -> np.ndarray:
@@ -88,7 +88,7 @@ def test_factorizations_map_over_leading_stage_axes() -> None:
   a = np.stack([np.stack([_spd(rng) for _ in range(3)]) for _ in range(2)])
   a[1, 2, 0, 0] = -1.0
 
-  @sc.function(sc.arg("A", (2, 3, N, N)), outputs=sc.group(sc.arg("L", (2, 3, N, N)), sc.arg("status", sc.TensorType((2, 3), sc.dtypes.int64))))
+  @sc.function(sc.arg("A", (2, 3, N, N)), outputs=sc.group(sc.arg("L", (2, 3, N, N)), sc.arg("status", sc.TensorType((2, 3), sc.dtypes.int32))))
   def factor(A):
     return linalg.cholesky(A)
 

@@ -20,8 +20,9 @@ def solve(K: Any, b: Any, *, assume: str) -> tuple[Expr, Expr]:
   `cholesky`. ``"sym"`` means symmetric quasi-definite, factored by `ldl` without pivoting.
   ``"gen"`` means general, factored by `lu_factor` with partial pivoting. The rules of each
   factorization for reading the lower triangle and for ``status`` apply here. ``K`` is
-  a float64 square matrix, or a stack of them over leading axes. ``b`` is shaped ``(*batch, n)`` or
-  ``(*batch, n, k)``, and ``x`` has its shape.
+  a float32 or float64 square matrix, or a stack of them over leading axes. ``b`` is shaped ``(*batch, n)`` or
+  ``(*batch, n, k)``, and ``x`` has its shape. ``b`` has the dtype of ``K``, which a Python number or
+  list takes, and so has ``x``.
 
   ``x`` is differentiable in ``K`` and ``b``. The reverse derivative reuses the factorization
   of the solve: ``b_bar = K^{-T} x_bar`` and ``K_bar = -b_bar x^T``, with the two mirrored

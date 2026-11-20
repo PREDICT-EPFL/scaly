@@ -3,5 +3,7 @@
 
 float sinf(float);
 float cosf(float);
+float sqrtf(float);
+float fabsf(float);
 
 #endif
