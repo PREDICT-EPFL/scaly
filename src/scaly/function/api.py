@@ -399,7 +399,7 @@ def _seeded(
       return _G(tuple(multipliers(part) for part in tree.parts), public=False)
     layout = tree._layout_decls[0]
     pattern = ... if tree.decls[0] is None and layout in (None, "csc", "csr") else None
-    return arg("lam:" + tree.names[0], tree.decls[0], layout=layout, pattern=pattern)
+    return arg("lam:" + tree.names[0], tree.decls[0], layout=layout, pattern=pattern, dtype=... if tree.decls[0] is None else None)
 
   if kind == "fwd":
     seed = (

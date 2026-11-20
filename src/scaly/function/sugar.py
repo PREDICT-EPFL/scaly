@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from collections.abc import Iterator
 from typing import Any, cast, overload
 
 import numpy as np
@@ -12,8 +13,8 @@ from ..ir.expr import Expr, ExprOp, as_expr, common_lowering, stop_gradient, pac
 from ..ir.expr_spec import loop_result_type
 from ..ir.layout import bind_sparse
 from ..ir.types import CanonicalPattern, TensorType
-from .model import Function, _Derived, _traced, as_concrete
-from .tree import Tree, _G, _Leaf, _PatternHole, _leaves
+from .model import Function, _Derived, _bound_dtype, _traced, as_concrete
+from .tree import Tree, _G, _Hole, _Leaf, _dtype_hole, _leaves, _pattern_hole
 from .concrete import ConcreteFunction
 
 
@@ -161,13 +162,17 @@ def _map_arguments(source: Function, length: int, name: str, args: tuple[Any, ..
     is_expr = isinstance(value, Expr)
     actual: Any = value if is_expr or sparse.issparse(value) else np.asarray(value)
     if tree is None and (sparse.issparse(actual) or is_expr and actual.type.pattern is not None):
-      decl = _PatternHole(shape_hole=True)
+      decl = _Hole(shape_hole=True, pattern_hole=True)
+    dtype = _bound_dtype(actual) if _dtype_hole(decl) else TensorType(()).dtype if decl is None else decl.dtype
     repeated = isinstance(marker, _Broadcast)
     canonical = None
-    if isinstance(decl, _PatternHole):
+    if isinstance(decl, _Hole) and not decl.pattern_hole:
+      decl = None if decl.shape_hole else TensorType(decl.shape, dtype, decl.diff, decl.pattern)
+    if _pattern_hole(decl):
+      assert isinstance(decl, _Hole)
       if isinstance(marker, _Window):
         raise TypeError("window cannot bind a pattern hole; instantiate the callee first")
-      pattern, canonical = bind_sparse(actual, decl.dtype.numpy()) if sparse.issparse(actual) else (actual.type.pattern if is_expr else None, None)
+      pattern, canonical = bind_sparse(actual, dtype.numpy()) if sparse.issparse(actual) else (actual.type.pattern if is_expr else None, None)
       if decl.shape_hole and pattern is None:
         decl = None
       else:
@@ -178,7 +183,7 @@ def _map_arguments(source: Function, length: int, name: str, args: tuple[Any, ..
           if decl.shape_hole
           else decl.shape
         )
-        decl = TensorType(shape, decl.dtype, decl.diff, pattern)
+        decl = TensorType(shape, dtype, decl.diff, pattern)
       if canonical is not None:
         canonical_inputs[len(actuals)] = canonical
         actual = cast(Any, canonical)
@@ -223,9 +228,8 @@ def _map_arguments(source: Function, length: int, name: str, args: tuple[Any, ..
     width = decl.storage_size if decl is not None else int(np.prod(shape, dtype=int))
     if length > 0 and start + (length - 1) * stride + width > actual.size:
       raise ValueError("vmap window reads past outer tensor")
-    expected_dtype = TensorType(()).dtype if decl is None else decl.dtype
-    if isinstance(actual, Expr) and actual.type.dtype != expected_dtype:
-      raise ValueError(f"{name}: expected dtype {expected_dtype}, got {actual.type.dtype}")
+    if isinstance(actual, Expr) and actual.type.dtype != dtype:
+      raise ValueError(f"{name}: expected dtype {dtype}, got {actual.type.dtype}")
     if isinstance(marker, _Window) and isinstance(actual, Expr) and pattern is not None:
       layout = cast(_Leaf, tree).layouts[0]
       assert layout is not None and decl is not None
@@ -235,7 +239,7 @@ def _map_arguments(source: Function, length: int, name: str, args: tuple[Any, ..
         start, stride = 0, width
     actuals.append(actual)
     layouts.append((start, stride))
-    return TensorType(shape, expected_dtype, True if decl is None else decl.diff, pattern)
+    return TensorType(shape, dtype, True if decl is None else decl.diff, pattern)
 
   skeleton = resolve(source.inputs, args)
   concrete = source._bind(skeleton, name)
@@ -388,7 +392,7 @@ def cond(selector: Any, branches: tuple[Function | ConcreteFunction, ...], *oper
   actuals = None
   for fn in branches:
     source = Function._from_instance(fn) if isinstance(fn, ConcreteFunction) else fn
-    branch, prepared = source._prepare_arguments(_symbolic(operands), "cond")
+    branch, prepared = source._prepare_arguments(_symbolic(_hole_constants(operands, _dtype_holes(source))), "cond")
     leaves = branch.input_tree.flatten_symbolic(prepared, "cond")
     if actuals is None:
       actuals = tuple(leaves)
@@ -424,6 +428,26 @@ def _whole(item: Any) -> Any:
   return tuple(_whole(part) for part in item) if isinstance(item, tuple) else broadcast(item)
 
 
+def _dtype_holes(source: Function) -> Iterator[bool]:
+  """Whether each flat input leaf of ``source`` leaves its dtype to the call."""
+  return iter(() if source.inputs is None else tuple(_dtype_hole(decl) for decl in source.inputs.decls))
+
+
+def _hole_constants(item: Any, holes: Iterator[bool]) -> Any:
+  """Make each Python or NumPy leaf bound to a dtype hole a constant of the dtype ``np.asarray`` gives it.
+
+  The loop and ``cond`` builders turn the remaining leaves into constants of the declared dtype.
+  """
+  if isinstance(item, tuple):
+    return tuple(_hole_constants(part, holes) for part in item)
+  if isinstance(item, _Broadcast):
+    return _Broadcast(_hole_constants(item.value, holes))
+  if isinstance(item, _Window):
+    return _Window(_hole_constants(item.value, holes), item.start, item.stride)
+  hole = next(holes, False)
+  return Expr.const(np.asarray(item)) if hole and not isinstance(item, Expr) and not sparse.issparse(item) else item
+
+
 def _symbolic(item: Any) -> Any:
   """Make every leaf of a tree of loop slices an expression, keeping its marker."""
   if isinstance(item, tuple):
@@ -455,11 +479,14 @@ def _loop(
     raise ValueError(f"{what}: {'max_iter' if cond is not None else 'length'} must be non-negative")
   if max_trajectory is not None and max_trajectory < 0:
     raise ValueError(f"{what}: max_trajectory must be non-negative")
-  inits = init if isinstance(init, tuple) else (init,)
+  source = Function._from_instance(body) if isinstance(body, ConcreteFunction) else body
+  holes = _dtype_holes(source)
+  inits = _hole_constants(init if isinstance(init, tuple) else (init,), holes)
   leaves = [as_expr(leaf) for leaf in _leaves(inits)]
   step = (broadcast(Expr.const(np.int64(0))),) if index else ()
-  source = Function._from_instance(body) if isinstance(body, ConcreteFunction) else body
-  callee, actuals, layouts, _ = _map_arguments(source, length, what, (*_whole(inits), *step, *_symbolic(xs)))
+  if index:
+    next(holes, False)
+  callee, actuals, layouts, _ = _map_arguments(source, length, what, (*_whole(inits), *step, *_symbolic(_hole_constants(xs, holes))))
   n_carry, skip = len(leaves), len(leaves) + int(index)
   outers = tuple(actuals[skip:])
   trips = () if trip is None else (trip if isinstance(trip, Expr) else Expr.const(np.int64(trip)),)
