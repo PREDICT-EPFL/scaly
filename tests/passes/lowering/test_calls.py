@@ -215,8 +215,9 @@ def test_static_loop_budget_boundary_and_scalar_override(monkeypatch) -> None:
     return c * 1.25 + 0.1
 
   raw = _lowered_main(step)
-  cost, step_dependent = calls._loop_cost(raw, {})
-  assert cost > 0 and not step_dependent
+  work = calls._loop_cost(raw, {})
+  assert work is not None and work[0] > 0 and not work[1]
+  cost = work[0]
   monkeypatch.setattr(calls, "STATIC_LOOP_BUDGET", 3 * cost)
   assert not _has_carried_loop(_static_scan(step, 3))
   assert _has_carried_loop(_static_scan(step, 4))
@@ -388,7 +389,9 @@ def test_static_loop_budget_includes_the_step_index_store(monkeypatch) -> None:
   def step(c, j):
     return c + j.cast(sc.dtypes.float64)
 
-  cost, _ = calls._loop_cost(_lowered_main(step), {})
+  work = calls._loop_cost(_lowered_main(step), {})
+  assert work is not None
+  cost = work[0]
   monkeypatch.setattr(calls, "STATIC_LOOP_BUDGET", 2 * cost)
   x = sc.sym("x")
   y, _ = sc.scan(step, x, length=2, index=True)
