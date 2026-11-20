@@ -12,9 +12,9 @@ from scipy import sparse
 
 from ..ir.expr import Expr
 from ..ir.layout import bind_sparse
-from ..ir.types import CanonicalPattern, TensorType, as_shape
+from ..ir.types import CanonicalPattern, DType, TensorType, as_shape, dtypes
 from .concrete import ConcreteFunction, DerivSpec
-from .tree import Tree, _G, _Leaf, _PatternHole, _is_hole, _shape_hole, _leaves, flat_tree, parameter_list
+from .tree import Tree, _G, _Hole, _Leaf, _dtype_hole, _is_hole, _pattern_hole, _shape_hole, _leaves, flat_tree, parameter_list
 
 if TYPE_CHECKING:
   from ..solvers.stats import SolverStats
@@ -32,12 +32,26 @@ def _types(skeleton: Any) -> tuple[TensorType, ...]:
   return tuple(_leaves(skeleton))
 
 
+# The instance-name token of a dtype bound to a dtype hole. float64 has none, so a float64 binding
+# keeps the name a plain shape hole gives it.
+_DTYPE_TOKENS = {"float32": "f32", "int32": "i32", "int64": "i64", "bool": "b", "uint8": "u8"}
+
+
+def _bound_dtype(value: Any) -> DType:
+  """The dtype a dtype hole binds from an expression, a NumPy or SciPy array, or a Python value."""
+  if isinstance(value, Expr):
+    return value.type.dtype
+  return dtypes.from_name((value if sparse.issparse(value) else np.asarray(value)).dtype.name)
+
+
 def _mangle(name: str, skeleton: Any, types: tuple[TensorType, ...], decls: tuple[TensorType | None, ...] | None = None) -> str:
   tokens = []
   for decl, type_ in zip(decls if decls is not None else (None,) * len(types), types, strict=True):
     if _shape_hole(decl):
       tokens.append("x".join(map(str, type_.shape)) if type_.shape else "s")
-    if isinstance(decl, _PatternHole) or decl is None and type_.pattern is not None:
+    if _dtype_hole(decl) and type_.dtype != dtypes.float64:
+      tokens.append(_DTYPE_TOKENS[type_.dtype.name])
+    if _pattern_hole(decl) or decl is None and type_.pattern is not None:
       tokens.append(f"p{type_.pattern.digest[:8]}" if type_.pattern is not None else "pdense")
   shapes = "_".join(tokens)
   nesting = hashlib.sha256(repr(_structure(skeleton)).encode()).hexdigest()[:6]
@@ -46,7 +60,7 @@ def _mangle(name: str, skeleton: Any, types: tuple[TensorType, ...], decls: tupl
 
 @dataclass(frozen=True, eq=False, repr=False)
 class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs]:
-  """A Python body and declarations, traced once for each binding of its shape holes.
+  """A Python body and declarations, traced once for each binding of its shape, dtype and pattern holes.
 
   Calling with symbolic leaves embeds the selected instance in a graph. Numerical leaves
   evaluate its compiled code. Each call takes one positional argument per declared parameter.
@@ -94,19 +108,21 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     """Bind input shape holes in flat leaf order and return the cached graph instance.
 
     A fully declared function needs no arguments. Bare functions must be bound by calling them.
-    ``TensorType`` bindings must agree with the declaration's dtype and differentiability.
+    ``TensorType`` bindings must agree with the declaration's dtype and differentiability. A dtype
+    or pattern hole is bound only by a ``TensorType``.
     """
     if self.inputs is None:
       raise TypeError(f"{self.name}: a bare function has no declared leaves to bind; call it instead")
     if shapes is None:
       if self.inputs.has_holes:
-        raise TypeError(f"{self.name} has shape holes or pattern holes in {self.inputs.names}; pass types to bind them")
+        raise TypeError(f"{self.name} has shape holes, dtype holes or pattern holes in {self.inputs.names}; pass types to bind them")
       types = self.inputs.types
     else:
       if len(shapes) != self.inputs.size:
         raise TypeError(f"{self.name}: declared {self.inputs.size} leaves, got {len(shapes)} bindings")
-      if any(isinstance(decl, _PatternHole) and not isinstance(shape, TensorType) for decl, shape in zip(self.inputs.decls, shapes, strict=True)):
-        raise TypeError(f"{self.name}: a pattern hole needs a TensorType binding")
+      for decl, shape in zip(self.inputs.decls, shapes, strict=True):
+        if not isinstance(shape, TensorType) and (_pattern_hole(decl) or _dtype_hole(decl)):
+          raise TypeError(f"{self.name}: a {'pattern' if _pattern_hole(decl) else 'dtype'} hole needs a TensorType binding")
       types = tuple(
         shape
         if isinstance(shape, TensorType)
@@ -119,8 +135,13 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
         expected = (
           TensorType(type_.shape)
           if decl is None
-          else TensorType(type_.shape if decl.shape_hole else decl.shape, decl.dtype, decl.diff, type_.pattern)
-          if isinstance(decl, _PatternHole)
+          else TensorType(
+            type_.shape if decl.shape_hole else decl.shape,
+            type_.dtype if decl.dtype_hole else decl.dtype,
+            decl.diff,
+            type_.pattern if decl.pattern_hole else decl.pattern,
+          )
+          if isinstance(decl, _Hole)
           else decl
         )
         if expected != type_:
@@ -155,12 +176,14 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
           raise ValueError(f"{what}: bare functions require float64 symbolic leaves, got {value.type.dtype}")
       decl = None if tree is None else tree.decls[0]
       name = "input" if tree is None else tree.names[0]
+      if _dtype_hole(decl) and not isinstance(value, Expr) and not sparse.issparse(value):
+        value = np.asarray(value)
+      dtype = _bound_dtype(value) if _dtype_hole(decl) else TensorType(()).dtype if decl is None else decl.dtype
       if isinstance(value, Expr):
         shape = value.shape
-        expected_dtype = TensorType(()).dtype if decl is None else decl.dtype
-        if value.type.dtype != expected_dtype:
-          raise ValueError(f"{what}: expected dtype {expected_dtype} for {name!r}, got {value.type.dtype}")
-        if decl is not None and not isinstance(decl, _PatternHole) and value.type.pattern is not decl.pattern:
+        if value.type.dtype != dtype:
+          raise ValueError(f"{what}: expected dtype {dtype} for {name!r}, got {value.type.dtype}")
+        if decl is not None and not _pattern_hole(decl) and value.type.pattern is not decl.pattern:
           raise ValueError(f"{what}: different stored pattern for {name!r}")
       else:
         shape = np.shape(value)
@@ -168,13 +191,16 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
           shape = decl.shape
       if decl is not None and not _shape_hole(decl) and shape != decl.shape:
         raise ValueError(f"{what}: expected shape {decl.shape} for {name!r}, got {shape}")
-      if tree is None or isinstance(decl, _PatternHole):
+      if tree is None or _pattern_hole(decl):
         pattern = value.type.pattern if isinstance(value, Expr) else None
         if sparse.issparse(value):
-          pattern, value = bind_sparse(value, (TensorType(()).dtype if decl is None else decl.dtype).numpy())
+          pattern, value = bind_sparse(value, dtype.numpy())
           canonical.append(len(prepared))
         prepared.append(value)
-        return TensorType(shape, pattern=pattern) if decl is None else TensorType(shape, decl.dtype, decl.diff, pattern)
+        return TensorType(shape, pattern=pattern) if decl is None else TensorType(shape, dtype, decl.diff, pattern)
+      if isinstance(decl, _Hole):
+        prepared.append(value)
+        return TensorType(shape, dtype, decl.diff, decl.pattern)
       prepared.append(value)
       return TensorType(shape) if decl is None else decl
 
@@ -252,7 +278,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
         return declarations[key[4:]]
       if key.startswith("lam:"):
         decl = None if self.outputs is None else self.outputs.decls[self.outputs.index(key[4:])]
-        return _PatternHole(shape_hole=True) if decl is None and layouts.get(key) in (None, "csc", "csr") else decl
+        return _Hole(shape_hole=True, pattern_hole=True) if decl is None and layouts.get(key) in (None, "csc", "csr") else decl
       raise ValueError(f"unknown factory input: {key!r}")
 
     input_layouts = dict(zip(source_inputs.names, source_inputs._layout_decls, strict=True))

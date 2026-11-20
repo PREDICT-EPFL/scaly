@@ -25,18 +25,32 @@ type _DenseNumerical = Array | tuple[_DenseNumerical, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class _PatternHole(TensorType):
-  """A leaf declaration whose stored pattern is supplied by a binding."""
+class _Hole(TensorType):
+  """A leaf declaration whose shape, dtype or stored pattern is supplied by a binding.
+
+  A bare ``None`` declaration is the plain shape hole; this class carries every other combination.
+  The fields it leaves open hold ``TensorType``'s defaults and are not read.
+  """
 
   shape_hole: bool = False
+  dtype_hole: bool = False
+  pattern_hole: bool = False
 
 
 def _is_hole(decl: LeafDecl) -> bool:
-  return decl is None or isinstance(decl, _PatternHole)
+  return decl is None or isinstance(decl, _Hole)
 
 
 def _shape_hole(decl: LeafDecl) -> bool:
-  return decl is None or isinstance(decl, _PatternHole) and decl.shape_hole
+  return decl is None or isinstance(decl, _Hole) and decl.shape_hole
+
+
+def _dtype_hole(decl: LeafDecl) -> bool:
+  return isinstance(decl, _Hole) and decl.dtype_hole
+
+
+def _pattern_hole(decl: LeafDecl) -> bool:
+  return isinstance(decl, _Hole) and decl.pattern_hole
 
 
 def _leaves(value: Any) -> list[Any]:
@@ -82,7 +96,7 @@ class Tree[Symbolic, Numerical]:
   def types(self) -> tuple[TensorType, ...]:
     """The leaf tensor types in C-signature order."""
     if self.has_holes:
-      raise TypeError(f"tree {self.names} has shape or pattern holes; resolve them by tracing first")
+      raise TypeError(f"tree {self.names} has shape, dtype or pattern holes; resolve them by tracing first")
     return cast(tuple[TensorType, ...], self.decls)
 
   @property
@@ -110,8 +124,9 @@ class Tree[Symbolic, Numerical]:
       if decl is not None and (
         not _shape_hole(decl)
         and decl.shape != actual.shape
-        or decl.dtype != actual.dtype
-        or not isinstance(decl, _PatternHole)
+        or not _dtype_hole(decl)
+        and decl.dtype != actual.dtype
+        or not _pattern_hole(decl)
         and decl.pattern is not actual.pattern
       ):
         raise TypeError(f"{name!r} declared with type {decl}, traced type {actual}")
@@ -164,7 +179,8 @@ class _Leaf(Tree[Expr, Array]):
 
   The declared name is external metadata and need not match the local name used by a decorated
   function body. Pass a ``TensorType`` to set dtype or differentiability explicitly.
-  ``pattern=...`` leaves the stored pattern to a call or an explicit ``TensorType`` binding.
+  ``pattern=...`` leaves the stored pattern to a call or an explicit ``TensorType`` binding, and
+  ``dtype=...`` does the same for the dtype.
 
   **A single leaf is passed and returned unpacked.** An ``arg`` input tree takes the tensor itself,
   not ``(tensor,)``, and an ``arg`` output tree returns the tensor itself, not a one-element tuple.
@@ -172,7 +188,16 @@ class _Leaf(Tree[Expr, Array]):
   returned tensor along its first axis exactly as NumPy would.
   """
 
-  def __init__(self, name: str, shape: ShapeDecl = None, /, *, layout: Layout = None, pattern: EllipsisType | None = None) -> None:
+  def __init__(
+    self,
+    name: str,
+    shape: ShapeDecl = None,
+    /,
+    *,
+    layout: Layout = None,
+    pattern: EllipsisType | None = None,
+    dtype: EllipsisType | None = None,
+  ) -> None:
     if not isinstance(name, str) or not name:
       raise ValueError("arg needs a non-empty name")
     self.names = (name,)
@@ -182,15 +207,27 @@ class _Leaf(Tree[Expr, Array]):
       decl = shape
     else:
       decl = TensorType(as_shape(shape))
-    if pattern is not None:
-      if pattern is not Ellipsis:
-        raise TypeError("a pattern hole is declared with pattern=...")
-      if decl is not None and decl.pattern is not None:
-        raise ValueError("a pattern hole cannot replace a concrete stored pattern")
-      decl = _PatternHole(shape_hole=True) if decl is None else _PatternHole(decl.shape, decl.dtype, decl.diff)
+    if pattern is not None and pattern is not Ellipsis:
+      raise TypeError("a pattern hole is declared with pattern=...")
+    if dtype is not None and dtype is not Ellipsis:
+      raise TypeError("a dtype hole is declared with dtype=...; a concrete dtype goes in a TensorType")
+    if pattern is not None and decl is not None and decl.pattern is not None:
+      raise ValueError("a pattern hole cannot replace a concrete stored pattern")
+    declared_shape = None if decl is None or _shape_hole(decl) else decl.shape
+    if pattern is not None or dtype is not None:
+      base = decl or TensorType(())
+      decl = _Hole(
+        declared_shape or (),
+        base.dtype,
+        base.diff,
+        None if pattern is not None else base.pattern,
+        shape_hole=declared_shape is None,
+        dtype_hole=dtype is not None or _dtype_hole(decl),
+        pattern_hole=pattern is not None or _pattern_hole(decl),
+      )
     self.decls = (decl,)
     self._layout_decls = (layout,)
-    if isinstance(decl, _PatternHole):
+    if _pattern_hole(decl):
       if layout not in (None, "csc", "csr"):
         raise ValueError("a pattern hole needs a 'csc' or 'csr' layout")
       self.layouts = (None,)
@@ -198,7 +235,7 @@ class _Leaf(Tree[Expr, Array]):
       if layout is None or layout == "row-major":
         self.layouts = (None,)
       elif isinstance(layout, DenseLayout) or layout == "column-major":
-        self.layouts = (None if decl is not None and len(decl.shape) < 2 else DenseLayout(None if decl is None else decl.shape),)
+        self.layouts = (None if declared_shape is not None and len(declared_shape) < 2 else DenseLayout(declared_shape),)
       else:
         raise ValueError("dense layout must be 'row-major' or 'column-major'")
     else:
@@ -217,7 +254,7 @@ class _Leaf(Tree[Expr, Array]):
     if len(types) != 1:
       raise ValueError(f"arg expects one resolved type, got {len(types)}")
     layout = self.layouts[0] or self._layout_decls[0]
-    if isinstance(self.decls[0], _PatternHole) and types[0].pattern is None:
+    if _pattern_hole(self.decls[0]) and types[0].pattern is None:
       layout = None
     return _Leaf(self.names[0], types[0], layout=layout)
 
@@ -227,9 +264,9 @@ class _Leaf(Tree[Expr, Array]):
     decl = self.decls[0]
     if decl is not None and not _shape_hole(decl) and value.shape != decl.shape and not (allow_scalar and value.shape == ()):
       raise ValueError(f"{what}: expected shape {decl.shape} for {self.names[0]!r}, got {value.shape}")
-    if decl is not None and value.type.dtype != decl.dtype:
+    if decl is not None and not _dtype_hole(decl) and value.type.dtype != decl.dtype:
       raise ValueError(f"{what}: expected dtype {decl.dtype} for {self.names[0]!r}, got {value.type.dtype}")
-    if decl is not None and not isinstance(decl, _PatternHole) and value.type.pattern is not decl.pattern:
+    if decl is not None and not _pattern_hole(decl) and value.type.pattern is not decl.pattern:
       raise ValueError(f"{what}: different stored pattern for {self.names[0]!r}")
     return (value,)
 
@@ -265,10 +302,14 @@ def arg(name: str, shape: ShapeDecl = None, /, *, layout: Literal["row-major", "
 
 
 @overload
-def arg(name: str, shape: ShapeDecl = None, /, *, layout: Layout = None, pattern: EllipsisType | None = None) -> Tree[Expr, NumericalArray]: ...
+def arg(
+  name: str, shape: ShapeDecl = None, /, *, layout: Layout = None, pattern: EllipsisType | None = None, dtype: EllipsisType | None = None
+) -> Tree[Expr, NumericalArray]: ...
 
 
-def arg(name: str, shape: ShapeDecl = None, /, *, layout: Layout = None, pattern: EllipsisType | None = None) -> Tree[Expr, Any]:
+def arg(
+  name: str, shape: ShapeDecl = None, /, *, layout: Layout = None, pattern: EllipsisType | None = None, dtype: EllipsisType | None = None
+) -> Tree[Expr, Any]:
   """Declare one named tensor, optionally leaving its shape to a call or trace.
 
   A leaf is passed and returned as a bare value. Use ``group`` to declare tuple structure.
@@ -277,9 +318,11 @@ def arg(name: str, shape: ShapeDecl = None, /, *, layout: Layout = None, pattern
   each matrix's values by column, keeping leading batch axes in row-major order. A sparse leaf's
   ``layout`` is ``"csc"`` (the default), ``"csr"``, or the coordinate order of a
   ``SparsityPattern``. ``pattern=...`` leaves the pattern to the call, with a ``"csc"`` or
-  ``"csr"`` layout.
+  ``"csr"`` layout. ``dtype=...`` leaves the dtype to the call: each call binds the dtype of its
+  expression or NumPy array, and a Python number binds as ``np.asarray`` reads it. Without it a
+  leaf is float64 unless its ``TensorType`` says otherwise.
   """
-  return _Leaf(name, shape, layout=layout, pattern=pattern)
+  return _Leaf(name, shape, layout=layout, pattern=pattern, dtype=dtype)
 
 
 class _G(Tree[Any, Any]):

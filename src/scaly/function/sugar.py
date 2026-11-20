@@ -12,8 +12,8 @@ from ..ir.expr import Expr, ExprOp, as_expr, common_lowering, stop_gradient, pac
 from ..ir.expr_spec import loop_result_type
 from ..ir.layout import bind_sparse
 from ..ir.types import CanonicalPattern, TensorType
-from .model import Function, _Derived, _traced, as_concrete
-from .tree import Tree, _G, _Leaf, _PatternHole, _leaves
+from .model import Function, _Derived, _bound_dtype, _traced, as_concrete
+from .tree import Tree, _G, _Hole, _Leaf, _dtype_hole, _leaves, _pattern_hole
 from .concrete import ConcreteFunction
 
 
@@ -161,13 +161,17 @@ def _map_arguments(source: Function, length: int, name: str, args: tuple[Any, ..
     is_expr = isinstance(value, Expr)
     actual: Any = value if is_expr or sparse.issparse(value) else np.asarray(value)
     if tree is None and (sparse.issparse(actual) or is_expr and actual.type.pattern is not None):
-      decl = _PatternHole(shape_hole=True)
+      decl = _Hole(shape_hole=True, pattern_hole=True)
+    dtype = _bound_dtype(actual) if _dtype_hole(decl) else TensorType(()).dtype if decl is None else decl.dtype
     repeated = isinstance(marker, _Broadcast)
     canonical = None
-    if isinstance(decl, _PatternHole):
+    if isinstance(decl, _Hole) and not decl.pattern_hole:
+      decl = None if decl.shape_hole else TensorType(decl.shape, dtype, decl.diff, decl.pattern)
+    if _pattern_hole(decl):
+      assert isinstance(decl, _Hole)
       if isinstance(marker, _Window):
         raise TypeError("window cannot bind a pattern hole; instantiate the callee first")
-      pattern, canonical = bind_sparse(actual, decl.dtype.numpy()) if sparse.issparse(actual) else (actual.type.pattern if is_expr else None, None)
+      pattern, canonical = bind_sparse(actual, dtype.numpy()) if sparse.issparse(actual) else (actual.type.pattern if is_expr else None, None)
       if decl.shape_hole and pattern is None:
         decl = None
       else:
@@ -178,7 +182,7 @@ def _map_arguments(source: Function, length: int, name: str, args: tuple[Any, ..
           if decl.shape_hole
           else decl.shape
         )
-        decl = TensorType(shape, decl.dtype, decl.diff, pattern)
+        decl = TensorType(shape, dtype, decl.diff, pattern)
       if canonical is not None:
         canonical_inputs[len(actuals)] = canonical
         actual = cast(Any, canonical)
@@ -223,9 +227,8 @@ def _map_arguments(source: Function, length: int, name: str, args: tuple[Any, ..
     width = decl.storage_size if decl is not None else int(np.prod(shape, dtype=int))
     if length > 0 and start + (length - 1) * stride + width > actual.size:
       raise ValueError("vmap window reads past outer tensor")
-    expected_dtype = TensorType(()).dtype if decl is None else decl.dtype
-    if isinstance(actual, Expr) and actual.type.dtype != expected_dtype:
-      raise ValueError(f"{name}: expected dtype {expected_dtype}, got {actual.type.dtype}")
+    if isinstance(actual, Expr) and actual.type.dtype != dtype:
+      raise ValueError(f"{name}: expected dtype {dtype}, got {actual.type.dtype}")
     if isinstance(marker, _Window) and isinstance(actual, Expr) and pattern is not None:
       layout = cast(_Leaf, tree).layouts[0]
       assert layout is not None and decl is not None
@@ -235,7 +238,7 @@ def _map_arguments(source: Function, length: int, name: str, args: tuple[Any, ..
         start, stride = 0, width
     actuals.append(actual)
     layouts.append((start, stride))
-    return TensorType(shape, expected_dtype, True if decl is None else decl.diff, pattern)
+    return TensorType(shape, dtype, True if decl is None else decl.diff, pattern)
 
   skeleton = resolve(source.inputs, args)
   concrete = source._bind(skeleton, name)
