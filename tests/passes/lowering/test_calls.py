@@ -493,3 +493,34 @@ def test_table_driven_nest_goes_straight_line_and_keeps_the_taken_branch(tmp_pat
   rolled = _table_driven(scale=2.0)
   assert "for (" in _generated_code(rolled)
   np.testing.assert_allclose(rolled(x), _table_driven_reference(x, 2.0), rtol=1e-14)
+
+
+def test_step_dependent_expansion_charges_trips_and_constant_results() -> None:
+  @sc.function(sc.arg("empty", (0,)))
+  def noop(empty):
+    return empty
+
+  @sc.function(sc.arg("empty", (0,)), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
+  def idle(empty, j):
+    (result, _) = sc.scan(noop, empty, length=70_000, trip=sc.gather(sc.const(np.array([69_999, 70_000], dtype=np.int64)), j))
+    return result
+
+  # Nothing it computes reaches the C, but its trips exceed the interpreter's work limit.
+  x = sc.sym("x", (0,))
+  y, _ = sc.scan(idle, x, length=2, index=True)
+  assert _has_carried_loop(ConcreteFunction._from_exprs("idle_trips", [x], [y], ["x"], ["y"]))
+
+  @sc.function(sc.arg("i", sc.TensorType((), sc.dtypes.int64)))
+  def increment(i):
+    return i + 1
+
+  @sc.function(sc.arg("i", sc.TensorType((), sc.dtypes.int64)), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
+  def count(i, j):
+    i, _ = sc.scan(increment, i, length=2, trip=j % 2)
+    return i, i
+
+  # Every stacked output is a constant, and each still costs a store in the C.
+  i = sc.sym("i", dtype=sc.dtypes.int64)
+  for length, rolled in ((200, False), (300, True)):
+    _, (ys,) = sc.scan(count, sc.const(np.int64(0)) + i * 0, length=length, index=True)
+    assert _has_carried_loop(ConcreteFunction._from_exprs("constant_results", [i], [ys], ["i"], ["ys"])) == rolled

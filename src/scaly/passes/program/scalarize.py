@@ -47,19 +47,24 @@ class _OverBudget(Exception):
 
 @dataclass(slots=True)
 class _Budget:
-  """The values a static loop may still compute, and the statements it may still execute, before expansion gives up.
+  """The values a static loop may still compute, and the work it may still do, before expansion gives up.
 
   A value counts when it is not a constant after unrolling: index arithmetic and masked entries fold
-  away and never reach the generated code.
+  away and never reach the generated code. Work counts every statement, range trip and allocated
+  element, and is charged before it is done.
   """
 
   values: int
-  statements: int = AUTO_EXPANSION_WORK_PER_PROC
+  work: int = AUTO_EXPANSION_WORK_PER_PROC
 
   def spend(self, value: ProgramNode) -> None:
-    self.statements -= 1
     self.values -= value.op not in CONSTANTS
-    if self.values < 0 or self.statements < 0:
+    if self.values < 0:
+      raise _OverBudget
+
+  def charge(self, work: int) -> None:
+    self.work -= work
+    if self.work < 0:
       raise _OverBudget
 
 
@@ -124,11 +129,15 @@ class _Frame:
 
   def run(self, body: tuple[ProgramNode, ...]) -> None:
     for stmt in body:
+      if self.budget is not None:
+        self.budget.charge(1)
       if stmt.op == ProgramOp.BUFFER:
         if "alias_of" in stmt.attrs:
           src = self.buffers[stmt.attrs["alias_of"]]
           ptr = _Pointer(src.values, src.offset + stmt.attrs["alias_offset"])
         else:
+          if self.budget is not None:
+            self.budget.charge(math.prod(stmt.attrs["shape"]))
           values = stmt.attrs.get("values")
           ptr = _Pointer([constant(v, stmt.dtype) for v in values] if values is not None else [None] * math.prod(stmt.attrs["shape"]))
         ptr.support = stmt.attrs.get("support")
@@ -148,6 +157,8 @@ class _Frame:
       elif stmt.op == ProgramOp.FOR:
         rng = stmt.args[0]
         start, stop, step = (self._constant(a) for a in rng.args)
+        if self.budget is not None:
+          self.budget.charge(len(range(start, stop, step)))
         for i in range(start, stop, step):
           self.variables[rng.attrs["name"]] = p.const_int(i)
           self.run(stmt.args[1:])
@@ -179,14 +190,16 @@ def expand_static_loop(
   """Interpret an ordered static loop, preserving floating arithmetic and writing through mutable storage.
 
   Bounds and branches inside the loop must fold to constants at each step. With ``budget``, the
-  values the carried range stores or assigns through every callee that are not constants are
-  counted, and ``_OverBudget`` is raised once they exceed it.
+  values the carried range stores or assigns through every callee that are not constants, and the
+  constant results, are counted, and ``_OverBudget`` is raised once they exceed it or once the
+  interpretation's work exceeds ``AUTO_EXPANSION_WORK_PER_PROC``.
   """
   proc = p.proc("static_loop", params, body)
   frame = _Frame(proc, [_Pointer(_InputValues(buf)) for buf in params], procs, {}, strict=True)
+  loop_budget = None if budget is None else _Budget(budget)
   for stmt in body:
     carried = stmt.op == ProgramOp.FOR and stmt.args[0].attrs.get("carried")
-    frame.budget = _Budget(budget) if carried and budget is not None else None
+    frame.budget = loop_budget if carried else None
     frame.run((stmt,))
   buffers = {buf.attrs["name"]: buf for buf in (*params, *body) if buf.op == ProgramOp.BUFFER}
   targets, values = [], []
@@ -203,6 +216,11 @@ def expand_static_loop(
       assert value is not None
       targets.append(p.view(buf, [p.const_int(offset + at)]))
       values.append(value)
+      # A constant result is never counted inside the loop, yet its store still reaches the generated code.
+      if loop_budget is not None and value.op in CONSTANTS:
+        loop_budget.values -= 1
+  if loop_budget is not None and loop_budget.values < 0:
+    raise _OverBudget
   declarations, values = schedule_values(values, ScalarNameAllocator(names))
   return [
     *(stmt for stmt in body if stmt.op == ProgramOp.BUFFER),
