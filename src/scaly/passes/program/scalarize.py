@@ -37,8 +37,30 @@ class _Pointer:
   support: Support = None
 
 
-class _DataDependentAddress(Exception):
+class _DataDependent(Exception):
+  """An address, range bound or branch selector that does not fold to a constant."""
+
+
+class _OverBudget(Exception):
   pass
+
+
+@dataclass(slots=True)
+class _Budget:
+  """The values a static loop may still compute, and the statements it may still execute, before expansion gives up.
+
+  A value counts when it is not a constant after unrolling: index arithmetic and masked entries fold
+  away and never reach the generated code.
+  """
+
+  values: int
+  statements: int = AUTO_EXPANSION_WORK_PER_PROC
+
+  def spend(self, value: ProgramNode) -> None:
+    self.statements -= 1
+    self.values -= value.op not in CONSTANTS
+    if self.values < 0 or self.statements < 0:
+      raise _OverBudget
 
 
 class _Frame:
@@ -50,8 +72,10 @@ class _Frame:
     folded: dict[tuple[ProgramNode, tuple[ProgramNode, ...]], ProgramNode],
     *,
     strict: bool = False,
+    budget: _Budget | None = None,
   ) -> None:
     self.strict = strict
+    self.budget = budget
     self.procs = procs
     self.folded = folded
     self.buffers = {
@@ -66,7 +90,7 @@ class _Frame:
     ptr = self.buffers[node.attrs["buffer"]]
     index = self.scalar(node.args[0], {})
     if index.op != ProgramOp.CONST_INT:
-      raise _DataDependentAddress
+      raise _DataDependent
     offset = index.attrs["value"]
     return _Pointer(ptr.values, ptr.offset + offset)
 
@@ -112,23 +136,35 @@ class _Frame:
       elif stmt.op == ProgramOp.STORE:
         ptr = self.pointer(stmt.args[0])
         base = self.buffers[stmt.args[0].attrs["buffer"]]
-        ptr.values[ptr.offset] = (
+        value = ptr.values[ptr.offset] = (
           constant(0, stmt.dtype) if base.support is not None and ptr.offset - base.offset not in base.support else self.scalar(stmt.args[1], {})
         )
+        if self.budget is not None:
+          self.budget.spend(value)
       elif stmt.op == ProgramOp.ASSIGN:
-        self.variables[stmt.attrs["target"]] = self.scalar(stmt.args[0], {})
+        value = self.variables[stmt.attrs["target"]] = self.scalar(stmt.args[0], {})
+        if self.budget is not None:
+          self.budget.spend(value)
       elif stmt.op == ProgramOp.FOR:
         rng = stmt.args[0]
-        start, stop, step = (self.scalar(a, {}).attrs["value"] for a in rng.args)
+        start, stop, step = (self._constant(a) for a in rng.args)
         for i in range(start, stop, step):
           self.variables[rng.attrs["name"]] = p.const_int(i)
           self.run(stmt.args[1:])
+      elif stmt.op == ProgramOp.IF:
+        self.run(stmt.args[1 if self._constant(stmt.args[0]) else 2].args)
       elif stmt.op == ProgramOp.CALL:
         callee = self.procs[stmt.attrs["callee"]]
-        frame = _Frame(callee, [self.pointer(a) for a in stmt.args], self.procs, self.folded, strict=self.strict)
+        frame = _Frame(callee, [self.pointer(a) for a in stmt.args], self.procs, self.folded, strict=self.strict, budget=self.budget)
         frame.run(callee.args[callee.attrs["param_count"] :])
       else:
         raise NotImplementedError(f"scalarization does not support {stmt.op}")
+
+  def _constant(self, node: ProgramNode) -> int:
+    value = self.scalar(node, {})
+    if value.op not in CONSTANTS:
+      raise _DataDependent
+    return value.attrs["value"]
 
 
 def expand_static_loop(
@@ -137,11 +173,21 @@ def expand_static_loop(
   results: list[tuple[ProgramNode, int]],
   procs: dict[str, ProgramNode],
   names: NameScope,
+  *,
+  budget: int | None = None,
 ) -> list[ProgramNode]:
-  """Interpret an ordered static loop, preserving floating arithmetic and writing through mutable storage."""
+  """Interpret an ordered static loop, preserving floating arithmetic and writing through mutable storage.
+
+  Bounds and branches inside the loop must fold to constants at each step. With ``budget``, the
+  values the carried range stores or assigns through every callee that are not constants are
+  counted, and ``_OverBudget`` is raised once they exceed it.
+  """
   proc = p.proc("static_loop", params, body)
   frame = _Frame(proc, [_Pointer(_InputValues(buf)) for buf in params], procs, {}, strict=True)
-  frame.run(tuple(body))
+  for stmt in body:
+    carried = stmt.op == ProgramOp.FOR and stmt.args[0].attrs.get("carried")
+    frame.budget = _Budget(budget) if carried and budget is not None else None
+    frame.run((stmt,))
   buffers = {buf.attrs["name"]: buf for buf in (*params, *body) if buf.op == ProgramOp.BUFFER}
   targets, values = [], []
   for buf, size in results:
@@ -252,7 +298,7 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
       continue
     try:
       candidate = _scalarize_proc(proc, procs)
-    except _DataDependentAddress:
+    except _DataDependent:
       expansion_work[name] = None
       continue
     ops, growth = scalar_cost(candidate)
