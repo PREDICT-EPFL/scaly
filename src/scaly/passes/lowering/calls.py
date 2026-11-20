@@ -12,7 +12,7 @@ from ...ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
 from ...ir.types import DType, dtypes
 from ...function.concrete import ConcreteFunction
 from ...ir.support import Support, _mapped_support_groups
-from ..program.scalarize import _DataDependentAddress, expand_static_loop
+from ..program.scalarize import _DataDependent, _OverBudget, expand_static_loop
 from .ctx import LowerCtx, LoweringError, lowers, _lower_to_proc, _normalize_function
 from .in_place import carry_reuse
 
@@ -398,12 +398,13 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
   hints = {sibling.lowering for sibling in siblings}
   if not early and not direct and not hints & {"block", "opaque"}:
     procs = {proc.attrs["name"]: proc for proc in ctx.callees.values()}
-    cost = _loop_cost(p.proc("loop_step", (), body), procs)
-    if cost is not None and ("scalar" in hints or length * cost <= STATIC_LOOP_BUDGET):
+    work = _loop_cost(p.proc("loop_step", (), body), procs)
+    budget = None if "scalar" in hints else STATIC_LOOP_BUDGET
+    if work is not None and (budget is None or work[1] or length * work[0] <= budget):
       results = [(ctx.raw_buf_of(sibling), sibling.type.storage_size) for sibling in used.values()]
       try:
-        expanded = expand_static_loop(existing_buffers, ctx.statements[before_loop:], results, procs, ctx.names)
-      except _DataDependentAddress:
+        expanded = expand_static_loop(existing_buffers, ctx.statements[before_loop:], results, procs, ctx.names, budget=budget if work[1] else None)
+      except (_DataDependent, _OverBudget):
         pass
       else:
         ctx.statements[before_loop:] = expanded
@@ -413,15 +414,22 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
       ctx.value_buffers[sibling.id] = ctx.buf_of(used[int(sibling.attrs["output"])]).attrs["name"]
 
 
-def _loop_cost(proc: ProgramNode, procs: dict[str, ProgramNode]) -> int | None:
-  """Count scalar right-hand sides through every static range and callee, or reject unsafe substitution."""
+def _loop_cost(proc: ProgramNode, procs: dict[str, ProgramNode]) -> tuple[int, bool] | None:
+  """Count scalar right-hand sides through every range, branch and callee, or reject unsafe substitution.
+
+  The flag marks a body whose range bounds or branches are known only at each step, such as an
+  inner loop whose trip count is the outer step. Such a body is counted by expansion as it runs,
+  only the values that are not constants after unrolling, so a triangle costs its arithmetic and
+  not its index bookkeeping.
+  """
   if proc.attrs.get("lowering") in ("block", "opaque"):
     return None
-  total = 0
+  total, step_dependent = 0, False
   stack = [(stmt, 1) for stmt in proc.args[proc.attrs["param_count"] :]]
   while stack:
     stmt, factor = stack.pop()
-    if any(n.dtype is not None and n.dtype not in (dtypes.float64, dtypes.int64, dtypes.bool_) for n in walk_program(stmt)):
+    # Integer folding wraps at each width and a store's value has its target's dtype, so only narrow floats are refused.
+    if any(n.dtype is not None and n.dtype.is_floating and n.dtype != dtypes.float64 for n in walk_program(stmt)):
       return None
     if stmt.op == ProgramOp.CALL:
       callee = procs.get(stmt.attrs["callee"])
@@ -431,16 +439,21 @@ def _loop_cost(proc: ProgramNode, procs: dict[str, ProgramNode]) -> int | None:
     elif stmt.op == ProgramOp.FOR:
       rng = stmt.args[0]
       if any(arg.op != ProgramOp.CONST_INT for arg in rng.args):
-        return None
+        step_dependent = True
+        stack.extend((child, 0) for child in stmt.args[1:])
+        continue
       start, stop, step = (arg.attrs["value"] for arg in rng.args)
       if step <= 0:
         return None
       stack.extend((child, factor * len(range(start, stop, step))) for child in stmt.args[1:])
+    elif stmt.op == ProgramOp.IF:
+      step_dependent = True
+      stack.extend((child, 0) for branch in stmt.args[1:] for child in branch.args)
     elif stmt.op in (ProgramOp.STORE, ProgramOp.ASSIGN):
       total += factor
     elif stmt.op != ProgramOp.BUFFER:
       return None
-  return max(1, total)
+  return max(1, total), step_dependent
 
 
 def _call(ctx: LowerCtx, fn: ConcreteFunction, ins: list[ProgramNode], outs: list[ProgramNode]) -> ProgramNode:

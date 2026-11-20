@@ -215,8 +215,9 @@ def test_static_loop_budget_boundary_and_scalar_override(monkeypatch) -> None:
     return c * 1.25 + 0.1
 
   raw = _lowered_main(step)
-  cost = calls._loop_cost(raw, {})
-  assert cost is not None and cost > 0
+  work = calls._loop_cost(raw, {})
+  assert work is not None and work[0] > 0 and not work[1]
+  cost = work[0]
   monkeypatch.setattr(calls, "STATIC_LOOP_BUDGET", 3 * cost)
   assert not _has_carried_loop(_static_scan(step, 3))
   assert _has_carried_loop(_static_scan(step, 4))
@@ -237,8 +238,8 @@ def test_budget_counts_all_solve_rhs_and_nested_loop_iterations() -> None:
     [rhs],
     [p.for_(p.range_("seed", 0, 100), [p.call("solve", [rhs])])],
   )
-  assert _loop_cost(solve, {}) == 8
-  assert _loop_cost(many_rhs, {"solve": solve}) == 800
+  assert _loop_cost(solve, {}) == (8, False)
+  assert _loop_cost(many_rhs, {"solve": solve}) == (800, False)
 
 
 @pytest.mark.parametrize("reverse", [False, True])
@@ -388,10 +389,138 @@ def test_static_loop_budget_includes_the_step_index_store(monkeypatch) -> None:
   def step(c, j):
     return c + j.cast(sc.dtypes.float64)
 
-  cost = calls._loop_cost(_lowered_main(step), {})
-  assert cost is not None
+  work = calls._loop_cost(_lowered_main(step), {})
+  assert work is not None
+  cost = work[0]
   monkeypatch.setattr(calls, "STATIC_LOOP_BUDGET", 2 * cost)
   x = sc.sym("x")
   y, _ = sc.scan(step, x, length=2, index=True)
   fn = ConcreteFunction._from_exprs("wrapper_budget", [x], [y], ["x"], ["y"])
   assert _has_carried_loop(fn)
+
+
+def _generated_code(fn) -> str:
+  """The generated functions of ``fn``'s C source, without the preamble's lane helpers."""
+  from scaly.codegen import render_c_source
+
+  return render_c_source(fn).split('extern "C" {', 1)[1]
+
+
+def _spd(n):
+  rng = np.random.default_rng(n)
+  m = rng.standard_normal((n, n))
+  return m @ m.T + n * np.eye(n)
+
+
+@pytest.mark.parametrize("n", [4, 8])
+def test_dense_factorization_unrolls_its_triangle_within_the_budget(n, tmp_path, monkeypatch) -> None:
+  monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path))
+
+  @sc.function(sc.arg("A", (n, n)), sc.arg("b", (n, 1)))
+  def factor_and_solve(A, b):
+    L, status = sc.linalg.cholesky(A)
+    x, solved = sc.linalg.solve(A, b, assume="pos")
+    return L, status, x, solved
+
+  A, b = _spd(n), np.linspace(-1.0, 1.0, n)[:, None]
+  L, status, x, solved = factor_and_solve(A, b)
+  np.testing.assert_allclose(np.tril(L), np.linalg.cholesky(A), rtol=1e-13, atol=1e-13)
+  np.testing.assert_allclose(x, np.linalg.solve(A, b), rtol=1e-12)
+  assert int(status) == int(solved) == 0
+  assert ("for (" in _generated_code(factor_and_solve)) == (n > 4)
+
+
+_COUNTS = np.array([2, 0, 3, 1], dtype=np.int64)
+_STARTS = np.array([0, 2, 2, 5], dtype=np.int64)
+_ROWS = np.array([3, 1, 0, 2, 3, 0], dtype=np.int64)
+_DEST = np.array([1, 0, 3, 3, 2, 1], dtype=np.int64)
+_FLIP = np.array([True, False, False, True])
+
+
+def _table_driven(scale: float = 1.0, flips: np.ndarray = _FLIP):
+  """A column loop shaped like a sparse factorization: trip counts, gathers and scatters from constant tables."""
+
+  @sc.function(sc.arg("acc", 4), sc.arg("k", sc.TensorType((), sc.dtypes.int64)), sc.arg("x", 4), sc.arg("start", sc.TensorType((), sc.dtypes.int64)))
+  def entry(acc, k, x, start):
+    e = start + k
+    return sc.scatter(acc, sc.gather(sc.const(_DEST), e), sc.gather(x, sc.gather(sc.const(_ROWS), e)).sin() * scale)
+
+  @sc.function(sc.arg("w", 4))
+  def flip(w):
+    return -w.cos()
+
+  @sc.function(sc.arg("w", 4))
+  def keep(w):
+    return w * 0.5
+
+  @sc.function(sc.arg("w", 4), sc.arg("j", sc.TensorType((), sc.dtypes.int64)), sc.arg("x", 4))
+  def column(w, j, x):
+    trip = sc.gather(sc.const(_COUNTS), j)
+    w, _ = sc.scan(entry, w, (sc.broadcast(x), sc.broadcast(sc.gather(sc.const(_STARTS), j))), length=3, trip=trip, index=True)
+    return sc.cond(sc.gather(sc.const(flips), j), (keep, flip), w)
+
+  @sc.function(sc.arg("x", 4))
+  def columns(x):
+    w, _ = sc.scan(column, sc.const(np.zeros(4)), (sc.broadcast(x),), length=4, index=True)
+    return w
+
+  return columns
+
+
+def _table_driven_reference(x, scale=1.0, flips=_FLIP):
+  w = np.zeros(4)
+  for j in range(4):
+    for e in range(_STARTS[j], _STARTS[j] + _COUNTS[j]):
+      w[_DEST[e]] += np.sin(x[_ROWS[e]]) * scale
+    w = -np.cos(w) if flips[j] else w * 0.5
+  return w
+
+
+def test_table_driven_nest_goes_straight_line_and_keeps_the_taken_branch(tmp_path, monkeypatch) -> None:
+  from scaly.passes.lowering import calls
+
+  monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path))
+  x = np.array([0.3, -0.7, 1.1, 0.2])
+  fn = _table_driven()
+  np.testing.assert_allclose(fn(x), _table_driven_reference(x), rtol=1e-14)
+  source = _generated_code(fn)
+  assert "for (" not in source and "static const" not in source
+  assert source.count("sin(") == len(np.unique(_ROWS)) and "cos(" in source
+  kept = _table_driven(flips=np.zeros(4, dtype=bool))
+  np.testing.assert_allclose(kept(x), _table_driven_reference(x, flips=np.zeros(4, dtype=bool)), rtol=1e-14)
+  assert "cos(" not in _generated_code(kept)
+  monkeypatch.setattr(calls, "STATIC_LOOP_BUDGET", 8)
+  rolled = _table_driven(scale=2.0)
+  assert "for (" in _generated_code(rolled)
+  np.testing.assert_allclose(rolled(x), _table_driven_reference(x, 2.0), rtol=1e-14)
+
+
+def test_step_dependent_expansion_charges_trips_and_constant_results() -> None:
+  @sc.function(sc.arg("empty", (0,)))
+  def noop(empty):
+    return empty
+
+  @sc.function(sc.arg("empty", (0,)), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
+  def idle(empty, j):
+    (result, _) = sc.scan(noop, empty, length=70_000, trip=sc.gather(sc.const(np.array([69_999, 70_000], dtype=np.int64)), j))
+    return result
+
+  # Nothing it computes reaches the C, but its trips exceed the interpreter's work limit.
+  x = sc.sym("x", (0,))
+  y, _ = sc.scan(idle, x, length=2, index=True)
+  assert _has_carried_loop(ConcreteFunction._from_exprs("idle_trips", [x], [y], ["x"], ["y"]))
+
+  @sc.function(sc.arg("i", sc.TensorType((), sc.dtypes.int64)))
+  def increment(i):
+    return i + 1
+
+  @sc.function(sc.arg("i", sc.TensorType((), sc.dtypes.int64)), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
+  def count(i, j):
+    i, _ = sc.scan(increment, i, length=2, trip=j % 2)
+    return i, i
+
+  # Every stacked output is a constant, and each still costs a store in the C.
+  i = sc.sym("i", dtype=sc.dtypes.int64)
+  for length, rolled in ((200, False), (300, True)):
+    _, (ys,) = sc.scan(count, sc.const(np.int64(0)) + i * 0, length=length, index=True)
+    assert _has_carried_loop(ConcreteFunction._from_exprs("constant_results", [i], [ys], ["i"], ["ys"])) == rolled

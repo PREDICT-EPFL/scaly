@@ -16,6 +16,7 @@ import scipy.linalg
 import scaly as sc
 from scaly import linalg
 from scaly.codegen import render_c_source
+from scaly.passes.lowering import calls
 
 N = 4
 STATUS = sc.TensorType((), sc.dtypes.int32)
@@ -188,7 +189,10 @@ def test_reverse_over_reverse_matches_forward_over_reverse(routine) -> None:
   np.testing.assert_allclose(twice(p), sc.hessian(cost, "c", "p")(p) @ np.ones(N * N + N), rtol=1e-10, atol=1e-12)
 
 
-def test_the_primal_loops_update_their_carries_in_place() -> None:
+def test_the_primal_loops_update_their_carries_in_place(monkeypatch) -> None:
+  # Small factorizations unroll; a zero budget keeps the loops whose carries this checks.
+  monkeypatch.setattr(calls, "STATIC_LOOP_BUDGET", 0)
+
   @sc.function(sc.arg("K", (N, N)), sc.arg("b", N), outputs=sc.arg("x", N))
   def solve(K, b):
     return linalg.solve(K, b, assume="pos")[0]
