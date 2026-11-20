@@ -92,8 +92,8 @@ def cholesky(A: Any, *, ordering: Ordering | None = None) -> tuple[Expr, Expr]:
   A sparse ``A`` is one matrix, whose pattern may store the lower triangle, the upper one or
   both: an entry stored in one triangle stands for its mirror, and of a pair stored in both the
   lower entry is read. ``ordering`` reorders it symmetrically before factoring, as
-  ``P A P^T = L L^T``, and takes the values of ``scaly.linalg.symbolic.ldl``: ``"amd"``, the
-  default, ``"rcm"`` or ``"natural"``. ``L`` is then sparse, with the structural pattern of the
+  ``P A P^T = L L^T``, to limit fill: ``"amd"``, approximate minimum degree and the default,
+  ``"rcm"``, reverse Cuthill-McKee, or ``"natural"``. ``L`` is then sparse, with the structural pattern of the
   factor of ``P A P^T`` and its diagonal, in the reordered numbering, and the status counts pivots
   in that numbering. ``ordering`` with a dense ``A`` raises ``TypeError``.
 

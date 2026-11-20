@@ -1,6 +1,6 @@
 # Linear algebra
 
-Dense solves and factorizations built as Scaly functions. The
+Dense and sparse solves and factorizations built as Scaly functions. The
 [linear algebra guide](../guide/linalg.md) explains the stored triangle, the status output and
 the derivatives with examples.
 

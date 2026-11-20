@@ -4,18 +4,20 @@ Deleted in the last commit before the pull request is marked ready.
 
 ## Steps
 
-1. [ ] `scaly.linalg.sparse`: sparse `cholesky`, `ldl`, and `solve(assume="pos"|"sym")` with
+1. [x] `scaly.linalg.sparse`: sparse `cholesky`, `ldl`, and `solve(assume="pos"|"sym")` with
        `ordering=`, as library Functions over `scan`, driven by `symbolic.ldl`'s tables.
        Entry points in `dense.py`/`entry.py` dispatch on the matrix's pattern; `ordering=` with a
        dense matrix raises `TypeError`.
-2. [ ] Tests: SciPy to 1e-12 on random, banded, arrow and block-tridiagonal patterns under each
+2. [x] Tests: SciPy to 1e-12 on random, banded, arrow and block-tridiagonal patterns under each
        ordering; status on an unusable pivot; first and second derivatives of the solves against
        finite differences (and an unrolled reference).
-3. [ ] Lowering: prove in-place carries threaded through inner LOOPs (roadmap rule 1, "covers a
+3. [x] Lowering: prove in-place carries threaded through inner LOOPs (roadmap rule 1, "covers a
        left-looking LDLᵀ"), so `in_place=("L", "D", "w")` holds and no step copies O(n). Snapshots
        byte-identical; differential test.
 4. [ ] Column chunks as a `COND` over widths (devrush's direct kernel); measure code size.
-5. [ ] Docs: docstrings and `docs/guide/linalg.md` state the sparse case; API page.
+       Deferred with the timing gate: the roadmap keeps the widths open until measured, and the
+       measurement needs la015.
+5. [x] Docs: docstrings and `docs/guide/linalg.md` state the sparse case; API page.
 6. [ ] Checks: `wt hook pre-merge --yes`.
 7. [ ] Gate: loop structure against devrush's `_lower_sparse_ldl`. Timings need la015 (unreachable
        from this session): leave open on the PR.
