@@ -6,4 +6,9 @@ float cosf(float);
 float sqrtf(float);
 float fabsf(float);
 
+/* A macro of C99's <math.h>, which a board toolchain's header defines through the compiler, as here. */
+#ifndef isfinite
+#define isfinite(x) __builtin_isfinite(x)
+#endif
+
 #endif
