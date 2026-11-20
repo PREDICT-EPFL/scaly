@@ -192,3 +192,35 @@ def test_a_python_right_hand_side_takes_the_matrix_dtype() -> None:
 def test_an_integer_matrix_is_refused() -> None:
   with pytest.raises(TypeError, match="float32 or float64 matrix"):
     linalg.cholesky(sc.sym("A", (N, N), dtype=sc.dtypes.int64))
+
+
+@pytest.mark.parametrize("route", ["solve", "triangular"])
+def test_a_python_matrix_takes_the_dtype_of_a_numpy_right_hand_side(route) -> None:
+  b = np.ones(2, dtype=np.float32)
+  k = [[2.0, 0.0], [0.0, 2.0]]
+  x = linalg.solve(k, b, assume="pos")[0] if route == "solve" else linalg.solve_triangular(k, b, lower=True)
+  assert x.type.dtype == sc.dtypes.float32
+
+
+def test_a_complex_python_right_hand_side_is_refused() -> None:
+  with pytest.raises(TypeError, match="cannot combine"):
+    linalg.solve(np.eye(2, dtype=np.float32), [1 + 2j, 2 + 3j], assume="pos")
+
+
+@pytest.mark.parametrize("lower", [True, False])
+@pytest.mark.parametrize("trans", [True, False])
+@pytest.mark.parametrize("unit", [True, False])
+def test_every_float32_triangular_variant_matches_float64(lower, trans, unit) -> None:
+  rng = np.random.default_rng(22)
+  t, b = _triangular(rng).astype(np.float32), rng.normal(size=(N, 3)).astype(np.float32)
+
+  def solve(dtype: sc.DType) -> np.ndarray:
+    @sc.function(sc.arg("T", (N, N), dtype=...), sc.arg("b", (N, 3), dtype=...), name="variant")
+    def fn(T, b):
+      return linalg.solve_triangular(T, b, lower=lower, trans=trans, unit_diagonal=unit)
+
+    return np.asarray(fn(t.astype(dtype.numpy()), b.astype(dtype.numpy())))
+
+  single = solve(sc.dtypes.float32)
+  assert single.dtype == np.float32
+  np.testing.assert_allclose(single, solve(sc.dtypes.float64), rtol=1e-5, atol=1e-5)

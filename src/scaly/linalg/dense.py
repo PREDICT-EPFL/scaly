@@ -11,7 +11,7 @@ from ..function.api import custom_derivative, function
 from ..function.model import Function
 from ..function.sugar import broadcast, scan, vmap
 from ..function.tree import arg, group
-from ..ir.expr import Expr, argmax, as_expr, equal, gather, minimum, promote_dtype, scatter, stack, where, zeros_like
+from ..ir.expr import Expr, _operands, argmax, as_expr, equal, gather, minimum, promote_dtype, scatter, stack, where, zeros_like
 from ..ir.types import TensorType, dtypes
 
 _INDEX = TensorType((), dtypes.int64)
@@ -436,9 +436,18 @@ def _square(name: str, A: Expr) -> tuple[int, ...]:
   return A.shape[:-2]
 
 
-def _right_hand_side(name: str, A: Expr, b: Any) -> tuple[Expr, bool]:
-  """``b`` beside ``A``: a Python value takes ``A``'s dtype, and an ``Expr`` or a NumPy array must have it."""
-  b = as_expr(b) if isinstance(b, Expr | np.ndarray | np.generic) else _like(A, b)
+def _system(name: str, A: Any, b: Any) -> tuple[Expr, Expr, tuple[int, ...], bool]:
+  """``A`` and ``b`` as expressions by #25's rule, ``b`` shaped ``(*batch, n, k)``, the batch axes, and whether ``b`` was a vector.
+
+  A Python value takes the dtype of the other operand, and two strong operands must share theirs.
+  """
+  A, b = _operands(A, b)
+  batch = _square(name, A)
+  B, vector = _right_hand_side(name, A, b)
+  return A, B, batch, vector
+
+
+def _right_hand_side(name: str, A: Expr, b: Expr) -> tuple[Expr, bool]:
   _dense(name, "right-hand side", b)
   try:
     promote_dtype(A, b)
@@ -476,9 +485,7 @@ def solve_triangular(T: Any, b: Any, *, lower: bool, trans: bool = False, unit_d
   The result is differentiable in ``T`` and ``b``. The reverse derivative is one solve with the
   transposed matrix, and the forward derivative follows the substitution.
   """
-  T = as_expr(T)
-  batch = _square("solve_triangular", T)
-  B, vector = _right_hand_side("solve_triangular", T, b)
+  T, B, batch, vector = _system("solve_triangular", T, b)
   X = _mapped(_triangular(lower, trans, unit_diagonal), batch, T, B)
   return X.reshape(X.shape[:-1]) if vector else X
 
