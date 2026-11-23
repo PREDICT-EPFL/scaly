@@ -72,7 +72,7 @@ def _operations(proc: ProgramNode) -> dict[ProgramOp, int]:
   """The floating operations the procedure computes for its outputs other than the status, each value once.
 
   A value, not an occurrence in the C: the scheduler leaves a product of two locals with two uses
-  at both uses (``schedule_values``), which the C compiler computes once.
+  at both uses (``schedule_values``), leaving the common subexpression to the C compiler.
   """
   body = proc.args[proc.attrs["param_count"] :]
   assigned = {stmt.attrs["target"]: stmt.args[0] for stmt in body if stmt.op == ProgramOp.ASSIGN}
