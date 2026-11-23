@@ -48,9 +48,9 @@ def solve(K: Any, b: Any, *, assume: str, ordering: Ordering | None = None) -> t
   ``x`` is differentiable in ``K`` and ``b``. The reverse derivative reuses the factorization
   of the solve: ``b_bar = K^{-T} x_bar`` and ``K_bar = -b_bar x^T``, with the two mirrored
   entries of each lower-triangle entry summed when only the lower triangle is read. Forward
-  derivatives of a dense solve use the forward rule of the factorization and follow the
-  substitutions. Those of a sparse solve are ``dx = K^{-1} (db - dK x)``, solved with the same
-  factorization. The derivative is meaningless when ``status`` is nonzero.
+  derivatives are ``dx = K^{-1} (db - dK x)``, solved with the same factorization, so a
+  solution and its Jacobian factor ``K`` once. The derivative is meaningless when ``status`` is
+  nonzero.
   """
   # A SciPy matrix becomes a sparse expression first, so that a Python ``b`` takes its dtype.
   K, b = _operands(as_expr(K) if scipy.sparse.issparse(K) else K, b)
@@ -102,7 +102,7 @@ def cholesky(A: Any, *, ordering: Ordering | None = None) -> tuple[Expr, Expr]:
 
   ``L`` is differentiable in ``A``. The derivative of an entry below the diagonal is the sum of
   the derivatives with respect to the two mirrored entries it stands for. The reverse derivative
-  of a dense factor reuses ``L``, and its forward derivative factors ``A`` once more. A sparse
+  and the forward derivative of a dense factor reuse ``L``. A sparse
   ``L`` is meant to be read, not differentiated, and is declared nondifferentiable: differentiate
   `solve` instead.
   """
@@ -130,8 +130,8 @@ def ldl(A: Any, *, ordering: Ordering | None = None) -> tuple[Expr, Expr, Expr]:
   reordered numbering.
 
   The factors are meant to be read, not differentiated: differentiate `solve` instead. Dense
-  factors have a forward rule, which factors ``A`` once more for every direction, and no reverse
-  rule, so a gradient through them differentiates the loops of the factorization. Sparse factors
+  factors have a forward rule, which reads the factors of the call, and no reverse rule, so a
+  gradient through them differentiates the loops of the factorization. Sparse factors
   are declared nondifferentiable.
   """
   A = as_expr(A)

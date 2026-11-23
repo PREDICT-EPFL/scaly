@@ -1,5 +1,5 @@
 """``scaly.linalg.solve``: values against NumPy, derivatives against an unrolled reference, one
-factorization shared by the value and its gradient, and the entry point's checks."""
+factorization shared by the value and its derivatives, and the entry point's checks."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pytest
 import scaly as sc
 from scaly import linalg
 from scaly.function.model import as_concrete
-from scaly.ir.expr import ExprOp, topo
+from scaly.ir.expr import ExprOp, is_map, topo
 
 from .test_dense import N, _check_derivatives, _cost, _spd, _unrolled_cholesky, _unrolled_substitution
 
@@ -91,6 +91,89 @@ def test_a_value_and_its_gradient_share_one_factorization() -> None:
         if node.attrs["callee"].name.startswith(f"cholesky_{N}x{N}"):
           factorizations.add((graph.name, node.args))
   assert len(factorizations) == 1
+
+
+def _runs(fn, loop: str) -> int:
+  """How many times evaluating ``fn`` runs a loop whose body is named ``loop``: one invocation of
+  a function, its outputs and residuals together, counts once, and a map multiplies by its length."""
+
+  def count(graph, times: int) -> int:
+    total, seen = 0, set()
+    for node in topo(graph.results):
+      if node.op not in (ExprOp.CALL, ExprOp.LOOP):
+        continue
+      callee, attrs = node.attrs["callee"], node.attrs
+      key = (callee, node.args, attrs.get("starts"), attrs.get("strides"), attrs.get("length"))
+      if key in seen:
+        continue
+      seen.add(key)
+      if node.op == ExprOp.LOOP and callee.name.startswith(loop):
+        total += times
+      else:
+        total += count(callee, times * (attrs["length"] if is_map(node) else 1))
+    return total
+
+  return count(as_concrete(fn), 1)
+
+
+@pytest.mark.parametrize(("assume", "loop"), [("pos", "cholesky_column"), ("sym", "ldl_column"), ("gen", "lu_column")])
+def test_a_jacobian_with_several_seeds_factors_once(assume, loop) -> None:
+  """The forward rule reads the factorization and the solution of the one solve invocation, for
+  every one of the ``N * N`` seeds in ``K``, so a solution and its Jacobian run one factorization."""
+
+  @sc.function(sc.arg("K", (N, N)), sc.arg("b", N), outputs=sc.group(sc.arg("x", N), sc.arg("dx", (N, N * N))))
+  def value_and_jacobian(K, b):
+    x = linalg.solve(K, b, assume=assume)[0]
+    return x, sc.jacobian(x, K)
+
+  assert _runs(value_and_jacobian, loop) == 1
+
+  @sc.function(sc.arg("K", (N, N)), sc.arg("b", N), outputs=sc.arg("c", ()))
+  def cost(K, b):
+    return _cost(linalg.solve(K, b, assume=assume)[0])
+
+  # The Hessian differentiates the residuals through the factorization's own forward rule, which
+  # reads the factor of its call. The forward helpers of the two residual results recompute the
+  # call they differentiate (#90), which makes three, whatever the number of seeds.
+  assert _runs(sc.hessian(cost, "c", "K"), loop) == 3
+  rng = np.random.default_rng(21)
+  k, b = _spd(rng) + (rng.normal(size=(N, N)) if assume == "gen" else 0.0), rng.normal(size=N)
+  dense = _symmetric(k) if assume != "gen" else k
+  x = np.linalg.solve(dense, b)
+  # dx/dK_ij = -K^-1 (e_i x_j), and with one triangle read the mirrored entry adds -K^-1 (e_j x_i).
+  want = -np.einsum("ai,j->aij", np.linalg.inv(dense), x)
+  if assume != "gen":
+    want = np.tril(want + np.swapaxes(want, 1, 2), -1) + want * np.eye(N)
+  x_got, jacobian = value_and_jacobian(k, b)
+  np.testing.assert_allclose(x_got, x, rtol=1e-12)
+  np.testing.assert_allclose(jacobian.reshape((N, N, N)), want, rtol=1e-10, atol=1e-12)
+
+
+@pytest.mark.parametrize(("assume", "loop"), [("pos", "cholesky_column"), ("gen", "lu_column")])
+def test_a_jacobian_over_a_stage_axis_factors_once_per_stage(assume, loop) -> None:
+  """The solve is mapped over the stages, and the mapped forward rule reads the residuals of the
+  mapped solve, one window per stage."""
+  stages = 3
+
+  @sc.function(
+    sc.arg("K", (stages, N, N)), sc.arg("b", (stages, N)), outputs=sc.group(sc.arg("x", (stages, N)), sc.arg("dx", (stages * N, stages * N * N)))
+  )
+  def value_and_jacobian(K, b):
+    x = linalg.solve(K, b, assume=assume)[0]
+    return x, sc.jacobian(x, K)
+
+  assert _runs(value_and_jacobian, loop) == stages
+  rng = np.random.default_rng(22)
+  k = np.stack([_spd(rng) + (rng.normal(size=(N, N)) if assume == "gen" else 0.0) for _ in range(stages)])
+  b = rng.normal(size=(stages, N))
+  got = value_and_jacobian(k, b)[1].reshape((stages, N, stages, N, N))
+  for s in range(stages):
+    dense = k[s] if assume == "gen" else _symmetric(k[s])
+    want = -np.einsum("ai,j->aij", np.linalg.inv(dense), np.linalg.solve(dense, b[s]))
+    if assume != "gen":
+      want = np.tril(want + np.swapaxes(want, 1, 2), -1) + want * np.eye(N)
+    np.testing.assert_allclose(got[s, :, s], want, rtol=1e-10, atol=1e-12)
+    np.testing.assert_array_equal(np.delete(got[s], s, axis=1), 0.0)
 
 
 def test_solve_checks_its_arguments() -> None:

@@ -26,6 +26,7 @@ from scaly.linalg.sparse import _factorization
 from scaly.linalg.symbolic import ORDERINGS, Ordering
 from scaly.passes.lowering import lower_function
 
+from .test_entry import _runs
 from .test_symbolic import _arrow, _banded, _multistage, _random
 
 STATUS = sc.TensorType((), sc.dtypes.int32)
@@ -332,6 +333,20 @@ def test_a_value_and_its_gradient_share_one_factorization(assume: str, kind: str
         if node.attrs["callee"].name.startswith(f"sparse_{kind}_column"):
           factorizations.add((graph.name, node.args))
   assert len(factorizations) == 1
+
+
+@pytest.mark.parametrize(("assume", "kind"), [("pos", "cholesky"), ("sym", "ldl")])
+def test_a_jacobian_with_several_seeds_factors_once(assume: str, kind: str) -> None:
+  """One seed per stored entry of ``K``, and the forward rule reads the factorization of the one solve."""
+  pattern, p = _point(0 if assume == "pos" else 2)
+  n = pattern.shape[0]
+
+  @sc.function(sc.arg("K", sc.TensorType((n, n), pattern=pattern)), sc.arg("b", n))
+  def value_and_jacobian(K, b):
+    x = linalg.solve(K, b, assume=assume)[0]
+    return x, sc.jacobian(x, K)
+
+  assert _runs(value_and_jacobian, f"sparse_{kind}_column") == 1
 
 
 def test_ordering_applies_to_sparse_matrices_only() -> None:
