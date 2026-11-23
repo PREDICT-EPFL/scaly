@@ -24,6 +24,7 @@ from scaly.passes.program.scalarize import (
   AUTO_SCALAR_OPS_PER_PROC,
   scalarize_program,
 )
+from scaly.passes.program import scalarize
 from scaly.passes.program.coalesce_stores import coalesce_stores
 from scaly.passes.program.prepare_scalar import prepare_scalar_expressions
 from scaly.passes.program.scheduling import MAX_SCALAR_DEPTH
@@ -603,7 +604,62 @@ def test_a_layout_copy_two_calls_read_stays() -> None:
 
   # Each call's own copy folds into one shared specialization; the canonical copy both read stays.
   root = main_proc(lower_function(outer))
-  assert [stmt.attrs["callee"] for stmt in _body(root) if stmt.op == ProgramOp.CALL] == ["inner_reordered_0"] * 2
+  assert [stmt.attrs["callee"] for stmt in _body(root) if stmt.op == ProgramOp.CALL] == ["inner_reordered"] * 2
   assert sum(stmt.op == ProgramOp.FOR for stmt in _body(root)) == 3
   x = np.array([1.0, 2.0, 3.0])
   np.testing.assert_array_equal(outer(a, x), a @ x + a @ (2.0 * x))
+
+
+def test_a_copy_indexed_by_a_value_known_only_at_run_time_stays() -> None:
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="inner")
+  def inner(x):
+    return x.sin() * 2.0
+
+  @sc.function(sc.arg("c", 3), outputs=sc.arg("go", sc.TensorType((), sc.dtypes.bool_)), name="small")
+  def small(c):
+    return c.sum() < 10.0
+
+  @sc.function(sc.arg("c", 3), outputs=sc.arg("n"), name="double")
+  def double(c):
+    return c * 2.0
+
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="outer")
+  def outer(x):
+    carry, _ = sc.while_loop(small, double, x, max_iter=8)
+    return inner(carry)
+
+  # The copy out of the loop reads the slot the exit step left, so it is not the same at every call.
+  x = np.array([1.0, 2.0, 3.0])
+  np.testing.assert_array_equal(outer(x), np.sin(2.0 * x) * 2.0)
+
+
+def test_a_second_copy_of_a_callee_counts_against_the_growth_limit(monkeypatch) -> None:
+  a, a_type = _tridiagonal()
+
+  @sc.function(sc.arg("A", a_type), sc.arg("x", 3), outputs=sc.arg("y"), name="inner")
+  def inner(A, x):
+    return A @ x
+
+  @sc.function(sc.arg("A", a_type), sc.arg("xs", (2, 3)), outputs=sc.group(sc.arg("y"), sc.arg("ys")), name="outer")
+  def outer(A, xs):
+    return inner(A, xs[0]), sc.vmap(inner, 2)(sc.broadcast(A), xs)
+
+  # The mapped call keeps the canonical callee, so the specialization adds a second body.
+  def callees(prog: ProgramNode) -> set[str]:
+    return {node.attrs["callee"] for node in walk_program(main_proc(prog)) if node.op == ProgramOp.CALL}
+
+  assert "inner_reordered" in callees(lower_function(outer))
+  # Exactly what the expansions themselves take, so the second copy no longer fits.
+  expanded: list[ProgramNode] = []
+
+  def observe(name: str, prog: ProgramNode) -> None:
+    if name == "pass:scalarize":
+      expanded.extend(pr for pr in prog.args if pr.attrs.get("scalarized"))
+
+  lower_function(outer, observe, fold_reorders=False)
+  monkeypatch.setattr(scalarize, "AUTO_SCALAR_GROWTH_PER_PROGRAM", sum(scalarize._scalar_cost(pr)[1] for pr in expanded))
+  assert "inner_reordered" not in callees(lower_function(outer))
+  xs = np.array([[1.0, 2.0, 3.0], [0.5, -1.0, 2.0]])
+  y, ys = outer(a, xs)
+  np.testing.assert_array_equal(y, a @ xs[0])
+  np.testing.assert_array_equal(ys, xs @ a.toarray().T)

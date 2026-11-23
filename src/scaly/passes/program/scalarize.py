@@ -10,6 +10,7 @@ from ...ir.program import ProgramNode, ProgramOp, walk_program
 from ...ir.support import Support
 from ...utils.names import NameScope, c_ident
 from ..arith import CONSTANTS, constant, fold_program
+from ._common import name_scope
 from .scheduling import ScalarNameAllocator, schedule_values
 
 
@@ -252,6 +253,18 @@ def _scalarize_proc(proc: ProgramNode, procs: dict[str, ProgramNode]) -> Program
   return ProgramNode(proc.op, (*params, *body), {**proc.attrs, "scalarized": True}, dtype=proc.dtype)
 
 
+def _scalar_cost(proc: ProgramNode) -> tuple[int, int]:
+  """The scalar operations a procedure emits, and those plus its statements, counting products repeated at their uses."""
+  ops = statements = 0
+  stack = list(proc.args[proc.attrs["param_count"] :])
+  while stack:
+    node = stack.pop()
+    ops += node.op in p.SCALAR_OPS - {*CONSTANTS, ProgramOp.VAR, ProgramOp.LOAD}
+    statements += node.op in {ProgramOp.ASSIGN, ProgramOp.STORE}
+    stack.extend(node.args)
+  return ops, ops + statements
+
+
 def scalarize_program(prog: ProgramNode) -> ProgramNode:
   """Expand selected procedures, bounded under auto and only through eligible pure callees."""
   procs = {pr.attrs["name"]: pr for pr in prog.args[: prog.attrs["proc_count"]]}
@@ -283,17 +296,6 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
         return None
     return total
 
-  def scalar_cost(proc: ProgramNode) -> tuple[int, int]:
-    # Count emitted occurrences, including products repeated at their uses.
-    ops = statements = 0
-    stack = list(proc.args[proc.attrs["param_count"] :])
-    while stack:
-      node = stack.pop()
-      ops += node.op in p.SCALAR_OPS - {*CONSTANTS, ProgramOp.VAR, ProgramOp.LOAD}
-      statements += node.op in {ProgramOp.ASSIGN, ProgramOp.STORE}
-      stack.extend(node.args)
-    return ops, ops + statements
-
   scalar_growth = 0
   replacements: dict[str, ProgramNode] = {}
   for name, proc in procs.items():
@@ -319,7 +321,7 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
     except _DataDependent:
       expansion_work[name] = None
       continue
-    ops, growth = scalar_cost(candidate)
+    ops, growth = _scalar_cost(candidate)
     if proc.attrs["lowering"] == "auto" and (ops > AUTO_SCALAR_OPS_PER_PROC or scalar_growth + growth > AUTO_SCALAR_GROWTH_PER_PROGRAM):
       expansion_work[name] = None
       continue
@@ -328,10 +330,12 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
     scalar_growth += growth
   args = [replacements.get(pr.attrs.get("name"), pr) for pr in prog.args]
   if args and args[-1].attrs.get("fold_reorders"):
-    taken = {pr.attrs["name"] for pr in args}
-    root, specialized = _fold_reorders(args[-1], {pr.attrs["name"]: pr for pr in args}, set(replacements), taken)
-    args = [*args[:-1], *specialized, root]
-    if specialized:
+    root, specialized = _fold_reorders(args[-1], {pr.attrs["name"]: pr for pr in args}, set(replacements), name_scope(prog))
+    # A specialization whose callee something else still calls is a second copy of its body.
+    called = {node.attrs["callee"] for pr in (*args[:-1], root) for node in walk_program(pr) if node.op == ProgramOp.CALL}
+    copies = sum(_scalar_cost(pr)[1] for pr in specialized if pr.attrs["reordered_from"] in called)
+    if specialized and scalar_growth + copies <= AUTO_SCALAR_GROWTH_PER_PROGRAM:
+      args = [*args[:-1], *specialized, root]
       return ProgramNode(prog.op, tuple(args), {**prog.attrs, "proc_count": len(args)}, dtype=prog.dtype)
   return ProgramNode(prog.op, tuple(args), prog.attrs, dtype=prog.dtype)
 
@@ -376,14 +380,26 @@ def _buffer_name(arg: ProgramNode) -> str:
   return arg.attrs["name"] if arg.op == ProgramOp.BUFFER else arg.attrs["buffer"]
 
 
-def _copy_loop(stmt: ProgramNode) -> bool:
-  """Whether ``stmt`` is a loop with constant bounds whose every statement copies one loaded value."""
+def _copy_loop(stmt: ProgramNode, bound: frozenset[str] = frozenset()) -> bool:
+  """Whether ``stmt`` is a loop with constant bounds whose every statement copies one loaded value.
+
+  Its indices may use only its own loop variables, so the copy is the same at every call.
+  """
   if stmt.op != ProgramOp.FOR:
     return False
   rng = stmt.args[0]
   if rng.attrs.get("carried") or any(a.op != ProgramOp.CONST_INT for a in rng.args):
     return False
-  return all(_copy_loop(s) if s.op == ProgramOp.FOR else s.op == ProgramOp.STORE and s.args[1].op == ProgramOp.LOAD for s in stmt.args[1:])
+  bound = bound | {rng.attrs["name"]}
+  for s in stmt.args[1:]:
+    if s.op == ProgramOp.FOR:
+      if not _copy_loop(s, bound):
+        return False
+    elif s.op != ProgramOp.STORE or s.args[1].op != ProgramOp.LOAD:
+      return False
+    elif any(n.op == ProgramOp.VAR and n.attrs["name"] not in bound for n in walk_program(s)):
+      return False
+  return True
 
 
 def _copied(
@@ -415,7 +431,7 @@ def _copied(
   return copied
 
 
-def _fold_reorders(proc: ProgramNode, procs: dict[str, ProgramNode], expanded: set[str], taken: set[str]) -> tuple[ProgramNode, list[ProgramNode]]:
+def _fold_reorders(proc: ProgramNode, procs: dict[str, ProgramNode], expanded: set[str], names: NameScope) -> tuple[ProgramNode, list[ProgramNode]]:
   """Move the copy loops around ``proc``'s calls to expanded procedures into specialized callees."""
   procs, expanded = dict(procs), set(expanded)
   n_params = proc.attrs["param_count"]
@@ -436,12 +452,14 @@ def _fold_reorders(proc: ProgramNode, procs: dict[str, ProgramNode], expanded: s
       called = {node.attrs["callee"] for stmt in body for node in walk_program(stmt) if node.op == ProgramOp.CALL}
       return ProgramNode(proc.op, (*params, *body), proc.attrs, dtype=proc.dtype), [pr for n, pr in specialized.items() if n in called]
     callee, args, removed = folded
-    stem = callee.attrs.get("reordered_from", callee.attrs["name"])
+    old = callee.attrs["name"]
+    stem = callee.attrs.get("reordered_from", old)
     # Calls that fold the same copies into the same callee share one specialization.
     name = next((n for n, pr in specialized.items() if pr.args == callee.args and pr.attrs["reordered_from"] == stem), None)
     if name is None:
-      name = next(f"{stem}_reordered_{i}" for i in range(len(taken) + 1) if f"{stem}_reordered_{i}" not in taken)
-      taken.add(name)
+      # A specialization only this call uses is specialized again under its own name.
+      others = sum(s.op == ProgramOp.CALL and s.attrs["callee"] == old for s in body) > 1
+      name = old if old in specialized and not others else names.procedure(f"{stem}_reordered")
       expanded.add(name)
       specialized[name] = procs[name] = ProgramNode(
         callee.op, callee.args, {**callee.attrs, "name": name, "reordered_from": stem}, dtype=callee.dtype
