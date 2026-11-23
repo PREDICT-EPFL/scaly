@@ -69,7 +69,11 @@ def _procedure(fn: sc.Function, prefix: str) -> tuple[ProgramNode, str]:
 
 
 def _operations(proc: ProgramNode) -> dict[ProgramOp, int]:
-  """The floating operations the procedure computes for its outputs other than the status, each value once."""
+  """The floating operations the procedure computes for its outputs other than the status, each value once.
+
+  A value, not an occurrence in the C: the scheduler leaves a product of two locals with two uses
+  at both uses (``schedule_values``), which the C compiler computes once.
+  """
   body = proc.args[proc.attrs["param_count"] :]
   assigned = {stmt.attrs["target"]: stmt.args[0] for stmt in body if stmt.op == ProgramOp.ASSIGN}
   pending = [
