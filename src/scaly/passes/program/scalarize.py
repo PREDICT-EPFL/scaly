@@ -10,7 +10,7 @@ from ...ir.program import ProgramNode, ProgramOp, walk_program
 from ...ir.support import Support
 from ...utils.names import NameScope, c_ident
 from ..arith import CONSTANTS, constant, fold_program
-from ._common import name_scope
+from ._common import buffer_refs, name_scope
 from .scheduling import ScalarNameAllocator, schedule_values
 
 
@@ -33,7 +33,7 @@ class _InputValues(dict[int, ProgramNode | None]):
 
 @dataclass(slots=True)
 class _Pointer:
-  values: list[ProgramNode | None] | _InputValues
+  values: list[ProgramNode | None] | dict[int, ProgramNode | None]
   offset: int = 0
   support: Support = None
 
@@ -331,9 +331,10 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
   args = [replacements.get(pr.attrs.get("name"), pr) for pr in prog.args]
   if args and args[-1].attrs.get("fold_reorders"):
     root, specialized = _fold_reorders(args[-1], {pr.attrs["name"]: pr for pr in args}, set(replacements), name_scope(prog))
-    # A specialization whose callee something else still calls is a second copy of its body.
+    # Each specialization adds its body; an original that nothing calls any more gives its own back.
     called = {node.attrs["callee"] for pr in (*args[:-1], root) for node in walk_program(pr) if node.op == ProgramOp.CALL}
-    copies = sum(_scalar_cost(pr)[1] for pr in specialized if pr.attrs["reordered_from"] in called)
+    stems = {pr.attrs["reordered_from"] for pr in specialized} - called
+    copies = sum(_scalar_cost(pr)[1] for pr in specialized) - sum(_scalar_cost(pr)[1] for pr in args[:-1] if pr.attrs["name"] in stems)
     if specialized and scalar_growth + copies <= AUTO_SCALAR_GROWTH_PER_PROGRAM:
       args = [*args[:-1], *specialized, root]
       return ProgramNode(prog.op, tuple(args), {**prog.attrs, "proc_count": len(args)}, dtype=prog.dtype)
@@ -346,34 +347,16 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
 # the loop, its index table and its temporary leave the generated code.
 
 
-def _references(stmt: ProgramNode, procs: dict[str, ProgramNode]) -> tuple[set[str], set[str]]:
-  """The buffers a statement reads and writes, through its loops and calls."""
-  reads: set[str] = set()
-  writes: set[str] = set()
-  stack = [stmt]
-  while stack:
-    node = stack.pop()
-    if node.op in (ProgramOp.STORE, ProgramOp.STORE_PAIR):
-      writes.add(node.args[0].attrs["buffer"])
-      stack.extend((*node.args[0].args, *node.args[1:]))
-    elif node.op == ProgramOp.CALL:
-      # An external function's arguments may be read and written.
-      callee = procs.get(node.attrs["callee"])
-      n_in = callee.attrs["input_count"] if callee is not None else 0
-      for i, arg in enumerate(node.args):
-        name = _buffer_name(arg)
-        (reads if i < n_in else writes).add(name)
-        if callee is None:
-          reads.add(name)
-        stack.extend(arg.args)
-    elif node.op == ProgramOp.VIEW:
-      reads.add(node.attrs["buffer"])
-      stack.extend(node.args)
-    elif node.op == ProgramOp.BUFFER:
-      continue
-    else:
-      stack.extend(node.args)
-  return reads, writes
+def _references(stmt: ProgramNode) -> tuple[frozenset[str], frozenset[str]]:
+  """The buffers a statement reads and writes, through its loops and calls, ``inout`` arguments included."""
+  refs = buffer_refs(stmt)
+  return refs.reads, refs.writes
+
+
+def _mentions(node: ProgramNode, name: str) -> int:
+  """How many times ``node`` names buffer ``name``, as an argument or in a view, counting repeats."""
+  here = node.op == ProgramOp.BUFFER and node.attrs.get("name") == name or node.op == ProgramOp.VIEW and node.attrs["buffer"] == name
+  return here + sum(_mentions(arg, name) for arg in node.args)
 
 
 def _buffer_name(arg: ProgramNode) -> str:
@@ -388,7 +371,7 @@ def _copy_loop(stmt: ProgramNode, bound: frozenset[str] = frozenset()) -> bool:
   if stmt.op != ProgramOp.FOR:
     return False
   rng = stmt.args[0]
-  if rng.attrs.get("carried") or any(a.op != ProgramOp.CONST_INT for a in rng.args):
+  if rng.attrs.get("carried") or any(a.op != ProgramOp.CONST_INT for a in rng.args) or rng.args[2].attrs["value"] <= 0:
     return False
   bound = bound | {rng.attrs["name"]}
   for s in stmt.args[1:]:
@@ -407,24 +390,23 @@ def _copied(
 ) -> dict[int, int] | None:
   """For each element of ``target`` that ``loop`` writes, the element of ``source`` it copies, or None."""
   frame = _Frame(p.proc("copy", (), ()), [], procs, {})
-  for name, buf in buffers.items():
+  for name in {node.attrs["buffer"] for node in walk_program(loop) if node.op == ProgramOp.VIEW} - {target.attrs["name"]}:
+    buf = buffers[name]
     if buf.attrs.get("values") is not None:
       frame.run((buf,))
-    elif name != target.attrs["name"]:
+    else:
       frame.buffers[name] = _Pointer(_InputValues(buf))
-  size = math.prod(target.attrs["shape"])
-  frame.buffers[target.attrs["name"]] = _Pointer([None] * size)
+  # Only the written elements are kept, and the work is bounded like any expansion's.
+  written: dict[int, ProgramNode | None] = {}
+  frame.buffers[target.attrs["name"]] = _Pointer(written)
+  frame.budget = _Budget(values=math.prod(target.attrs["shape"]))
   try:
     frame.run((loop,))
-  except (_DataDependent, NotImplementedError):
+  except (_DataDependent, _OverBudget, NotImplementedError):
     return None
-  written = frame.buffers[target.attrs["name"]].values
-  assert isinstance(written, list)
   copied: dict[int, int] = {}
-  for at, value in enumerate(written):
-    if value is None:
-      continue
-    view = value.args[0] if value.op == ProgramOp.LOAD else None
+  for at, value in sorted(written.items()):
+    view = value.args[0] if value is not None and value.op == ProgramOp.LOAD else None
     if view is None or view.attrs["buffer"] != source or view.args[0].op != ProgramOp.CONST_INT:
       return None
     copied[at] = view.args[0].attrs["value"]
@@ -440,7 +422,7 @@ def _fold_reorders(proc: ProgramNode, procs: dict[str, ProgramNode], expanded: s
   while True:
     folded = None
     if any(stmt.op == ProgramOp.FOR for stmt in body):
-      scope = _Scope(params, body, procs)
+      scope = _Scope(params, body)
       for at, stmt in enumerate(body):
         # A noinline callee stays the call frame it is, a workaround for a compiler bug.
         if stmt.op == ProgramOp.CALL and stmt.attrs["callee"] in expanded and not procs[stmt.attrs["callee"]].attrs.get("noinline"):
@@ -471,15 +453,15 @@ def _fold_reorders(proc: ProgramNode, procs: dict[str, ProgramNode], expanded: s
 class _Scope:
   """The buffers of a procedure body and the statements that read or write each one."""
 
-  def __init__(self, params: tuple[ProgramNode, ...], body: list[ProgramNode], procs: dict[str, ProgramNode]) -> None:
+  def __init__(self, params: tuple[ProgramNode, ...], body: list[ProgramNode]) -> None:
     self.buffers = {b.attrs["name"]: b for b in (*params, *body) if b.op == ProgramOp.BUFFER}
     self.declared = {
       s.attrs["name"]: i for i, s in enumerate(body) if s.op == ProgramOp.BUFFER and s.attrs.get("values") is None and "alias_of" not in s.attrs
     }
     self.tables = {name for name, b in self.buffers.items() if b.attrs.get("values") is not None}
     # A buffer another one aliases is reached under two names, so it keeps its copies.
-    self.aliased = {b.attrs["alias_of"] for b in self.buffers.values() if "alias_of" in b.attrs}
-    self.refs = [_references(s, procs) for s in body]
+    self.aliased = {name for b in self.buffers.values() if "alias_of" in b.attrs for name in (b.attrs["name"], b.attrs["alias_of"])}
+    self.refs = [_references(s) for s in body]
     self.users: dict[str, list[int]] = {}
     for i, (reads, writes) in enumerate(self.refs):
       for name in reads | writes:
@@ -501,7 +483,7 @@ def _fold_call(
   removed: set[int] = set()
   for k, arg in enumerate(call.args):
     temp = _buffer_name(arg)
-    if arg.op != ProgramOp.BUFFER or temp not in declared or temp in aliased or sum(_buffer_name(a) == temp for a in call.args) != 1:
+    if arg.op != ProgramOp.BUFFER or temp not in declared or temp in aliased or _mentions(call, temp) != 1:
       continue
     users = scope.users.get(temp, [])
     writers = [i for i in users if temp in refs[i][1]]

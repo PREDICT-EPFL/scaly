@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import tracemalloc
 
 from scaly.ir.expr import _scatter_zero
 
@@ -663,3 +664,113 @@ def test_a_second_copy_of_a_callee_counts_against_the_growth_limit(monkeypatch) 
   y, ys = outer(a, xs)
   np.testing.assert_array_equal(y, a @ xs[0])
   np.testing.assert_array_equal(ys, xs @ a.toarray().T)
+
+
+def _reversal_program(case: str) -> ProgramNode:
+  """An entry that copies ``base`` into ``tmp`` and calls an expanded reversal on it, around a hazard named by ``case``."""
+
+  def tagged(node: ProgramNode, **extra) -> ProgramNode:
+    return ProgramNode(node.op, node.args, {**node.attrs, **extra}, dtype=node.dtype)
+
+  def at(buffer: ProgramNode, index: ProgramNode | int) -> ProgramNode:
+    return p.view(buffer, [p.const_int(index) if isinstance(index, int) else index])
+
+  def copy(source: ProgramNode, target: ProgramNode) -> ProgramNode:
+    return p.for_(p.range_("i", 0, 3), [p.store(at(target, p.var("i")), p.load(at(source, p.var("i"))))])
+
+  def call(name: str, ins: list[ProgramNode], outs: list[ProgramNode], **extra) -> ProgramNode:
+    return tagged(p.call(name, ins + outs), n_in=len(ins), n_out=len(outs), **extra)
+
+  x, y, out = (p.buffer(name, dtypes.float64, (3,)) for name in ("x", "y", "out"))
+  base, tmp = (p.buffer(name, dtypes.float64, (3,), address_space="private") for name in ("base", "tmp"))
+  arg = p.buffer("arg", dtypes.float64, (3,), intent="inout")
+  reverse = tagged(
+    p.proc("rev", [x, y], [p.store(at(y, i), p.load(at(x, 2 - i))) for i in range(3)]),
+    input_count=1,
+    lowering="auto",
+    scalarize_mode="procedure",
+  )
+  mutate = tagged(p.proc("mut", [arg], [p.store(at(arg, 0), p.const_float(9.0))]), input_count=1)
+  fill = [p.store(at(base, i), p.const_float(float(i + 1))) for i in range(3)]
+  body = {
+    "plain": [base, tmp, *fill, copy(base, tmp), call("rev", [tmp], [out])],
+    # The source is an alias of the buffer the call writes.
+    "alias": [
+      base,
+      alias := tagged(base, name="alias", alias_of="base", alias_offset=0),
+      tmp,
+      *fill,
+      copy(alias, tmp),
+      call("rev", [tmp], [base]),
+      copy(base, out),
+    ],
+    # A call between the copy and its reader updates the source in place.
+    "inout": [base, tmp, *fill, copy(base, tmp), call("mut", [at(base, 0)], [], inout=(0,)), call("rev", [tmp], [out])],
+    # The call also reads the temporary in another argument's index.
+    "index": [
+      base,
+      tmp,
+      *fill,
+      copy(base, tmp),
+      call("rev", [tmp], [at(out, p.sub(ProgramNode(ProgramOp.CAST, (p.load(at(tmp, 0)),), dtype=dtypes.int64), p.const_int(1)))]),
+    ],
+    # A nested range counting down, which runs no trip in C.
+    "descending": [
+      base,
+      tmp,
+      *fill,
+      p.for_(
+        p.range_("i", 0, 3),
+        [
+          p.store(at(tmp, p.var("i")), p.load(at(base, p.var("i")))),
+          p.for_(p.range_("j", 2, -1, step=-1), [p.store(at(tmp, p.var("j")), p.load(at(base, p.sub(p.const_int(2), p.var("j")))))]),
+        ],
+      ),
+      call("rev", [tmp], [out]),
+    ],
+  }[case]
+  entry = tagged(p.proc("entry", [out], body), input_count=0, fold_reorders=True)
+  return p.program([reverse, mutate, entry])
+
+
+@pytest.mark.parametrize("case", ["plain", "alias", "inout", "index", "descending"])
+def test_a_copy_folds_only_when_nothing_else_reaches_its_buffers(case: str) -> None:
+  procs = {pr.attrs["name"] for pr in scalarize_program(_reversal_program(case)).args}
+  assert ("rev_reordered" in procs) == (case == "plain")
+
+
+def test_specializations_of_one_callee_count_against_the_growth_limit(monkeypatch) -> None:
+  @sc.function(sc.arg("x", 3), name="inner")
+  def inner(x):
+    return x.sin()
+
+  @sc.function(sc.arg("x", 3), sc.arg("y", 3), outputs=sc.group(sc.arg("a"), sc.arg("b")), name="sliced")
+  def sliced(x, y):
+    return inner(x)[::-1], inner(y)[::2]
+
+  # Two slicings give two specializations, which together outgrow a limit the callee alone fits.
+  def names() -> set[str]:
+    return {pr.attrs["name"] for pr in lower_function(sliced).args}
+
+  assert {"inner_reordered", "inner_reordered_2"} <= names()
+  monkeypatch.setattr(scalarize, "AUTO_SCALAR_GROWTH_PER_PROGRAM", 6)
+  assert "inner" in names() and not any("reordered" in name for name in names())
+
+
+def test_a_short_copy_into_a_large_buffer_takes_no_memory_of_its_size() -> None:
+  @sc.function(sc.arg("x", 2), name="small")
+  def small(x):
+    return x.sin()
+
+  @sc.function(sc.arg("x", 2), sc.arg("big", 1_000_000), name="joined")
+  def joined(x, big):
+    return sc.concat([small(x), big])
+
+  lower_function(joined, fold_reorders=False)
+  tracemalloc.start()
+  try:
+    lower_function(joined)
+    peak = tracemalloc.get_traced_memory()[1]
+  finally:
+    tracemalloc.stop()
+  assert peak < 4 * 2**20
