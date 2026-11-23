@@ -17,6 +17,7 @@ from scipy.sparse.linalg import spsolve
 import scaly as sc
 from scaly import linalg
 from scaly.codegen import render_c_source
+from scaly.passes.lowering import calls
 from scaly.function.model import as_concrete
 from scaly.ir.expr import ExprOp, topo
 from scaly.ir.program import ProgramOp, walk_program
@@ -357,9 +358,11 @@ def test_ordering_applies_to_sparse_matrices_only() -> None:
 
 
 @pytest.mark.parametrize(("assume", "kind"), [("pos", "cholesky"), ("sym", "ldl")])
-def test_every_loop_updates_its_carries_in_place(assume: str, kind: str) -> None:
+def test_every_loop_updates_its_carries_in_place(assume: str, kind: str, monkeypatch) -> None:
   """The loop structure of a left-looking factorization: one step per column that loads the column,
   updates it from the earlier ones and stores it, every carry in place, so no step copies a vector."""
+  # The table-driven solve loops of a small pattern unroll; a zero budget keeps the loops this checks.
+  monkeypatch.setattr(calls, "STATIC_LOOP_BUDGET", 0)
   a = _values(PATTERNS["block-tridiagonal"](), np.random.default_rng(11))
   n = a.shape[0]
 

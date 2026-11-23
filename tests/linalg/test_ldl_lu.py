@@ -13,6 +13,7 @@ import scipy.linalg
 import scaly as sc
 from scaly import linalg
 from scaly.codegen import render_c_source
+from scaly.passes.lowering import calls
 from scaly.function.model import as_concrete
 from scaly.ir.expr import ExprOp, topo
 
@@ -297,7 +298,10 @@ def test_a_value_and_its_gradient_share_one_factorization(assume, factor) -> Non
     ("gen", {"lu_column", "lu_row", "solve_triangular_lnu_row", "solve_triangular_unn_row"}),
   ],
 )
-def test_the_primal_loops_update_their_carries_in_place(assume, loops) -> None:
+def test_the_primal_loops_update_their_carries_in_place(assume, loops, monkeypatch) -> None:
+  # Small factorizations unroll; a zero budget keeps the loops whose carries this checks.
+  monkeypatch.setattr(calls, "STATIC_LOOP_BUDGET", 0)
+
   @sc.function(sc.arg("K", (N, N)), sc.arg("b", N), outputs=sc.arg("x", N))
   def solve(K, b):
     return linalg.solve(K, b, assume=assume)[0]
