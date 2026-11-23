@@ -235,7 +235,9 @@ def _call_jvp_many_function(
     seed_indices = tuple(i for i, value in zip(formal_indices, constants, strict=True) if value is None and _depends_on(deriv, seeds[i], dep_memo))
     inputs = tuple(callee.inputs[i] for i in used) + tuple(residuals.values()) + tuple(seeds[i] for i in seed_indices)
     input_names = (
-      tuple(callee.input_names[i] for i in used) + tuple(res.name for res in residuals.values()) + tuple(seed_names[i] for i in seed_indices)
+      tuple(callee.input_names[i] for i in used)
+      + tuple(cast(str, res.name) for res in residuals.values())
+      + tuple(seed_names[i] for i in seed_indices)
     )
     inputs += tuple(masks.values())
     input_names += tuple(mask_names.values())
