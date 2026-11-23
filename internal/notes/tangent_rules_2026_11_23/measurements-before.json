@@ -1,0 +1,86 @@
+[
+ {
+  "what": "jacobian of solve(assume='pos') in K",
+  "n": 4,
+  "c_bytes": 250581,
+  "generate_s": 1.15
+ },
+ {
+  "what": "jacobian of solve(assume='pos') in K",
+  "n": 16,
+  "c_bytes": 612068,
+  "generate_s": 2.52
+ },
+ {
+  "what": "jacobian of solve(assume='sym') in K",
+  "n": 4,
+  "c_bytes": 311655,
+  "generate_s": 1.39
+ },
+ {
+  "what": "jacobian of solve(assume='sym') in K",
+  "n": 16,
+  "c_bytes": 915834,
+  "generate_s": 3.54
+ },
+ {
+  "what": "jacobian of solve(assume='gen') in K",
+  "n": 4,
+  "c_bytes": 411147,
+  "generate_s": 2.02
+ },
+ {
+  "what": "jacobian of solve(assume='gen') in K",
+  "n": 16,
+  "c_bytes": 1804554,
+  "generate_s": 8.23
+ },
+ {
+  "what": "jacobian of cholesky in A",
+  "n": 8,
+  "build_s": 3.12,
+  "run_ms": 0.152
+ },
+ {
+  "what": "jacobian of solve(assume='pos') in K",
+  "n": 8,
+  "build_s": 3.95,
+  "run_ms": 0.188
+ },
+ {
+  "what": "jacobian of cholesky in A",
+  "n": 16,
+  "build_s": 3.64,
+  "run_ms": 2.467
+ },
+ {
+  "what": "jacobian of solve(assume='pos') in K",
+  "n": 16,
+  "build_s": 4.12,
+  "run_ms": 3.087
+ },
+ {
+  "what": "jacobian of cholesky in A",
+  "n": 24,
+  "build_s": 7.37,
+  "run_ms": 15.074
+ },
+ {
+  "what": "jacobian of solve(assume='pos') in K",
+  "n": 24,
+  "build_s": 13.52,
+  "run_ms": 20.954
+ },
+ {
+  "what": "jacobian of cholesky in A",
+  "n": 32,
+  "build_s": 16.26,
+  "run_ms": 67.743
+ },
+ {
+  "what": "jacobian of solve(assume='pos') in K",
+  "n": 32,
+  "build_s": 25.55,
+  "run_ms": 79.668
+ }
+]
