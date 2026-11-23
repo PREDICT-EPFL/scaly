@@ -16,7 +16,7 @@ from ..function.sugar import _mapped_call
 from ..ir.expr import Expr, ExprOp, is_map, _index_values, concat, gather, pack, _scatter_zero, values as stored_values
 from ..passes.expr import cse, simplify, simplify_cse_fixpoint
 from .derivatives import gradient, jacobian
-from .calls import _call_jvp_many_const_function
+from .calls import _call_jvp_many_const_function, map_window
 from .forward import _pushforward, jvp_many
 from .sparsity import (
   _callee_mask,
@@ -345,7 +345,7 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> _Compact:
     active_count = len(active)
     if active_count == 0:
       continue
-    primal_specs = [(vmap_expr.args[i], starts[i], strides[i]) for i in arg_indices]
+    primal_specs = [map_window(vmap_expr, i) for i in arg_indices]
     mapped_flat = _mapped_call(inner_fn, length, primal_specs)
     # Build a per-formal contribution map for each nnz.
     start_f = starts[f_idx]

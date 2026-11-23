@@ -50,6 +50,17 @@ def _lower_cotangent(G: Expr) -> Expr:
   return _masked(G + G.T, np.tril(np.ones((n, n)), -1)) + _masked(G, np.eye(n))
 
 
+def _strict_lower(n: int) -> np.ndarray:
+  return np.tril(np.ones((n, n)), -1)
+
+
+def _symmetric_tangent(dA: Expr) -> Expr:
+  """The symmetric matrix that the lower triangle of ``dA`` stands for."""
+  n = dA.shape[0]
+  low = _masked(dA, _strict_lower(n))
+  return low + low.T + _masked(dA, np.eye(n))
+
+
 def _name(lower: bool, trans: bool, unit: bool) -> str:
   return f"solve_triangular_{'l' if lower else 'u'}{'t' if trans else 'n'}{'u' if unit else 'n'}"
 
@@ -160,17 +171,11 @@ def _phi(M: Expr) -> Expr:
   return _masked(M, np.tril(np.ones((n, n)), -1)) + _masked(M, 0.5 * np.eye(n))
 
 
-@function(arg("A", dtype=...), arg("dA", dtype=...), outputs=_FACTOR_OUTPUTS, name="cholesky_jvp")
-def _cholesky_jvp(A: Expr, dA: Expr) -> tuple[Expr, Expr]:
-  """``dL = L phi(L^-1 dA L^-T)``, with ``dA`` the symmetric matrix its lower triangle stands for.
-
-  A forward rule receives no residuals, so it factors ``A`` again rather than differentiate the loops.
-  """
-  n = A.shape[0]
-  L, _ = _cholesky_parts(A)
-  low = _masked(dA, np.tril(np.ones((n, n)), -1))
+@function(arg("L", dtype=...), arg("dA", dtype=...), outputs=_FACTOR_OUTPUTS, name="cholesky_tangent")
+def _cholesky_tangent(L: Expr, dA: Expr) -> tuple[Expr, Expr]:
+  """``dL = L phi(L^-1 dA L^-T)`` from the factor ``L`` of the call, with ``dA`` the symmetric matrix its lower triangle stands for."""
   lower = _triangular(True, False, False)
-  M = lower(L, lower(L, low + low.T + _masked(dA, np.eye(n))).T).T
+  M = lower(L, lower(L, _symmetric_tangent(dA)).T).T
   return L @ _phi(M), _status(0)
 
 
@@ -183,14 +188,21 @@ def _cholesky_bwd(L: Expr, weights: tuple[Expr, Expr]) -> Expr:
 
 
 _cholesky = custom_derivative(
-  function(arg("A", dtype=...), outputs=_FACTOR_OUTPUTS, name="cholesky")(_cholesky_parts), jvp=_cholesky_jvp, fwd=_cholesky_fwd, bwd=_cholesky_bwd
+  function(arg("A", dtype=...), outputs=_FACTOR_OUTPUTS, name="cholesky")(_cholesky_parts),
+  fwd=_cholesky_fwd,
+  tangent=_cholesky_tangent,
+  bwd=_cholesky_bwd,
 )
+
+
+def _cholesky_solve(L: Expr, B: Expr) -> Expr:
+  """``X`` solving ``L L^T X = B``."""
+  return _triangular(True, True, False)(L, _triangular(True, False, False)(L, B))
 
 
 def _positive_parts(K: Expr, B: Expr) -> tuple[Expr, Expr, Expr]:
   L, status = _cholesky(K)
-  X = _triangular(True, True, False)(L, _triangular(True, False, False)(L, B))
-  return X, status, L
+  return _cholesky_solve(L, B), status, L
 
 
 _SOLVE_OUTPUTS = group(arg("X", dtype=...), arg("status", _STATUS))
@@ -207,8 +219,17 @@ def _positive_fwd(K: Expr, B: Expr) -> tuple[tuple[Expr, Expr], tuple[Expr, Expr
 @function(group(arg("L", dtype=...), arg("X", dtype=...)), group(arg("X_bar", dtype=...), arg("status_bar", _STATUS)), name="solve_pos_bwd")
 def _positive_bwd(residuals: tuple[Expr, Expr], weights: tuple[Expr, Expr]) -> tuple[Expr, Expr]:
   (L, X), X_bar = residuals, weights[0]
-  B_bar = _triangular(True, True, False)(L, _triangular(True, False, False)(L, X_bar))
+  B_bar = _cholesky_solve(L, X_bar)
   return _lower_cotangent(-(B_bar @ X.T)), B_bar
+
+
+@function(
+  group(arg("L", dtype=...), arg("X", dtype=...)), group(arg("dK", dtype=...), arg("dB", dtype=...)), outputs=_SOLVE_OUTPUTS, name="solve_pos_tangent"
+)
+def _positive_tangent(residuals: tuple[Expr, Expr], directions: tuple[Expr, Expr]) -> tuple[Expr, Expr]:
+  """``dX = K^-1 (dB - dK X)`` with the factor and the solution of the call."""
+  (L, X), (dK, dB) = residuals, directions
+  return _cholesky_solve(L, dB - _symmetric_tangent(dK) @ X), _status(0)
 
 
 @function(arg("K", dtype=...), arg("B", dtype=...), outputs=_SOLVE_OUTPUTS, name="solve_pos")
@@ -217,16 +238,12 @@ def _positive_body(K: Expr, B: Expr) -> tuple[Expr, Expr]:
   return X, status
 
 
-_positive = custom_derivative(_positive_body, fwd=_positive_fwd, bwd=_positive_bwd)
+_positive = custom_derivative(_positive_body, fwd=_positive_fwd, tangent=_positive_tangent, bwd=_positive_bwd)
 
 
 def _unusable(pivot: Expr, diagonal: Expr) -> Expr:
   """A pivot of either sign not greater in magnitude than eps times its diagonal entry, or infinite, or NaN."""
   return ~(pivot.abs() > _eps(pivot) * diagonal.abs()) | ~pivot.isfinite()
-
-
-def _strict_lower(n: int) -> np.ndarray:
-  return np.tril(np.ones((n, n)), -1)
 
 
 def _diagonal(M: Expr) -> Expr:
@@ -267,31 +284,29 @@ def _ldl_parts(A: Expr) -> tuple[Expr, Expr]:
   return LD, status
 
 
-def _symmetric_tangent(dA: Expr) -> Expr:
-  """The symmetric matrix that the lower triangle of ``dA`` stands for."""
-  n = dA.shape[0]
-  low = _masked(dA, _strict_lower(n))
-  return low + low.T + _masked(dA, np.eye(n))
-
-
 _LDL_OUTPUTS = group(arg("LD", dtype=...), arg("status", _STATUS))
 
 
-@function(arg("A", dtype=...), arg("dA", dtype=...), outputs=_LDL_OUTPUTS, name="ldl_jvp")
-def _ldl_jvp(A: Expr, dA: Expr) -> tuple[Expr, Expr]:
+@function(arg("A", dtype=...), outputs=group(_LDL_OUTPUTS, arg("LD_", dtype=...)), name="ldl_fwd")
+def _ldl_fwd(A: Expr) -> tuple[tuple[Expr, Expr], Expr]:
+  LD, status = _ldl_parts(A)
+  return (LD, status), LD
+
+
+@function(arg("LD", dtype=...), arg("dA", dtype=...), outputs=_LDL_OUTPUTS, name="ldl_tangent")
+def _ldl_tangent(LD: Expr, dA: Expr) -> tuple[Expr, Expr]:
   """With ``F = L^-1 dA L^-T``: ``dd = diag(F)`` and ``dL = L X``, ``X`` the strict lower triangle of ``F`` over ``d`` by column.
 
-  A forward rule receives no residuals, so it factors ``A`` again rather than differentiate the loops.
+  ``L`` and ``d`` are those of the call. Without a reverse rule, a gradient differentiates the loops.
   """
-  n = A.shape[0]
-  LD, _ = _ldl_parts(A)
+  n = LD.shape[0]
   unit = _triangular(True, False, True)
   F = unit(LD, unit(LD, _symmetric_tangent(dA)).T).T
   L = _masked(LD, _strict_lower(n)) + _like(LD, np.eye(n))
   return L @ (_masked(F, _strict_lower(n)) / _diagonal(LD).reshape((1, n))) + _masked(F, np.eye(n)), _status(0)
 
 
-_ldl = custom_derivative(function(arg("A", dtype=...), outputs=_LDL_OUTPUTS, name="ldl")(_ldl_parts), jvp=_ldl_jvp)
+_ldl = custom_derivative(function(arg("A", dtype=...), outputs=_LDL_OUTPUTS, name="ldl")(_ldl_parts), fwd=_ldl_fwd, tangent=_ldl_tangent)
 
 
 @function(arg("s", dtype=...), arg("m", _INDEX), arg("M", dtype=...), arg("c", dtype=...), arg("i", _INDEX), name="lu_dot")
@@ -330,22 +345,26 @@ def _lu(n: int) -> Function:
     (M, perm, status), (piv,) = scan(column, (A, _index(np.arange(n)), _status(0)), (broadcast(A),), length=n, index=True)
     return M, piv, perm, status
 
-  @function(arg("A", dtype=...), arg("dA", dtype=...), outputs=outputs, name="lu_jvp")
-  def jvp(A: Expr, dA: Expr) -> tuple[Expr, Expr, Expr, Expr]:
+  @function(arg("A", dtype=...), outputs=group(outputs, group(arg("LU_", dtype=...), arg("perm_", perm_type))), name="lu_fwd")
+  def fwd(A: Expr) -> tuple[tuple[Expr, Expr, Expr, Expr], tuple[Expr, Expr]]:
+    M, piv, perm, status = parts(A)
+    return (M, piv, perm, status), (M, perm)
+
+  @function(group(arg("LU", dtype=...), arg("perm", perm_type)), arg("dA", dtype=...), outputs=outputs, name="lu_tangent")
+  def tangent(residuals: tuple[Expr, Expr], dA: Expr) -> tuple[Expr, Expr, Expr, Expr]:
     """With ``G = L^-1 P dA`` and ``S = tril(G U^-1, -1)``: ``dL = L S`` and ``dU = triu(G - S U)``, packed as the factor is.
 
     ``dU`` is ``triu(G U^-1) U`` without forming ``G U^-1``, which overflows when a pivot is tiny.
-
-    A forward rule receives no residuals, so it factors ``A`` again rather than differentiate the loops.
+    The factors and the row exchanges are those of the call.
     """
-    M, piv, perm, _ = parts(A)
+    M, perm = residuals
     strict = _strict_lower(n)
     G = _triangular(True, False, True)(M, gather(dA, perm, axis=0))
     S = _masked(_triangular(False, True, False)(M, G.T).T, strict)
     L, U = _masked(M, strict) + _like(M, np.eye(n)), _masked(M, 1.0 - strict)
-    return _masked(L @ S, strict) + _masked(G - S @ U, 1.0 - strict), zeros_like(piv), zeros_like(perm), _status(0)
+    return _masked(L @ S, strict) + _masked(G - S @ U, 1.0 - strict), zeros_like(perm), zeros_like(perm), _status(0)
 
-  return custom_derivative(function(arg("A", dtype=...), outputs=outputs, name="lu")(parts), jvp=jvp)
+  return custom_derivative(function(arg("A", dtype=...), outputs=outputs, name="lu")(parts), fwd=fwd, tangent=tangent)
 
 
 def _ldl_solve(LD: Expr, B: Expr) -> Expr:
@@ -373,13 +392,25 @@ def _symmetric_bwd(residuals: tuple[Expr, Expr], weights: tuple[Expr, Expr]) -> 
   return _lower_cotangent(-(B_bar @ X.T)), B_bar
 
 
+@function(
+  group(arg("LD", dtype=...), arg("X", dtype=...)),
+  group(arg("dK", dtype=...), arg("dB", dtype=...)),
+  outputs=_SOLVE_OUTPUTS,
+  name="solve_sym_tangent",
+)
+def _symmetric_tangent_rule(residuals: tuple[Expr, Expr], directions: tuple[Expr, Expr]) -> tuple[Expr, Expr]:
+  """``dX = K^-1 (dB - dK X)`` with the factorization and the solution of the call."""
+  (LD, X), (dK, dB) = residuals, directions
+  return _ldl_solve(LD, dB - _symmetric_tangent(dK) @ X), _status(0)
+
+
 @function(arg("K", dtype=...), arg("B", dtype=...), outputs=_SOLVE_OUTPUTS, name="solve_sym")
 def _symmetric_body(K: Expr, B: Expr) -> tuple[Expr, Expr]:
   X, status, _ = _symmetric_parts(K, B)
   return X, status
 
 
-_symmetric = custom_derivative(_symmetric_body, fwd=_symmetric_fwd, bwd=_symmetric_bwd)
+_symmetric = custom_derivative(_symmetric_body, fwd=_symmetric_fwd, tangent=_symmetric_tangent_rule, bwd=_symmetric_bwd)
 
 
 @cache
@@ -387,10 +418,13 @@ def _general(n: int) -> Function:
   """The solve with a general matrix of order ``n``, through ``_lu(n)``."""
   perm_type = TensorType((n,), dtypes.int64)
 
+  def lu_solve(M: Expr, perm: Expr, B: Expr) -> Expr:
+    """``X`` solving ``K X = B`` from ``P K = L U``, ``L`` and ``U`` packed in ``M`` and ``P`` read through ``perm``."""
+    return _triangular(False, False, False)(M, _triangular(True, False, True)(M, gather(B, perm, axis=0)))
+
   def parts(K: Expr, B: Expr) -> tuple[Expr, Expr, Expr, Expr]:
     M, _, perm, status = _lu(n)(K)
-    X = _triangular(False, False, False)(M, _triangular(True, False, True)(M, gather(B, perm, axis=0)))
-    return X, status, M, perm
+    return lu_solve(M, perm, B), status, M, perm
 
   @function(
     arg("K", dtype=...),
@@ -414,12 +448,23 @@ def _general(n: int) -> Function:
     B_bar = scatter(zeros_like(V), perm, V, axis=0, combine="set")
     return -(B_bar @ X.T), B_bar
 
+  @function(
+    group(arg("LU", dtype=...), arg("perm", perm_type), arg("X", dtype=...)),
+    group(arg("dK", dtype=...), arg("dB", dtype=...)),
+    outputs=_SOLVE_OUTPUTS,
+    name="solve_gen_tangent",
+  )
+  def tangent(residuals: tuple[Expr, Expr, Expr], directions: tuple[Expr, Expr]) -> tuple[Expr, Expr]:
+    """``dX = K^-1 (dB - dK X)`` with the factors and the solution of the call."""
+    (M, perm, X), (dK, dB) = residuals, directions
+    return lu_solve(M, perm, dB - dK @ X), _status(0)
+
   @function(arg("K", dtype=...), arg("B", dtype=...), outputs=_SOLVE_OUTPUTS, name="solve_gen")
   def body(K: Expr, B: Expr) -> tuple[Expr, Expr]:
     X, status, _, _ = parts(K, B)
     return X, status
 
-  return custom_derivative(body, fwd=fwd, bwd=bwd)
+  return custom_derivative(body, fwd=fwd, tangent=tangent, bwd=bwd)
 
 
 def _dense(name: str, what: str, x: Expr) -> None:
@@ -518,8 +563,8 @@ def lu_factor(A: Any) -> tuple[Expr, Expr, Expr]:
   A status of 0 does not show that ``A`` is nonsingular.
 
   The factors are meant to be read, not differentiated: differentiate `solve` instead. They have
-  a forward rule, which factors ``A`` once more for every direction, and no reverse rule, so a
-  gradient through them differentiates the loops of the factorization.
+  a forward rule, which reads the factors of the call, and no reverse rule, so a gradient through
+  them differentiates the loops of the factorization.
   """
   A = as_expr(A)
   batch = _square("lu_factor", A)

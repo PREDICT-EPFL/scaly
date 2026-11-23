@@ -124,10 +124,16 @@ tests/ad/test_const_seed_bake.py::test_disjoint_constant_colors_select_typed_par
 tests/ad/test_const_seed_bake.py::test_empty_constant_color_selection_drops_the_mapped_derivative
 tests/ad/test_const_seed_bake.py::test_local_coloring_and_packed_contributions_keep_seed_order
 tests/ad/test_custom_derivative.py::test_a_call_honours_both_rules
+tests/ad/test_custom_derivative.py::test_a_carried_scan_reads_the_residuals_of_its_own_step
 tests/ad/test_custom_derivative.py::test_a_map_and_a_library_function_honour_the_rules
+tests/ad/test_custom_derivative.py::test_a_mapped_residual_belongs_to_the_mapped_invocation
 tests/ad/test_custom_derivative.py::test_a_mapped_reverse_rule_reads_its_residuals_in_first_and_second_derivatives
+tests/ad/test_custom_derivative.py::test_a_residual_input_never_takes_a_seed_name[res:0]
+tests/ad/test_custom_derivative.py::test_a_residual_input_never_takes_a_seed_name[res:res:0]
 tests/ad/test_custom_derivative.py::test_a_solve_derivative_reuses_its_factorization
 tests/ad/test_custom_derivative.py::test_a_solver_oracle_with_rules_keeps_the_signature_its_solver_calls
+tests/ad/test_custom_derivative.py::test_a_tangent_rule_matches_the_body_at_first_and_second_order
+tests/ad/test_custom_derivative.py::test_a_tangent_rule_replaces_the_forward_derivative
 tests/ad/test_custom_derivative.py::test_custom_derivative_rows_outside_primal_support_survive_composition[False-False-False-False]
 tests/ad/test_custom_derivative.py::test_custom_derivative_rows_outside_primal_support_survive_composition[False-False-False-True]
 tests/ad/test_custom_derivative.py::test_custom_derivative_rows_outside_primal_support_survive_composition[False-False-True-False]
@@ -153,6 +159,9 @@ tests/ad/test_custom_derivative.py::test_hessian_preserves_custom_derivative_ins
 tests/ad/test_custom_derivative.py::test_incomplete_rules_raise[kwargs0-at least one]
 tests/ad/test_custom_derivative.py::test_incomplete_rules_raise[kwargs1-together]
 tests/ad/test_custom_derivative.py::test_incomplete_rules_raise[kwargs2-together]
+tests/ad/test_custom_derivative.py::test_incomplete_rules_raise[kwargs3-tangent= needs fwd=]
+tests/ad/test_custom_derivative.py::test_incomplete_rules_raise[kwargs4-tangent= needs fwd=]
+tests/ad/test_custom_derivative.py::test_incomplete_rules_raise[kwargs5-not both]
 tests/ad/test_custom_derivative.py::test_residual_names_avoid_output_names
 tests/ad/test_custom_derivative.py::test_reverse_compaction_checks_each_callee_once
 tests/ad/test_custom_derivative.py::test_reverse_coordinate_maps_preserve_custom_cotangent_derivatives[direct-broadcast]
@@ -165,6 +174,7 @@ tests/ad/test_custom_derivative.py::test_rules_are_fields_and_name_their_helpers
 tests/ad/test_custom_derivative.py::test_rules_are_linear_dual_and_match_the_body[0]
 tests/ad/test_custom_derivative.py::test_rules_of_the_wrong_type_raise
 tests/ad/test_custom_derivative.py::test_several_seeds_map_one_single_seed_rule
+tests/ad/test_custom_derivative.py::test_several_seeds_read_the_residuals_of_one_invocation
 tests/ad/test_custom_derivative.py::test_tangents_a_rule_never_reads_are_not_built
 tests/ad/test_custom_derivative.py::test_template_functions_and_rules_bind_per_shape
 tests/ad/test_custom_derivative.py::test_without_a_rule_a_direction_differentiates_the_body
@@ -4150,6 +4160,11 @@ tests/linalg/test_dtypes.py::test_the_pivot_test_uses_the_epsilon_of_the_matrix_
 tests/linalg/test_dtypes.py::test_the_pivot_test_uses_the_epsilon_of_the_matrix_dtype[ldl-a1]
 tests/linalg/test_dtypes.py::test_the_pivot_test_uses_the_epsilon_of_the_matrix_dtype[lu-a2]
 tests/linalg/test_dtypes.py::test_the_pivot_test_uses_the_epsilon_of_the_matrix_dtype[pos-a3]
+tests/linalg/test_entry.py::test_a_jacobian_over_a_stage_axis_factors_once_per_stage[gen-lu_column]
+tests/linalg/test_entry.py::test_a_jacobian_over_a_stage_axis_factors_once_per_stage[pos-cholesky_column]
+tests/linalg/test_entry.py::test_a_jacobian_with_several_seeds_factors_once[gen-lu_column]
+tests/linalg/test_entry.py::test_a_jacobian_with_several_seeds_factors_once[pos-cholesky_column]
+tests/linalg/test_entry.py::test_a_jacobian_with_several_seeds_factors_once[sym-ldl_column]
 tests/linalg/test_entry.py::test_a_value_and_its_gradient_share_one_factorization
 tests/linalg/test_entry.py::test_solve_and_its_gradient_over_a_stage_axis
 tests/linalg/test_entry.py::test_solve_checks_its_arguments
@@ -4180,6 +4195,8 @@ tests/linalg/test_ldl_lu.py::test_solve_derivatives_match_the_unrolled_reference
 tests/linalg/test_ldl_lu.py::test_the_lu_forward_rule_survives_a_tiny_pivot
 tests/linalg/test_ldl_lu.py::test_the_primal_loops_update_their_carries_in_place[gen-loops1]
 tests/linalg/test_ldl_lu.py::test_the_primal_loops_update_their_carries_in_place[sym-loops0]
+tests/linalg/test_sparse.py::test_a_jacobian_with_several_seeds_factors_once[pos-cholesky]
+tests/linalg/test_sparse.py::test_a_jacobian_with_several_seeds_factors_once[sym-ldl]
 tests/linalg/test_sparse.py::test_a_scipy_matrix_takes_any_right_hand_side[pos-float32]
 tests/linalg/test_sparse.py::test_a_scipy_matrix_takes_any_right_hand_side[pos-float64]
 tests/linalg/test_sparse.py::test_a_scipy_matrix_takes_any_right_hand_side[sym-float32]

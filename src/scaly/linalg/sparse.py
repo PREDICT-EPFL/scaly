@@ -432,12 +432,6 @@ def _solve(kind: str, ordering: Ordering) -> Function:
     X, status, *_ = parts(K, B)
     return X, status
 
-  @function(_matrix("K"), arg("B", dtype=...), _matrix("dK"), arg("dB", dtype=...), outputs=solve_outputs, name=f"{name}_jvp")
-  def jvp(K: Expr, B: Expr, dK: Expr, dB: Expr) -> tuple[Expr, Expr]:
-    """``dX = K^{-1} (dB - dK X)``, solved with the factorization of ``X``'s own solve."""
-    X, _, Lx, d, tables = parts(K, B)
-    return _substitute(kind, Lx, d, dB - _symmetric_product(values(dK), X, _pattern(K), tables), tables), _status(0)
-
   residuals = group(_matrix("K_"), arg("Lx", dtype=...), arg("d", dtype=...), arg("X_", dtype=...))
 
   @function(_matrix("K"), arg("B", dtype=...), outputs=group(solve_outputs, residuals), name=f"{name}_fwd")
@@ -452,7 +446,14 @@ def _solve(kind: str, ordering: Ordering) -> Function:
     B_bar = _substitute(kind, Lx, d, X_bar, tables)
     return pack(_sampled_cotangent(B_bar, X, _pattern(K).nnz, _pattern(K), tables), _pattern(K)), B_bar
 
-  return custom_derivative(body, jvp=jvp, fwd=fwd, bwd=bwd)
+  @function(residuals, group(_matrix("dK"), arg("dB", dtype=...)), outputs=solve_outputs, name=f"{name}_tangent")
+  def tangent(saved: tuple[Expr, Expr, Expr, Expr], directions: tuple[Expr, Expr]) -> tuple[Expr, Expr]:
+    """``dX = K^{-1} (dB - dK X)``, solved with the factorization and the solution of the call."""
+    (K, Lx, d, X), (dK, dB) = saved, directions
+    tables = _tables(_pattern(K), ordering)
+    return _substitute(kind, Lx, d, dB - _symmetric_product(values(dK), X, _pattern(K), tables), tables), _status(0)
+
+  return custom_derivative(body, fwd=fwd, tangent=tangent, bwd=bwd)
 
 
 def _sparse_matrix(name: str, A: Expr) -> None:
