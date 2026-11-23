@@ -275,18 +275,53 @@ def _residual_inputs(
     if own and node.attrs["output"] >= n_out:
       j = node.attrs["output"]
       if j not in symbols:
-        symbols[j] = Expr(ExprOp.INPUT, type=callee.results[j].type, name=fresh(f"fwd:{callee.result_names[j]}"))
+        # ``res:``, never ``fwd:``: helpers that share a map pack their inputs together, and a seed is ``fwd:<input>``.
+        symbols[j] = Expr(ExprOp.INPUT, type=callee.results[j].type, name=fresh(f"res:{callee.result_names[j]}"))
       replacements[node.id] = symbols[j]
   if not replacements:
     return outputs, {}
   return [_substitute(out, replacements) for out in outputs], {n_in + j - n_out: symbols[j] for j in sorted(symbols)}
 
 
+def _sibling(expr: Expr, result: int) -> Expr:
+  """Result ``result`` of the invocation that ``expr``, a call or a map, reads one result of.
+
+  Every attribute but the output is kept, so lowering sees one invocation.
+  """
+  callee = expr.attrs["callee"]
+  if expr.op == ExprOp.CALL:
+    template = callee._call(expr.args)[result]
+  else:
+    template = _mapped_call(callee, expr.attrs["length"], list(zip(expr.args, expr.attrs["starts"], expr.attrs["strides"], strict=True)), result)
+  return Expr(expr.op, expr.args, template.type, attrs={**expr.attrs, "output": result}, lowering=expr.lowering)
+
+
+def _inline_residuals(callee: Any, exprs: Sequence[Expr | None]) -> tuple[Expr | None, ...]:
+  """Read ``callee``'s residuals in ``exprs`` from its own results, where they are built over its inputs.
+
+  A body that also computes ``callee``'s outputs from its results, such as a loop's forward body,
+  then computes outputs and residuals once.
+  """
+  n_out = len(callee.outputs)
+  if callee.rules is None or callee.rules.tangent is None:
+    return tuple(exprs)
+  present = [e for e in exprs if e is not None]
+  replacements = {
+    node.id: callee.results[node.attrs["output"]]
+    for node in topo(tuple(present))
+    if node.op == ExprOp.CALL
+    and node.attrs["callee"] is callee
+    and node.attrs["output"] >= n_out
+    and all(a is b for a, b in zip(node.args, callee.inputs, strict=True))
+  }
+  return tuple(None if e is None or not replacements else _substitute(e, replacements) for e in exprs) if replacements else tuple(exprs)
+
+
 def call_argument(expr: Expr, index: int) -> Expr:
   """Argument ``index`` of a forward helper of the call ``expr``: an argument of the call, or past
   them a residual of the same invocation."""
   callee, n_in = expr.attrs["callee"], len(expr.args)
-  return expr.args[index] if index < n_in else callee._call(expr.args)[len(callee.outputs) + index - n_in]
+  return expr.args[index] if index < n_in else _sibling(expr, len(callee.outputs) + index - n_in)
 
 
 def map_window(expr: Expr, index: int, phase: int = 0, period: int = 1) -> tuple[Expr, int, int]:
@@ -299,8 +334,7 @@ def map_window(expr: Expr, index: int, phase: int = 0, period: int = 1) -> tuple
     return expr.args[index], starts[index] + phase * strides[index], strides[index] * period
   result = len(callee.outputs) + index - n_in
   size = callee.results[result].type.storage_size
-  residual = _mapped_call(callee, expr.attrs["length"], list(zip(expr.args, starts, strides, strict=True)), result)
-  return residual, phase * size, size * period
+  return _sibling(expr, result), phase * size, size * period
 
 
 def _call_jvp_many_const_function(
@@ -440,7 +474,7 @@ def _loop_jvp_many(expr: Expr, tangents: Sequence[Expr | None], nseed: int, *, p
         if i not in masks:
           masks[i] = Expr(ExprOp.INPUT, type=TensorType(seeds[i].type.storage_shape, dtypes.bool_), name=fresh(f"mask:{seeds[i].name}"))
       body_seeds = {i: _masked_seed(seed, masks[i]) if i in masks else seed for i, seed in seeds.items()}
-      derivs = body_tangents(callee, tuple(range(len(callee.results))), body_seeds, nseed, pushforward)
+      derivs = _inline_residuals(callee, body_tangents(callee, tuple(range(len(callee.results))), body_seeds, nseed, pushforward))
       # An unflagged carry seed can hide a masked contribution in a sum.
       propagated = masked_formals | {
         i

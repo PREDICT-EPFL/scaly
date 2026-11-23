@@ -437,9 +437,81 @@ def test_several_seeds_read_the_residuals_of_one_invocation() -> None:
   invocations = {(g.name, node.args) for g in _reached(jac) for node in topo(g.results) if node.op == ExprOp.CALL and node.attrs["callee"] is callee}
   assert len(invocations) == 1
   maps = [node for g in _reached(jac) for node in topo(g.results) if is_map(node) and node.attrs["callee"] is rules.tangent]
-  assert {node.attrs["length"] for node in maps} == {3}
+  # One map over the three seeds for each output the product reads.
+  assert [node.attrs["length"] for node in maps] == [3, 3]
   x, p = _wave_point(10)
   np.testing.assert_allclose(jac(x, p), sc.jacobian(wave, "out0", "x")(x, p) * wave(x, p)[1] + np.outer(wave(x, p)[0], 2 * x), rtol=1e-13)
+
+
+def _ruled_square_with_input(name: str):
+  @sc.function(sc.arg(name, ()))
+  def scalar_square(x):
+    return x * x
+
+  @sc.function()
+  def keep(x):
+    return x * x, x
+
+  return sc.custom_derivative(scalar_square, fwd=keep, tangent=square_tangent)
+
+
+def test_a_residual_input_never_takes_a_seed_name() -> None:
+  """An input named like a residual result: the residual of one forward helper and the seed of
+  another sharing its map must not take the same name."""
+
+  @sc.function(sc.arg("res:0", ()), sc.arg("b", ()))
+  def product(a, b):
+    return a * b
+
+  @sc.function()
+  def keep(a, b):
+    return a * b, (a, b)
+
+  @sc.function()
+  def product_tangent(res, directions):
+    (a, b), (da, db) = res, directions
+    return a * db + b * da
+
+  ruled_product = sc.custom_derivative(product, fwd=keep, tangent=product_tangent)
+
+  @sc.function(sc.arg("x", ()), sc.arg("v", 3))
+  def outer(x, v):
+    return sc.jvp(sc.vmap(ruled_product, 3)(x * v, sc.broadcast(x)), x, sc.const(1.0))
+
+  np.testing.assert_allclose(outer(np.array(2.0), np.array([1.0, 2.0, 3.0])), [4.0, 8.0, 12.0], rtol=1e-15)
+
+
+def test_a_carried_scan_reads_the_residuals_of_its_own_step() -> None:
+  """The forward body of a scan computes the step and its residuals once, from the body itself,
+  rather than calling the ruled function again for the residuals."""
+  step = _ruled_square_with_input("x")
+
+  @sc.function(sc.arg("x", ()))
+  def twice(x):
+    y, _ = sc.scan(step, x, length=2)
+    return sc.jvp(y, x, sc.const(1.0))
+
+  callee = as_concrete(step)
+  assert not [node for g in _reached(twice) for node in topo(g.results) if node.op == ExprOp.CALL and node.attrs["callee"] is callee]
+  np.testing.assert_allclose(twice(np.array(0.7)), 3.0 * 0.7**2 * 3.0 * 0.7, rtol=1e-15)
+
+
+def test_a_mapped_residual_belongs_to_the_mapped_invocation() -> None:
+  """The residual read for the forward rule keeps every attribute of the map, ``max_trajectory``
+  included, so lowering sees the outputs and residuals of one map."""
+  step = _ruled_square_with_input("x")
+
+  @sc.function(sc.arg("x", 2))
+  def stages(x):
+    _, (y,) = sc.scan(step, (), (x,), length=2, max_trajectory=0)
+    return y, sc.jacobian(y, x)
+
+  callee = as_concrete(step)
+  loops = [node for node in topo(as_concrete(stages).results) if node.op == ExprOp.LOOP and node.attrs["callee"] is callee]
+  assert sorted(node.attrs["output"] for node in loops) == [0, 1]
+  assert len({(node.args, tuple(sorted((k, repr(v)) for k, v in node.attrs.items() if k != "output"))) for node in loops}) == 1
+  y, jac = stages(np.array([2.0, 3.0]))
+  np.testing.assert_allclose(jac, np.diag(3.0 * np.array([2.0, 3.0])), rtol=1e-15)
 
 
 # --- a mapped callee with a reverse rule (ported from devrush's tests/core/ad/test_vmap.py) ------
