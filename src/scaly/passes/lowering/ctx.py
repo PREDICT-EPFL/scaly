@@ -33,7 +33,10 @@ from ..program.fold_arith import _fold_index as _fold_bounded
 from ..program.scheduling import ScalarNameAllocator, schedule_values
 from ..expr import cse_many, simplify
 
-_EXACT_STORES = (dtypes.float64, dtypes.float32, dtypes.int64, dtypes.bool_)
+# Dtypes whose stores scalar substitution may skip. int32 qualifies because the renderer and the folder
+# wrap its signed arithmetic in the expression itself, before any store; narrower and unsigned
+# integers would promote to int in C.
+_EXACT_STORES = (dtypes.float64, dtypes.float32, dtypes.int64, dtypes.int32, dtypes.bool_)
 LowerRule = Callable[["LowerCtx", Expr], None]
 ProcKey = ConcreteFunction | tuple[ConcreteFunction, tuple[Support, ...]]
 _RULES: dict[ExprOp, LowerRule] = {}

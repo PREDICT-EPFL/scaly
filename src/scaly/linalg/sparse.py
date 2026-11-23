@@ -126,9 +126,10 @@ def _load(w: Expr, t: Expr, A: Expr, a_rows: Expr, a_source: Expr, start: Expr) 
   name="sparse_factor_axpy",
 )
 def _axpy(w: Expr, t: Expr, Lx: Expr, l_rows: Expr, scale: Expr, start: Expr) -> Expr:
-  """``w[l_rows[p]] += Lx[p] * scale`` for entry ``p = start + t`` of a column of ``L``."""
+  """``w[l_rows[p]] -= Lx[p] * scale`` for entry ``p = start + t`` of a column of ``L``."""
   p = start + t
-  return scatter(w, gather(l_rows, p), gather(Lx, p) * scale, combine="add")
+  i = gather(l_rows, p)
+  return scatter(w, i, gather(w, i) - gather(Lx, p) * scale, combine="set")
 
 
 @cache
@@ -149,7 +150,7 @@ def _update(kind: str) -> Function:
     q = start + t
     k, pos = gather(r_cols, q), gather(r_pos, q)
     entry = gather(Lx, pos)
-    scale = -(gather(d, k) * entry) if kind == "ldl" else -entry
+    scale = gather(d, k) * entry if kind == "ldl" else entry
     stop = gather(l_ptr, k + 1)
     w, _ = scan(_axpy, w, (broadcast(Lx), broadcast(l_rows), broadcast(scale), broadcast(pos)), length=w.shape[0], trip=stop - pos, index=True)
     return w
@@ -258,7 +259,8 @@ def _factor_value(Lx: Expr, diagonal: Expr, analysis: LDLSymbolic) -> Expr:
 def _solve_axpy(Y: Expr, t: Expr, Lx: Expr, l_rows: Expr, y: Expr, start: Expr) -> Expr:
   """``Y[l_rows[p]] -= Lx[p] * y`` for entry ``p = start + t`` of a column of ``L``."""
   p = start + t
-  return scatter(Y, gather(l_rows, p), -(gather(Lx, p) * y), axis=0, combine="add")
+  i = gather(l_rows, p)
+  return scatter(Y, i, gather(Y, i, axis=0) - gather(Lx, p) * y, axis=0, combine="set")
 
 
 @function(
@@ -271,9 +273,9 @@ def _solve_axpy(Y: Expr, t: Expr, Lx: Expr, l_rows: Expr, y: Expr, start: Expr) 
   name="sparse_solve_dot",
 )
 def _solve_dot(s: Expr, t: Expr, Lx: Expr, l_rows: Expr, Y: Expr, start: Expr) -> Expr:
-  """``s + Lx[p] * Y[l_rows[p]]`` for entry ``p = start + t`` of a column of ``L``."""
+  """``s - Lx[p] * Y[l_rows[p]]`` for entry ``p = start + t`` of a column of ``L``."""
   p = start + t
-  return s + gather(Lx, p) * gather(Y, gather(l_rows, p), axis=0)
+  return s - gather(Lx, p) * gather(Y, gather(l_rows, p), axis=0)
 
 
 @cache
@@ -301,7 +303,11 @@ def _lower_sweep(kind: str) -> Function:
 
 @cache
 def _upper_sweep(kind: str) -> Function:
-  """Row ``j`` of ``L^{-T}``, from the last: ``Y[j]`` loses the dot product of column ``j`` of ``L`` with the rows below, then with Cholesky's diagonal ``Y[j] /= d[j]``."""
+  """Row ``j`` of ``L^{-T}``, from the last: ``Y[j]`` loses ``L[i, j] Y[i]`` for each row ``i`` below, then with Cholesky's diagonal ``Y[j] /= d[j]``.
+
+  The sum starts from ``Y[j]`` rather than from zero, so no ``0.0 +`` survives unrolling: the
+  addition of a zero is not folded, since it would turn ``-0.0`` into ``0.0``.
+  """
 
   @function(
     arg("Y", dtype=...),
@@ -313,9 +319,7 @@ def _upper_sweep(kind: str) -> Function:
     name=f"sparse_{kind}_backward",
   )
   def backward(Y: Expr, j: Expr, Lx: Expr, d: Expr, l_ptr: Expr, l_rows: Expr) -> Expr:
-    zero = Expr.const(np.zeros(Y.shape[1:], dtype=Y.type.dtype.numpy()), dtype=Y.type.dtype)
-    s = _ragged(_solve_dot, zero, l_ptr, j, Y.shape[0], broadcast(Lx), broadcast(l_rows), broadcast(Y))
-    y = gather(Y, j, axis=0) - s
+    y = _ragged(_solve_dot, gather(Y, j, axis=0), l_ptr, j, Y.shape[0], broadcast(Lx), broadcast(l_rows), broadcast(Y))
     return scatter(Y, j, y / gather(d, j) if kind == "cholesky" else y, axis=0, combine="set")
 
   return backward
