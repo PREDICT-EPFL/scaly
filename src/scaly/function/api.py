@@ -583,6 +583,7 @@ def custom_derivative[SI, NI, SO, NO](
   jvp: _Rule | None = None,
   fwd: _Rule | None = None,
   bwd: _Rule | None = None,
+  tangent: _Rule | None = None,
   sparsity: Callable[[str, str, tuple[int, int]], SparsityPattern | np.ndarray] | None = None,
 ) -> Function[SI, NI, SO, NO]:
   """Return ``fn`` with derivative rules that replace differentiating its body.
@@ -598,19 +599,32 @@ def custom_derivative[SI, NI, SO, NO](
   parameter of ``fn``. A call computes its outputs and residuals together, so the reverse rule
   reuses them instead of computing them again, and a second derivative still differentiates them.
 
+  ``tangent(residuals, directions)`` is the forward rule that reads the residuals of ``fwd``
+  instead of the inputs, such as a factorization and the solution it gave. It takes one direction
+  per parameter of ``fn``, a lone direction unwrapped as ``bwd`` returns a lone derivative, and
+  returns the change of each output, as ``jvp`` does. Every direction reuses the residuals of the
+  one call, and an input the rule reads goes in the residuals. ``tangent`` without ``fwd``, or
+  with ``jvp``, raises ``TypeError``. ``fwd`` is given with ``bwd``, ``tangent`` or both.
+
   A mode without a rule, forward or reverse, differentiates the body. Rules may be shape templates,
   which take the shapes of each call of ``fn``. ``sparsity(of, wrt, shape)`` gives the Jacobian pattern of output
   ``of`` in input ``wrt``, as a ``SparsityPattern`` or a boolean mask of ``shape``, which is
   ``(of.size, wrt.size)``. Without it, the pattern of a function with rules is dense.
   """
-  if (fwd is None) != (bwd is None):
-    raise TypeError("custom_derivative takes fwd and bwd together")
+  if tangent is not None and fwd is None:
+    raise TypeError("custom_derivative: tangent= needs fwd=, whose residuals it reads")
+  if tangent is not None and jvp is not None:
+    raise TypeError("custom_derivative takes jvp= or tangent=, not both")
+  if bwd is not None and fwd is None:
+    raise TypeError("custom_derivative takes bwd together with fwd")
+  if fwd is not None and bwd is None and tangent is None:
+    raise TypeError("custom_derivative takes fwd together with bwd, tangent or both")
   if jvp is None and fwd is None and sparsity is None:
     raise TypeError("custom_derivative needs at least one of jvp, fwd and bwd, or sparsity")
   if not isinstance(fn, Function | ConcreteFunction):
     raise TypeError("sc.custom_derivative needs a Function; wrap an extern call in a Function first")
   source = Function._from_instance(fn) if isinstance(fn, ConcreteFunction) else fn
-  return lift(source, source.inputs, source.outputs, lambda concrete: _with_rules(concrete, jvp, fwd, bwd, sparsity), name=source.name)
+  return lift(source, source.inputs, source.outputs, lambda concrete: _with_rules(concrete, jvp, fwd, bwd, tangent, sparsity), name=source.name)
 
 
 def _with_rules(
@@ -618,6 +632,7 @@ def _with_rules(
   jvp: _Rule | None,
   fwd: _Rule | None,
   bwd: _Rule | None,
+  tangent: _Rule | None,
   sparsity: Callable[[str, str, tuple[int, int]], SparsityPattern | np.ndarray] | None,
 ) -> ConcreteFunction[Any, Any, Any, Any]:
   def bind(rule: _Rule, skeleton: tuple[Any, ...], label: str) -> ConcreteFunction[Any, Any, Any, Any]:
@@ -628,11 +643,11 @@ def _with_rules(
       raise TypeError(f"{concrete.name}: the {label} rule returns types {[e.type for e in got]}, expected {[e.type for e in want]}")
 
   parameters = concrete.input_tree.unflatten(concrete.input_tree.types)
-  outputs, residuals, jvp_rule, bwd_rule = concrete.outputs, (), None, None
+  outputs, residuals, jvp_rule, bwd_rule, tangent_rule = concrete.outputs, (), None, None, None
   if jvp is not None:
     jvp_rule = bind(jvp, (*parameters, *parameters), "jvp")
     check("jvp", jvp_rule.outputs, concrete.outputs)
-  if fwd is not None and bwd is not None:
+  if fwd is not None:
     fwd_rule = bind(fwd, parameters, "fwd")
     tree = fwd_rule.output_tree
     if not isinstance(tree, _G) or len(tree.parts) != 2:
@@ -640,15 +655,21 @@ def _with_rules(
     check("fwd", fwd_rule.outputs[: tree.parts[0].size], concrete.outputs)
     results = tuple(substitute(out, dict(zip(fwd_rule.inputs, concrete.inputs, strict=True))) for out in fwd_rule.outputs)
     outputs, residuals = results[: len(concrete.outputs)], results[len(concrete.outputs) :]
-    bwd_rule = bind(bwd, (tree.parts[1].unflatten(tree.parts[1].types), concrete.output_tree.unflatten(concrete.output_tree.types)), "bwd")
-    check("bwd", bwd_rule.outputs, concrete.inputs)
+    stored = tree.parts[1].unflatten(tree.parts[1].types)
+    if bwd is not None:
+      bwd_rule = bind(bwd, (stored, concrete.output_tree.unflatten(concrete.output_tree.types)), "bwd")
+      check("bwd", bwd_rule.outputs, concrete.inputs)
+    if tangent is not None:
+      # One direction per parameter, structured as ``bwd`` returns its weighted derivatives: a lone parameter's direction is not wrapped.
+      tangent_rule = bind(tangent, (stored, parameters[0] if len(parameters) == 1 else parameters), "tangent")
+      check("tangent", tangent_rule.outputs, concrete.outputs)
   blocks = None
   if sparsity is not None:
     blocks = tuple(
       tuple(_declared_pattern(sparsity(of, wrt, (out.size, inp.size)), (out.size, inp.size), of, wrt) for wrt, inp in concrete.input_map().items())
       for of, out in concrete.output_map().items()
     )
-  return concrete._replace(outputs=outputs, rules=CustomRules(jvp_rule, bwd_rule, residuals, blocks))
+  return concrete._replace(outputs=outputs, rules=CustomRules(jvp_rule, bwd_rule, residuals, blocks, tangent_rule))
 
 
 def _declared_pattern(value: SparsityPattern | np.ndarray, shape: tuple[int, int], of: str, wrt: str) -> SparsityPattern:

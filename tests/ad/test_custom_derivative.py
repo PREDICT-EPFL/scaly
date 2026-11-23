@@ -359,6 +359,89 @@ def test_forward_over_forward_differentiates_the_rule_graph() -> None:
   np.testing.assert_allclose(first(x, p), finite_difference(lambda z: smooth(z, p)[0], x), rtol=1e-7, atol=1e-8)
 
 
+# --- a forward rule that reads the residuals of fwd ---------------------------------------------
+
+
+@sc.function()
+def wave_tangent(res, directions):
+  x, p, c, u = res
+  dx, dp = directions
+  return c * (dp[0] * x + p[0] * dx) * p[1] + u * dp[1], 2.0 * (x * dx).sum()
+
+
+reading = sc.custom_derivative(wave, fwd=wave_fwd, tangent=wave_tangent, bwd=wave_bwd)
+
+
+@sc.function()
+def square_tangent(x, dx):
+  return 3.0 * x * dx
+
+
+def test_a_tangent_rule_replaces_the_forward_derivative() -> None:
+  """The wrong rule shows that forward mode ran it, with the residual ``x`` of ``square_fwd``."""
+  forward_only = sc.custom_derivative(square, fwd=square_fwd, tangent=square_tangent)
+
+  @sc.function(sc.arg("q", 3))
+  def outer(q):
+    return forward_only(q.sin())
+
+  np.testing.assert_allclose(sc.jacobian(outer)(POINT), np.diag(3.0 * np.sin(POINT) * np.cos(POINT)), rtol=1e-14)
+  np.testing.assert_allclose(sc.forward(forward_only)(POINT, POINT[::-1]), 3.0 * POINT * POINT[::-1], rtol=1e-15)
+  # Without ``bwd``, a gradient differentiates the body.
+  np.testing.assert_allclose(sc.gradient(sc.function(sc.arg("q", 3))(lambda q: forward_only(q).sum()))(POINT), 2.0 * POINT, rtol=1e-15)
+
+
+def test_a_tangent_rule_matches_the_body_at_first_and_second_order() -> None:
+  x, p = _wave_point(9)
+  rng = np.random.default_rng(109)
+  v = rng.normal(size=(5, 3))
+
+  def first(fn):
+    @sc.function(sc.arg("x", 3), sc.arg("p", 2), sc.arg("v", (5, 3)))
+    def first_fn(x, p, v):
+      y, s = fn(x, p)
+      return sc.jvp_many(y, x, v), sc.jacobian(sc.concat([y, s.reshape((1,))]), p)
+
+    return first_fn
+
+  for got, want in zip(first(reading)(x, p, v), first(wave)(x, p, v), strict=True):
+    np.testing.assert_allclose(got, want, rtol=1e-13, atol=1e-14)
+
+  def second(fn):
+    @sc.function(sc.arg("x", 3), sc.arg("p", 2))
+    def curvature(x, p):
+      y, s = fn(x, p)
+      return sc.jacobian(sc.jacobian(y, x).reshape((9,)), x), sc.jacobian(sc.gradient((y * y * y).sum() + s * s, p), p)
+
+    return curvature
+
+  got, want = second(reading)(x, p), second(wave)(x, p)
+  assert all(np.abs(w).max() > 0.1 for w in want)
+  for g, w in zip(got, want, strict=True):
+    np.testing.assert_allclose(g, w, rtol=1e-12, atol=1e-13)
+  np.testing.assert_allclose(sc.jacobian(reading, "out0", "x")(x, p), finite_difference(lambda z: reading(z, p)[0], x), rtol=1e-7, atol=1e-8)
+
+
+def test_several_seeds_read_the_residuals_of_one_invocation() -> None:
+  """A Jacobian over three seeds calls ``wave`` once for its outputs and residuals, maps the
+  tangent rule once over the seeds, and no derivative helper calls ``wave`` again."""
+
+  @sc.function(sc.arg("x", 3), sc.arg("p", 2))
+  def outer(x, p):
+    y, s = reading(x, p)
+    return y * s
+
+  jac = sc.jacobian(outer, wrt="x")
+  callee, rules = as_concrete(reading), as_concrete(reading).rules
+  assert rules is not None and rules.tangent is not None
+  invocations = {(g.name, node.args) for g in _reached(jac) for node in topo(g.results) if node.op == ExprOp.CALL and node.attrs["callee"] is callee}
+  assert len(invocations) == 1
+  maps = [node for g in _reached(jac) for node in topo(g.results) if is_map(node) and node.attrs["callee"] is rules.tangent]
+  assert {node.attrs["length"] for node in maps} == {3}
+  x, p = _wave_point(10)
+  np.testing.assert_allclose(jac(x, p), sc.jacobian(wave, "out0", "x")(x, p) * wave(x, p)[1] + np.outer(wave(x, p)[0], 2 * x), rtol=1e-13)
+
+
 # --- a mapped callee with a reverse rule (ported from devrush's tests/core/ad/test_vmap.py) ------
 
 LANES = 5
@@ -666,6 +749,9 @@ def test_rules_are_fields_and_name_their_helpers() -> None:
     ({}, "at least one"),
     ({"fwd": square_fwd}, "together"),
     ({"bwd": square_bwd}, "together"),
+    ({"tangent": square_tangent}, "tangent= needs fwd="),
+    ({"tangent": square_tangent, "bwd": square_bwd}, "tangent= needs fwd="),
+    ({"jvp": square_jvp, "tangent": square_tangent, "fwd": square_fwd, "bwd": square_bwd}, "not both"),
   ],
 )
 def test_incomplete_rules_raise(kwargs, match) -> None:

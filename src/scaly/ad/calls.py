@@ -56,10 +56,11 @@ def _masked_seed(cot: Expr, condition: Expr) -> Expr:
 def body_tangents(callee: Any, outputs: Sequence[int], seeds: dict[int, Expr], nseed: int, pushforward: _Pushforward) -> tuple[Expr | None, ...]:
   """Tangents of the selected results of ``callee``, with ``seeds`` keyed by input index.
 
-  An output with a JVP rule maps the single-seed rule over the seeds. Every other result,
-  residuals included, differentiates the body with the caller's seed-axis traversal.
+  An output with a forward rule, ``jvp`` or ``tangent``, maps the single-seed rule over the seeds.
+  Every other result, residuals included, differentiates the body with the caller's seed-axis
+  traversal.
   """
-  ruled = callee.rules is not None and callee.rules.jvp is not None
+  ruled = _forward_rule(callee) is not None
   body = [i for i in outputs if not ruled or i >= len(callee.outputs)]
   tangents = dict(
     zip(body, pushforward([callee.results[i] for i in body], {callee.inputs[k]: seed for k, seed in seeds.items()}, nseed, callee.name))
@@ -67,10 +68,19 @@ def body_tangents(callee: Any, outputs: Sequence[int], seeds: dict[int, Expr], n
   return tuple(tangents[i] if i in tangents else _rule_tangent(callee, i, seeds, nseed) for i in outputs)
 
 
+def _forward_rule(callee: Any) -> Any:
+  """The forward rule of ``callee``, ``jvp`` or ``tangent``, or ``None``."""
+  rules = callee.rules
+  return None if rules is None else rules.jvp or rules.tangent
+
+
 def _rule_tangent(callee: Any, output: int, seeds: dict[int, Expr], nseed: int) -> Expr:
-  rule = callee.rules.jvp
+  """The rule mapped over the seeds. A ``tangent`` rule reads the residuals of a call of ``callee``
+  on its own inputs, which a forward helper receives from its caller's invocation."""
+  rule = _forward_rule(callee)
   reads = _reads(callee, output)
-  specs = [(values(inp).ravel(), 0, 0) for inp in callee.inputs]
+  leading = callee._call(callee.inputs)[len(callee.outputs) :] if rule is callee.rules.tangent else callee.inputs
+  specs = [(values(value).ravel(), 0, 0) for value in leading]
   for k, inp in enumerate(callee.inputs):
     seed = seeds.get(k) if reads[k] else None
     specs.append(
@@ -83,11 +93,11 @@ def _rule_tangent(callee: Any, output: int, seeds: dict[int, Expr], nseed: int) 
 
 def _reads(callee: Any, output: int) -> tuple[bool, ...]:
   """Which input tangents the derivative of ``callee``'s result ``output`` reads."""
-  rule = None if callee.rules is None or output >= len(callee.outputs) else callee.rules.jvp
+  rule = None if output >= len(callee.outputs) else _forward_rule(callee)
   if rule is None:
     return (True,) * len(callee.inputs)
   memo: dict[tuple[int, int], bool] = {}
-  return tuple(_depends_on(rule.outputs[output], tangent, memo) for tangent in rule.inputs[len(callee.inputs) :])
+  return tuple(_depends_on(rule.outputs[output], tangent, memo) for tangent in rule.inputs[len(rule.inputs) - len(callee.inputs) :])
 
 
 def read_args(expr: Expr) -> tuple[Expr, ...]:
@@ -217,11 +227,16 @@ def _call_jvp_many_function(
     carries_mask = _mask_of(deriv) is not None
     if carries_mask:
       outputs.append(stop_gradient(cast_expr(values(activity(deriv)), dtypes.bool_)))
+    outputs, residuals = _residual_inputs(callee, outputs, fresh)
+    deriv = outputs[0]
     dep_memo: dict[tuple[int, int], bool] = {}
-    arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if any(_depends_on(out, inp, dep_memo) for out in outputs))
+    used = tuple(i for i, inp in enumerate(callee.inputs) if any(_depends_on(out, inp, dep_memo) for out in outputs))
+    arg_indices = used + tuple(residuals)
     seed_indices = tuple(i for i, value in zip(formal_indices, constants, strict=True) if value is None and _depends_on(deriv, seeds[i], dep_memo))
-    inputs = tuple(callee.inputs[i] for i in arg_indices) + tuple(seeds[i] for i in seed_indices)
-    input_names = tuple(callee.input_names[i] for i in arg_indices) + tuple(seed_names[i] for i in seed_indices)
+    inputs = tuple(callee.inputs[i] for i in used) + tuple(residuals.values()) + tuple(seeds[i] for i in seed_indices)
+    input_names = (
+      tuple(callee.input_names[i] for i in used) + tuple(res.name for res in residuals.values()) + tuple(seed_names[i] for i in seed_indices)
+    )
     inputs += tuple(masks.values())
     input_names += tuple(mask_names.values())
     output_name = f"fwd:{callee.result_names[output_index]}"
@@ -237,6 +252,53 @@ def _call_jvp_many_function(
     )
     cache[key] = (fn, arg_indices, seed_indices, active)
   return cast(_JVPMany, cache[key])
+
+
+def _residual_inputs(
+  callee: ConcreteFunction[Any, Any, Any, Any], outputs: list[Expr], fresh: Callable[[str], str]
+) -> tuple[list[Expr], dict[int, Expr]]:
+  """Make the residuals that a ``tangent`` rule reads inputs of the forward helper.
+
+  ``_rule_tangent`` reads them as results of a call of ``callee`` on its own inputs. Each becomes an
+  input, keyed by its position after ``callee``'s inputs, so the caller passes the residuals of the
+  invocation that computes its outputs, which `call_argument` and `map_window` build.
+  """
+  n_in, n_out = len(callee.inputs), len(callee.outputs)
+  if callee.rules is None or callee.rules.tangent is None:
+    return outputs, {}
+  symbols: dict[int, Expr] = {}
+  replacements: dict[int, Expr] = {}
+  for node in topo(tuple(outputs)):
+    own = node.op == ExprOp.CALL and node.attrs["callee"] is callee and all(a is b for a, b in zip(node.args, callee.inputs, strict=True))
+    if own and node.attrs["output"] >= n_out:
+      j = node.attrs["output"]
+      if j not in symbols:
+        symbols[j] = Expr(ExprOp.INPUT, type=callee.results[j].type, name=fresh(f"fwd:{callee.result_names[j]}"))
+      replacements[node.id] = symbols[j]
+  if not replacements:
+    return outputs, {}
+  return [_substitute(out, replacements) for out in outputs], {n_in + j - n_out: symbols[j] for j in sorted(symbols)}
+
+
+def call_argument(expr: Expr, index: int) -> Expr:
+  """Argument ``index`` of a forward helper of the call ``expr``: an argument of the call, or past
+  them a residual of the same invocation."""
+  callee, n_in = expr.attrs["callee"], len(expr.args)
+  return expr.args[index] if index < n_in else callee._call(expr.args)[len(callee.outputs) + index - n_in]
+
+
+def map_window(expr: Expr, index: int, phase: int = 0, period: int = 1) -> tuple[Expr, int, int]:
+  """``(outer, start, stride)`` of argument ``index`` of a forward helper mapped over the map ``expr``,
+  on every ``period``-th iteration from ``phase``. Past the map's arguments, a residual of the same
+  invocations, which the map computes with its outputs."""
+  callee, n_in = expr.attrs["callee"], len(expr.args)
+  starts, strides = expr.attrs["starts"], expr.attrs["strides"]
+  if index < n_in:
+    return expr.args[index], starts[index] + phase * strides[index], strides[index] * period
+  result = len(callee.outputs) + index - n_in
+  size = callee.results[result].type.storage_size
+  residual = _mapped_call(callee, expr.attrs["length"], list(zip(expr.args, starts, strides, strict=True)), result)
+  return residual, phase * size, size * period
 
 
 def _call_jvp_many_const_function(
@@ -540,7 +602,7 @@ def _vmap_jvp_many(
         if not active:
           parts.append(Expr.const(np.zeros((nseed, n, slice_size), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype))
           continue
-        primal_specs = [(expr.args[i], starts[i] + r * strides[i], strides[i] * period) for i in primal_arg_indices]
+        primal_specs = [map_window(expr, i, r, period) for i in primal_arg_indices]
         mapped_3d = move_mask(mapped_call(inner_fn, n, primal_specs), lambda t: t.reshape((n, len(active), slice_size)))
         if len(active) == nseed:
           parts.append(move_mask(mapped_3d, lambda t: t.transpose((1, 0, 2))))
@@ -587,7 +649,7 @@ def _vmap_jvp_many(
               unique_j[c, k] = int(j)
               local_support[c, k] = True
               break
-      primal_specs = [(expr.args[i], starts[i], strides[i]) for i in primal_arg_indices]
+      primal_specs = [map_window(expr, i) for i in primal_arg_indices]
       mapped_flat = mapped_call(inner_fn, length, primal_specs)
       mapped_3d = move_mask(mapped_flat, lambda t: t.reshape((length, active_count, slice_size)))
       c_arr = np.arange(nseed, dtype=np.int64).reshape(nseed, 1, 1)
@@ -631,7 +693,7 @@ def _vmap_jvp_many(
     inner_fn, primal_arg_indices, seed_indices, _ = _call_jvp_many_function(
       callee, output_idx, formals, nseed, (None,) * len(formals), pushforward=pushforward, masked=masked
     )
-    primal_specs = [(expr.args[i], starts[i], strides[i]) for i in primal_arg_indices]
+    primal_specs = [map_window(expr, i) for i in primal_arg_indices]
     seed_specs = [(generic_seeds[i], 0, nseed * callee.inputs[i].type.storage_size) for i in seed_indices]
     seed_specs.extend(
       (stop_gradient(cast_expr(values(activity(generic_seeds[i])), dtypes.bool_)), 0, nseed * callee.inputs[i].type.storage_size) for i in masked
@@ -660,7 +722,7 @@ def _call_jvp_many(expr: Expr, tangents: Sequence[Expr | None], nseed: int, *, p
     return _stored_result(
       Expr.const(np.zeros((nseed, *expr.type.storage_shape), dtype=expr.type.dtype.numpy()), dtype=expr.type.dtype), expr, (nseed,)
     )
-  call_args = [expr.args[i] for i in arg_indices] + [active_tangents[i] for i in seed_indices]
+  call_args = [call_argument(expr, i) for i in arg_indices] + [active_tangents[i] for i in seed_indices]
   call_args.extend(stop_gradient(cast_expr(values(activity(active_tangents[i])), dtypes.bool_)) for i in masked)
   outputs = fn._call(call_args)
   ret = outputs[0] if len(outputs) == 1 else _masked_seed(outputs[0], outputs[1])
