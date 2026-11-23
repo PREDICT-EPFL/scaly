@@ -455,11 +455,12 @@ def _ruled_square_with_input(name: str):
   return sc.custom_derivative(scalar_square, fwd=keep, tangent=square_tangent)
 
 
-def test_a_residual_input_never_takes_a_seed_name() -> None:
+@pytest.mark.parametrize("name", ["res:0", "res:res:0"])
+def test_a_residual_input_never_takes_a_seed_name(name: str) -> None:
   """An input named like a residual result: the residual of one forward helper and the seed of
   another sharing its map must not take the same name."""
 
-  @sc.function(sc.arg("res:0", ()), sc.arg("b", ()))
+  @sc.function(sc.arg(name, ()), sc.arg("b", ()))
   def product(a, b):
     return a * b
 

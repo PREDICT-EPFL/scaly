@@ -227,7 +227,7 @@ def _call_jvp_many_function(
     carries_mask = _mask_of(deriv) is not None
     if carries_mask:
       outputs.append(stop_gradient(cast_expr(values(activity(deriv)), dtypes.bool_)))
-    outputs, residuals = _residual_inputs(callee, outputs, fresh)
+    outputs, residuals = _residual_inputs(callee, outputs, names)
     deriv = outputs[0]
     dep_memo: dict[tuple[int, int], bool] = {}
     used = tuple(i for i, inp in enumerate(callee.inputs) if any(_depends_on(out, inp, dep_memo) for out in outputs))
@@ -256,9 +256,7 @@ def _call_jvp_many_function(
   return cast(_JVPMany, cache[key])
 
 
-def _residual_inputs(
-  callee: ConcreteFunction[Any, Any, Any, Any], outputs: list[Expr], fresh: Callable[[str], str]
-) -> tuple[list[Expr], dict[int, Expr]]:
+def _residual_inputs(callee: ConcreteFunction[Any, Any, Any, Any], outputs: list[Expr], taken: set[str | None]) -> tuple[list[Expr], dict[int, Expr]]:
   """Make the residuals that a ``tangent`` rule reads inputs of the forward helper.
 
   ``_rule_tangent`` reads them as results of a call of ``callee`` on its own inputs. Each becomes an
@@ -275,8 +273,13 @@ def _residual_inputs(
     if own and node.attrs["output"] >= n_out:
       j = node.attrs["output"]
       if j not in symbols:
-        # ``res:``, never ``fwd:``: helpers that share a map pack their inputs together, and a seed is ``fwd:<input>``.
-        symbols[j] = Expr(ExprOp.INPUT, type=callee.results[j].type, name=fresh(f"res:{callee.result_names[j]}"))
+        # Always ``res:``, never ``fwd:``: helpers that share a map pack their inputs together, and
+        # every seed is ``fwd:<input>``. A clash with a name in ``taken`` lengthens the prefix.
+        name = f"res:{callee.result_names[j]}"
+        while name in taken:
+          name = f"res:{name}"
+        taken.add(name)
+        symbols[j] = Expr(ExprOp.INPUT, type=callee.results[j].type, name=name)
       replacements[node.id] = symbols[j]
   if not replacements:
     return outputs, {}
