@@ -390,10 +390,41 @@ again. The outputs of `fwd` replace those of the body and should equal them.
 The residuals keep their dependence on the inputs, so a second derivative, such
 as the Hessian above, differentiates `bwd` and the residuals it reads.
 
-`fwd` and `bwd` are given together. A mode without a rule, forward or reverse,
-differentiates the body. With only `jvp`, a gradient goes through the Newton
-steps. A forward rule receives no residuals, which is why `cubic_root_jvp` calls
-`cubic_root` again to recover the solution.
+`bwd` needs `fwd`. A mode without a rule, forward or reverse, differentiates
+the body. With only `jvp`, a gradient goes through the Newton steps. A `jvp`
+rule receives no residuals, which is why `cubic_root_jvp` calls `cubic_root`
+again to recover the solution.
+
+### Forward rules that read the residuals
+
+The forward rule `tangent` reads the residuals of `fwd` instead of the
+parameters. It mirrors `bwd`. `tangent(residuals, directions)` takes the
+residuals and one direction per parameter, and returns the change of each
+output along those directions. With the solution as the residual, the cubic
+root's forward rule no longer solves the equation again:
+
+```python
+@sc.function()
+def cubic_root_tangent(x: sc.Expr, p_dot: sc.Expr) -> sc.Expr:
+    return p_dot / (3.0 * x * x + 1.0)
+
+root = sc.custom_derivative(cubic_root, fwd=cubic_root_fwd, tangent=cubic_root_tangent, bwd=cubic_root_bwd)
+print(sc.jacobian(root)(p))   # [[0.25       0.         0.        ]
+                              #  [0.         0.07692308 0.        ]
+                              #  [0.         0.         0.03571429]]
+```
+
+A call of `root` computes its residuals once, and every direction of the
+Jacobian reads them. This matters when a residual is expensive to compute.
+The solves in [`scaly.linalg`](linalg.md#derivatives) keep the factorization and the
+solution as residuals, so a solution and its Jacobian factor the matrix once,
+where a `jvp` rule would factor it again for every direction. As with `bwd`,
+an input that the rule reads goes in the residuals, and a second derivative
+differentiates the rule and the residuals it reads.
+
+`tangent` needs `fwd`, and `fwd` is given with `bwd`, `tangent` or both.
+Without `bwd`, a gradient differentiates the body. A function takes either
+`jvp` or `tangent` as its forward rule, and passing both raises `TypeError`.
 
 ### Declared sparsity
 

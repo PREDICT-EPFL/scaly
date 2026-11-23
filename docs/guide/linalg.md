@@ -336,16 +336,25 @@ print(sc.gradient(cost, "cost", "K")(np.array([[4.0, 0.0], [1.0, 3.0]]), np.arra
 #  [-0.14049587 -0.17355372]]
 ```
 
-Forward mode differentiates the substitutions step by step. For the factor it uses a closed form.
-For Cholesky it is \(dL = L\, \Phi(L^{-1}\, dK\, L^{-T})\), where \(\Phi\) keeps the lower triangle
-and halves the diagonal. For \(L D L^T\), with \(F = L^{-1}\, dK\, L^{-T}\), the pivots change by
-the diagonal of \(F\) and \(dL = L X\), where \(X\) is the strict lower triangle of \(F\) with each
-column divided by its pivot. For LU, with \(F = L^{-1} P\, dK\, U^{-1}\), \(dL\) is \(L\) times the
-strict lower triangle of \(F\) and \(dU\) is the upper triangle of \(F\) times \(U\), the row
-exchanges staying fixed. Each rule factors `K` once more for every direction, so a forward
-derivative and a Hessian with respect to `K` cost one factorization per entry of `K` they
-differentiate in, and generate correspondingly more code. Second derivatives, such as those of `sc.hessian`, hold with
-`K` and `b` varying together, and a gradient may itself be differentiated in reverse mode.
+Forward mode, which Jacobians and Hessians use, differentiates \(K x = b\) the same way:
+
+\[
+dx = K^{-1} (db - dK\, x),
+\]
+
+solved with the factorization and the solution of the call. A solution and its Jacobian with
+respect to `K` factor `K` once, however many directions the Jacobian has. Second derivatives, such
+as those of `sc.hessian`, hold with `K` and `b` varying together, and a gradient may itself be
+differentiated in reverse mode.
+
+A second derivative also differentiates the factorization the first derivative reads. For that the
+factors have closed-form forward rules, which read the factors of their own call. For Cholesky it
+is \(dL = L\, \Phi(L^{-1}\, dK\, L^{-T})\), where \(\Phi\) keeps the lower triangle and halves the
+diagonal. For \(L D L^T\), with \(F = L^{-1}\, dK\, L^{-T}\), the pivots change by the diagonal of
+\(F\) and \(dL = L X\), where \(X\) is the strict lower triangle of \(F\) with each column divided
+by its pivot. For LU, with \(F = L^{-1} P\, dK\, U^{-1}\), \(dL\) is \(L\) times the strict lower
+triangle of \(F\) and \(dU\) is the upper triangle of \(F\) times \(U\), the row exchanges staying
+fixed.
 
 `cholesky` and `solve_triangular` follow the same rules. The reverse derivative of a triangular
 solve is one more triangular solve with the transposed matrix, and that of `cholesky` takes two.
