@@ -171,6 +171,14 @@ inherits the hint, so a scalar stage model gets scalar derivative procedures too
 A hint only chooses between loops and scalar code. Every other pass still runs
 on a `.block()` procedure.
 
+The entry point's layout conversions are the exception to keeping its loops.
+Procedures read sparse values in row-major order, so an entry point declared
+with another layout copies each sparse argument into that order before a call,
+and each sparse result out of it after. When the callee expands, its loads and
+stores have constant indices. `scalarize` then gives a copy of the callee the
+declared layout's indices instead, and the copy loop, its index table and its
+temporary disappear. A copy that two calls read stays.
+
 ## The pass pipeline
 
 The passes run in the order of `PASS_PIPELINE` in
@@ -179,7 +187,7 @@ The passes run in the order of `PASS_PIPELINE` in
 | Pass | What it does |
 | --- | --- |
 | `hoist_invariant` | Moves work that depends only on broadcast inputs out of a mapped loop |
-| `scalarize` | Expands selected procedures into scalar statements |
+| `scalarize` | Expands selected procedures into scalar statements and moves the entry point's layout copies into them |
 | `fold_tiles` | Shrinks a constant table made of one repeated tile to that tile |
 | `fuse_ranges` | Merges expanded stages into their mapped loop and drops unused outputs |
 | `prune_procedures` | Removes procedures that nothing calls any more |

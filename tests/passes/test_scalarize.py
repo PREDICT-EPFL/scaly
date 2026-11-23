@@ -7,6 +7,7 @@ import math
 from scaly.ir.expr import _scatter_zero
 
 import numpy as np
+from scipy import sparse
 import pytest
 
 from scaly.function.sugar import _mapped_call
@@ -553,3 +554,56 @@ def test_final_preparation_reserves_later_scalar_declarations() -> None:
   assert len(names) > 1
   assert len(names) == len(set(names))
   assert names[-1] == "v0"
+
+
+def _tridiagonal() -> tuple[sparse.csc_array, sc.TensorType]:
+  a = sparse.csc_array([[4.0, -1.0, 0.0], [-1.0, 4.0, -1.0], [0.0, -1.0, 4.0]])
+  pattern, _ = sc.SparsityPattern.from_csc((3, 3), a.indptr.tolist(), a.indices.tolist()).canonicalize()
+  return a, sc.TensorType((3, 3), pattern=pattern)
+
+
+@pytest.mark.parametrize("layout", ["csc", "csr"])
+def test_layout_copies_move_into_the_expanded_callee_they_feed(layout: str) -> None:
+  a, a_type = _tridiagonal()
+
+  @sc.function(sc.arg("A", a_type), sc.arg("x", 3), outputs=sc.group(sc.arg("y"), sc.arg("B", a_type)), name="inner")
+  def inner(A, x):
+    return A @ x, 2.0 * A
+
+  @sc.function(sc.arg("A", a_type, layout=layout), sc.arg("x", 3), outputs=sc.group(sc.arg("y"), sc.arg("B", a_type, layout=layout)), name="outer")
+  def outer(A, x):
+    return inner(A, x)
+
+  # The entry reads and writes the declared layout straight from the callee: no copy loop, index
+  # table or temporary is left. Without the fold, the copies stay.
+  root = main_proc(lower_function(outer))
+  assert [stmt.op for stmt in _body(root)] == [ProgramOp.CALL]
+  source = render_c_source(outer)
+  assert "for (" not in source[source.index('extern "C"') :] and "static const" not in source
+  kept = main_proc(lower_function(outer, fold_reorders=False))
+  assert any(stmt.op == ProgramOp.FOR for stmt in _body(kept))
+
+  x = np.array([1.0, 2.0, 3.0])
+  y, b = outer(a if layout == "csc" else sparse.csr_array(a), x)
+  assert isinstance(b, sparse.csc_array | sparse.csr_array)
+  np.testing.assert_array_equal(y, a @ x)
+  np.testing.assert_array_equal(b.toarray(), 2.0 * a.toarray())
+
+
+def test_a_layout_copy_two_calls_read_stays() -> None:
+  a, a_type = _tridiagonal()
+
+  @sc.function(sc.arg("A", a_type), sc.arg("x", 3), outputs=sc.arg("y"), name="inner")
+  def inner(A, x):
+    return A @ x
+
+  @sc.function(sc.arg("A", a_type), sc.arg("x", 3), outputs=sc.arg("y"), name="outer")
+  def outer(A, x):
+    return inner(A, x) + inner(A, 2.0 * x)
+
+  # Each call's own copy folds into one shared specialization; the canonical copy both read stays.
+  root = main_proc(lower_function(outer))
+  assert [stmt.attrs["callee"] for stmt in _body(root) if stmt.op == ProgramOp.CALL] == ["inner_reordered_0"] * 2
+  assert sum(stmt.op == ProgramOp.FOR for stmt in _body(root)) == 3
+  x = np.array([1.0, 2.0, 3.0])
+  np.testing.assert_array_equal(outer(a, x), a @ x + a @ (2.0 * x))

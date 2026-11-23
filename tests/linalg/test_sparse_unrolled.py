@@ -68,6 +68,12 @@ def _procedure(fn: sc.Function, prefix: str) -> tuple[ProgramNode, str]:
   return proc, match.group(0)
 
 
+def _generated(fn: sc.Function) -> str:
+  """The generated C functions, entry point included, without the shared preamble."""
+  source = render_c_source(fn)
+  return source[source.index('extern "C"') :]
+
+
 def _operations(proc: ProgramNode) -> dict[ProgramOp, int]:
   """The floating operations the procedure computes for its outputs other than the status, each value once.
 
@@ -143,8 +149,10 @@ def test_a_pattern_within_the_budget_factors_in_straight_line_code(name: str, ro
   analysis = symbolic.ldl(_pattern(a), ordering)
   fn = _routine(a, routine, ordering)
 
-  proc, source = _procedure(fn, _symbol(routine, ordering))
-  assert "for (" not in source and "static const" not in source
+  proc, _ = _procedure(fn, _symbol(routine, ordering))
+  # The entry point reads K and writes L in CSC order straight from the procedure.
+  generated = _generated(fn)
+  assert "for (" not in generated and "static const" not in generated
   # Every value lives in a C local: the procedure allocates no buffer.
   assert proc.attrs.get("scalarized") and not any(stmt.op == ProgramOp.BUFFER for stmt in proc.args[proc.attrs["param_count"] :])
   operations = _operations(proc)
@@ -172,6 +180,35 @@ def test_a_pattern_within_the_budget_factors_in_straight_line_code(name: str, ro
   else:
     np.testing.assert_allclose(unrolled[0], spsolve(sparse.csc_array(_symmetric(a)), b), rtol=1e-12, atol=1e-13)
   assert int(unrolled[-1]) == 0
+
+
+@pytest.mark.parametrize("layouts", [("csc", "csc"), ("csr", "csr"), ("csr", "csc"), ("coordinates", "csr")])
+def test_every_layout_reads_and_writes_the_procedure_directly(layouts: tuple[str, str]) -> None:
+  a = _values(PATTERNS["arrow, hub first"](), np.random.default_rng(24))
+  n = a.shape[0]
+  pattern = _pattern(a)
+  reversed_order = sc.SparsityPattern(pattern.shape, pattern.rows[::-1], pattern.cols[::-1])
+  given, returned = layouts
+  layout = reversed_order if given == "coordinates" else given
+
+  @sc.function(
+    sc.arg("K", _sparse_type(a), layout=layout),
+    outputs=sc.group(sc.arg("L", (n, n), pattern=..., layout=returned), sc.arg("d", n), sc.arg("status", STATUS)),
+  )
+  def factor(K):
+    return linalg.ldl(K, ordering="amd")
+
+  generated = _generated(factor)
+  assert "for (" not in generated and "static const" not in generated
+  rows, cols = np.asarray(pattern.rows), np.asarray(pattern.cols)
+  values = a[rows, cols]
+  K = values[::-1] if given == "coordinates" else sparse.csr_array(a) if given == "csr" else sparse.csc_array(a)
+  L, d, status = factor(K)
+  assert isinstance(L, sparse.csc_array | sparse.csr_array) and L.format == returned
+  expected = _results(_routine(a, "ldl", "amd"), a, "ldl", np.zeros(n))
+  np.testing.assert_array_equal(L.toarray(), expected[0])
+  np.testing.assert_array_equal(d, expected[1])
+  assert not np.asarray(status).any()
 
 
 @pytest.mark.parametrize("routine", ROUTINES)
