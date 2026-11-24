@@ -13,6 +13,10 @@ overwrite, when those need no table. Sparse values and forward helpers that
 plan by seed support keep computing all they store. Both open choices are
 posted on #75.
 
+The branch was later rebased onto `04a2bf53`. On both sides every measured
+source and header kept its SHA-256, and the snapshots stayed byte-identical to
+main, so the measurements below stand.
+
 The first cost rule narrowed every product and every elementwise value under
 two thirds of its entries. The code review timed it on la015 (indicative, not
 a benchmark study): a table-driven 4 x 3 by 3 x 246 product was 3.2 times
@@ -69,8 +73,9 @@ That is why copies and placements now narrow only without new tables.
 
 `uv run python -m tests.test_c_snapshot` regenerated the 21-file corpus.
 `snapshot-audit.json` records both digests of every file: all are
-byte-identical to main. An earlier version changed `spjac.c` by zeroing a
-sum through a 12-entry table, which the final rule rejects.
+byte-identical to main, and again after the rebase. An earlier version changed
+`spjac.c` by zeroing a sum through a 12-entry table, which the final rule
+rejects.
 
 ## Tests and perturbations
 
@@ -80,7 +85,9 @@ trip, and runs the lowered program's index arithmetic to check that no load
 reads an entry no store wrote, including loads a select discards. All 16 cases
 fail on main on their counts (for example 1,581 multiplies expected where main
 runs 2,952 in devrush's 984-versus-527 case, and 4 sines where main runs 24
-behind a repeating gather), and pass here.
+behind a repeating gather), and pass here. The two regression tests from the
+review, a scalar product no reader uses and a narrowed scatter's sign of zero,
+pass on main and fail without their fixes.
 
 `prove.py` applies one perturbation at a time to a copy of `src/`.
 `perturbations.json` holds every outcome.
@@ -94,7 +101,7 @@ behind a repeating gather), and pass here.
 | Evaluate a computed part inside a selected concatenation | the concatenation guard |
 | Narrow an elementwise value through any table | the concatenation guard |
 | Read an unselected concatenation part at entry zero | the concatenation family, on an unwritten load |
-| Skip the zeros under a narrowed sum of scatters | the scatter family and the sum-of-scatters case |
+| Skip the zeros under a narrowed sum of scatters | the scatter family, the sum-of-scatters case and the sign-of-zero regression |
 | Let a repeating gather read a sum in place | the repeating-gather guard |
 
 ## Reproduction
