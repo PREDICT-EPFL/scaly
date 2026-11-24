@@ -21,9 +21,11 @@ Read before changing anything:
 Everything under `docs/` is published to the documentation site, all of it, because Zensical has no
 exclusion mechanism. Anything unpublished lives in `internal/`:
 
-- [GitHub Issues](https://github.com/PREDICT-EPFL/scaly/issues) is the single actionable list;
-  [scaly roadmap](https://github.com/orgs/PREDICT-EPFL/projects/2) tracks status and scope.
+- [GitHub Issues](https://github.com/PREDICT-EPFL/scaly/issues) is the single actionable list.
+  Each issue's `workflow status` field tracks its progress and its milestone names its capability.
   Follow [Tracking work](docs/dev/issue_tracking.md).
+- `internal/notes/agent_workflow.md` is the maintained note on how work is planned, given to
+  agents and reviewed, with the reasons for each rule.
 - `internal/notes/` holds frozen design and migration notes, including the completed benchmark and
   solver-plugin build-out.
 - `internal/notes/core_compiler_roadmap.md` is the maintained design and order of the core compiler
@@ -54,8 +56,10 @@ finished feature is different: document it next to the behaviour it affects.
 What planning, implementing or reviewing a Scaly change needs to know, whatever workflow drives it:
 
 - **Tracking.** Tasks are GitHub issues, tracked as [Tracking work](docs/dev/issue_tracking.md)
-  describes. `inspect-issues` reads them and `update-issues` changes them. A pull request that
-  completes an issue ends with `Closes #N`, a partial one with `Part of #N`.
+  describes. An issue is one coherent result with the examples that must hold at the end, built by
+  one thread on one branch and reviewed as one pull request. `inspect-issues` reads issues and
+  `update-issues` changes them. A pull request that completes an issue ends with `Closes #N`, one
+  that lands a part early with `Part of #N`.
 - **Design.** Compiler and API design is decided in `internal/notes/core_compiler_roadmap.md`: its
   decisions, *Order of work*, *Release scope* and *Rules for every item*. Other designs are dated
   notes in `internal/notes/`. Compiler work also reads `internal/notes/compiler_maintenance_context.md`
@@ -70,17 +74,21 @@ What planning, implementing or reviewing a Scaly change needs to know, whatever 
 - **Other proof.** A user-visible feature updates its guide page and API entries and keeps the
   README and `examples/` running. A performance claim needs a measurement with `benchmark-study`;
   a Python-level timing is never evidence.
-- **Ordering.** Pull requests that regenerate the C snapshots are serialized: the next one starts
-  once the previous has merged, as [Parallel work](docs/dev/issue_tracking.md#parallel-work)
-  explains. Changes to `plugins/*/hatch_build.py` are grouped, since each costs a cold solver
+- **Ordering.** Pull requests that regenerate the C snapshots land one after another: the next one
+  is marked ready once the previous has merged, as
+  [Parallel work](docs/dev/issue_tracking.md#parallel-work) explains. Changes to `plugins/*/hatch_build.py` are grouped, since each costs a cold solver
   rebuild, and so are renames of generated C symbols.
 - **Writing and notes.** Published prose follows `.agents/skills/write-docs/brief.md`. Review memos
   and study material go in `internal/notes/<topic>_<date>/`.
 
-`.agents/skills/` holds the procedures only Scaly has: `inspect-issues` and `update-issues` for the
-tracker, `write-docs` for published prose, `benchmark-study` for measurements and the benchmark
-pages, and `port-from-devrush` for tests and examples from the frozen branch. Use them only when the user or another skill asks for
-one by name.
+`.agents/skills/` holds Scaly's procedures. The workflow is `record-decisions` to end a design
+discussion with issues, `plan-next` to choose what starts, `implement` to build an issue, and
+`cross-review` and `prune-tests` as its finishing steps. Beside them are `inspect-issues` and
+`update-issues` for the tracker, `write-docs` for published prose, `benchmark-study` for
+measurements and the benchmark pages, and `port-from-devrush` for tests and examples from the
+frozen branch. Use them only when the user or another skill asks for one by name. They name
+roles, such as the reviewer for taste, and each maintainer's private instructions say which model
+fills each role.
 
 ## Commands
 

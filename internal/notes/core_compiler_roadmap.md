@@ -218,7 +218,8 @@ After 0.1.0 the work is three milestones, all shipped in one release, 0.2.0 (rev
 until then each milestone was its own release, 0.2.0 to 0.4.0, see [Release scope](#release-scope)).
 Each milestone ends with something a user can rely on; inside a milestone, items run in lanes,
 sequential inside a lane, with arrows as hard dependencies. One rule holds across lanes: a pull
-request that regenerates C snapshots is never in flight at the same time as another one ([#19],
+request that regenerates C snapshots is never ready for review or queued at the same time as
+another one ([#19],
 [#27], [#45], [#28], [#69] and [#46] regenerate them). Edits to the shared vocabulary (`ir/expr.py`,
 `ir/program.py`, the verifiers) used to merge one at a time as a second rule. The merge queue now
 does that by testing each pull request on top of the ones ahead of it, so they run in parallel.

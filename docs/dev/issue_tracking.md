@@ -1,25 +1,55 @@
 # Issue tracking and parallel work
 
-[GitHub Issues](https://github.com/PREDICT-EPFL/scaly/issues) is Scaly's single actionable list, and the public
-[scaly roadmap Project](https://github.com/orgs/PREDICT-EPFL/projects/2) tracks planning and progress.
-These conventions cover classification, dependencies, and risks when contributors or agents work
-in parallel.
+[GitHub Issues](https://github.com/PREDICT-EPFL/scaly/issues) is Scaly's single actionable list.
+These conventions cover what an issue states, how it is classified, who holds it, and the risks
+when contributors or agents work in parallel.
 
 ## One actionable list
 
-Every task, bug report, research question, and deferred idea has an issue in `scaly`. Design notes explain decisions and
-approaches and link to issues instead of maintaining separate task checklists.
+Every task, bug report, research question, and deferred idea has an issue in `scaly`. Design notes
+explain decisions and approaches and link to issues instead of maintaining separate task checklists.
 
-An open issue is not a promise to implement a feature. Triage distinguishes incoming proposals
-from accepted work, and milestones show release scope or a broad capability goal.
+An open issue is not a promise to implement a feature. Its status distinguishes incoming proposals
+from accepted work, and its milestone says which capability it belongs to.
 
-Each actionable issue states the problem, scope, completion criteria, and relevant design notes.
-A research issue states the question and the evidence or decision that completes the investigation.
-Preserve old todo identifiers in a small source permalink during migration so existing references
-remain searchable. Keep titles imperative and free of legacy IDs. Use compact prose; add headings
-only when they help. Keep labels, milestone, status, and prerequisite lists in tracker fields, not
-in the body. Include dependency explanations only when they clarify a task-specific constraint.
-Contributor instructions belong in this guide rather than repeated in every issue.
+## What an issue states
+
+An issue describes one coherent result: something a user or the compiler can do once it is closed.
+It is not one step toward a result. Steps belong to whoever does the work, on their branch.
+An issue is normally built on one branch and lands as one pull request (PR).
+
+An actionable issue states:
+
+- **The goal:** what becomes possible, and why it matters.
+- **The examples:** what must be true at the end, written as code where it can be.
+- **What is out of scope**, when a reader could expect it to be included.
+- **The design section or note** it implements, linked by its heading.
+
+An example pairs what goes in with what should come out: the Python a user writes and the C the
+compiler should generate for it, an error message, or an interface. Two short lists follow it.
+**Pin** names what a reviewer checks. **Leave free** names what the implementer decides.
+
+````markdown
+```python
+L, d, status = linalg.ldl(A)
+sc.gradient(L.sum(), A)
+# TypeError: ldl: output 'L' is not differentiable; differentiate linalg.solve(..., assume="sym") instead
+```
+
+Pin: the message names the Function and the output and says what to do instead.
+Leave free: the exception's exact wording beyond that.
+````
+
+A result that touches several parts of the library gets one example per part. Not every issue
+needs target code: a measurement states its numbers, a bug report carries its reproduction, and a
+research issue states the question and the evidence or decision that completes it.
+
+The examples are what the PR is reviewed against, so they are agreed before the work starts and
+changed only by a maintainer.
+
+Keep titles imperative. Use compact prose and add headings only when they help. Keep labels,
+milestone, status, and prerequisites in tracker fields, not in the body. Contributor instructions
+belong in this guide, not in every issue.
 
 ## Labels
 
@@ -37,117 +67,105 @@ maintainer's proposal can remain deferred. Apply one origin label and keep it af
 Scaly uses kind labels and leaves native issue types unset to avoid duplicate classification.
 Add area labels only when they help readers find work.
 
-Use Project status for progress and milestones for release or capability scope. Avoid labels that
-duplicate those fields. Issue forms can apply default labels, but issues filed without a form still
-need triage.
+## Status
 
-## Project status and views
-
-Use the public scaly roadmap Project for all Scaly issues, with this Status field.
+Each issue carries its progress in the `workflow status` field, shown in the issue's sidebar.
 
 | Status | Meaning |
 | --- | --- |
-| Triage | The report or proposal has not been assessed. |
+| No value | The report or proposal has not been assessed. |
 | Backlog | Accepted work with no immediate start planned. |
-| Ready | Scope and completion criteria are clear, and prerequisites permit starting. |
-| In progress | Someone owns the work and is implementing or investigating it. |
-| In review | The implementation or investigation result awaits review. |
+| Ready | The goal and examples are clear, and nothing it needs is missing from main. |
+| In progress | Someone is implementing or investigating it. Its draft PR shows the work. |
+| In review | The result awaits a maintainer's review. |
 | Deferred | Deliberately postponed, with a reason or condition for revisiting it. |
-| Done | Closed. Check the closure reason to distinguish completed work from declined or duplicate work. |
 
-New submissions normally enter Triage. Accepted work enters Backlog or Deferred until it is ready
-or active. Close duplicates and declined proposals with an explanatory comment and
-the appropriate closure reason. Deferred means postponed, not rejected.
+A closed issue is done. Its closure reason distinguishes completed work from declined or duplicate
+work, and nothing updates the field when an issue closes.
 
-Keep blocked active work In progress and record its prerequisites as issue dependencies. Add a
+New submissions arrive without a value. Accepted work becomes Backlog or Deferred until it is
+ready or active. Close duplicates and declined proposals with an explanatory comment and the
+appropriate closure reason. Deferred means postponed, not rejected.
+
+Keep blocked active work In progress and record what it waits for as an issue dependency. Add a
 comment for a blocker that has no corresponding issue, such as missing access to a Windows machine.
 
-| View | Purpose |
-| --- | --- |
-| Current release | Default board filtered to the current release milestone, grouped by Status. |
-| Triage | Unassessed issues, oldest first. |
-| Ready to pick up | Unassigned Ready issues, showing area and milestone. |
-| Roadmap | Accepted work grouped by milestone. |
-| Community | Community-origin issues across statuses. |
-| All work | Complete table, including deferred work. |
+To list issues by status:
+
+```bash
+gh issue list -R PREDICT-EPFL/scaly --search 'field.workflow-status:"Ready"'
+gh issue list -R PREDICT-EPFL/scaly --search 'no:field.workflow-status' --limit 200
+```
+
+## Assignment
+
+Assignment says who holds an issue, and reads together with its status.
+
+| On the issue | Meaning | To take it |
+| --- | --- | --- |
+| Unassigned | Free | Take it, and assign yourself. |
+| Assigned, Ready or Backlog | The assignee wants to do it soon. | Ask them. |
+| Assigned, In progress | The assignee is working on it now. | Ask them, and expect a no. |
+
+Ask wherever is convenient, and record the outcome on the issue, since that is the only place
+everyone, agents included, can see it. Several agent sessions can share one GitHub account, so
+assignment alone does not identify the active session. The branch and the draft PR do.
 
 ## Milestones
 
-Use milestones for releases such as `scaly 0.1.0`, or broad capabilities such as GPU support,
-control flow support, or a fully sparse intermediate representation (IR). Keep changing
-implementation details in the issues and design notes.
+A milestone is a capability, such as a fully sparse intermediate representation (IR), the loop
+compiler, control flow, or generated solvers. Its description says what it covers and what
+completing it means. A capability milestone needs no version or due date.
 
-Each milestone describes its scope and what completion means. A capability milestone need not
-have a version or due date. Give a release milestone a date only when it is an intended target.
-Use package-qualified release names when solver plugins release independently.
+An issue has one milestone. A release is a list of milestones, kept in the
+[compiler roadmap's release scope](https://github.com/PREDICT-EPFL/scaly/blob/main/internal/notes/core_compiler_roadmap.md#release-scope),
+which also records design and implementation order. Issues carry no release field: the project
+works on one release at a time.
 
-An issue has one milestone. When capability work is scheduled into a release, assign the release
-milestone. If simultaneous capability grouping becomes necessary, use a Project field instead of
-creating duplicate issues. Do not assign future versions to the entire backlog.
-
-Use the milestone for current release scope. The
-[compiler roadmap](https://github.com/PREDICT-EPFL/scaly/blob/main/internal/notes/core_compiler_roadmap.md#order-of-work)
-records design and implementation order. Its phases do not require matching parent issues or
-permanent milestone names.
-
-## References, sub-issues, and dependencies
-
-GitHub provides separate relationships for context, decomposition, and prerequisite order.
+## References and dependencies
 
 | Relationship | Meaning | GitHub behavior |
 | --- | --- | --- |
 | Mention, such as `Related to #42` | Relevant context. | Links the issues and normally adds a reference to the other issue's timeline. Does not create a dependency. |
-| Sub-issue | Part of a larger task. | Creates a parent-child relationship and exposes sub-issue completion progress and parent grouping in Projects. Does not define execution order. |
-| Blocked by or blocking | A prerequisite must be resolved. | Creates a queryable dependency and displays a blocked indicator on issues and Project boards. |
-| Closing reference in a pull request (PR) | The PR completes the issue. | `Closes #42` closes the issue when the PR merges into the default branch, with auto-closing enabled. |
+| Blocked by or blocking | A prerequisite must be on main first. | Creates a queryable dependency and displays a blocked indicator on issues. |
+| `Closes #42` in a PR | The PR completes the issue. | Closes the issue when the PR merges into the default branch. |
+| `Part of #42` in a PR | The PR lands a part of the issue early. | Links them. The issue stays open. |
 
-Use sub-issues when a concrete task needs several independently owned pieces. Broad capability
-milestones do not need matching parent issues. Record dependencies separately, including between
-siblings when one must precede another. Explain a prerequisite in the body only when the reason
-is useful, such as a condition that applies to part of the task. Keep the relationship itself in
-GitHub's dependency fields.
-
-To record a prerequisite, open the dependent issue and select **Relationships**, then
-**Mark as blocked by**, then the prerequisite issue. Agents can use the same relationships through the CLI.
-The installed GitHub CLI supports these flags and JSON fields.
+An issue depends on what is on main, never on someone's branch. To record a prerequisite, open the
+dependent issue and select **Relationships**, then **Mark as blocked by**, or use the CLI:
 
 ```bash
 gh issue edit ISSUE -R PREDICT-EPFL/scaly --add-blocked-by PREREQUISITE
 gh issue view ISSUE -R PREDICT-EPFL/scaly --json state,assignees,blockedBy,blocking
 ```
 
-Replace `ISSUE` and `PREREQUISITE` with GitHub issue numbers.
+Work is not planned as sub-issues. Cutting a result into child issues before the work starts
+guesses which parts someone else will wait for, and the draft PR already shows which examples
+hold. Split an issue only when a need appears: someone has to wait for a part of it, or wants to
+take a part over. That part then becomes its own issue, with its own examples, and the reason is
+visible to everyone. Fold small issues that one result covers into a single issue, and close them
+as duplicates of it.
 
 Relationships provide tracking information. Do not treat them as enforcement that prevents
-starting work, closing an issue, or merging a PR. Review a parent before closing it rather than
-assuming that child completion closes it automatically. Closing a prerequisite also does not
-mean its dependent task is ready: review scope, other prerequisites, and the merged behavior.
-
-Start with Project auto-add and issue-closure status updates. Keep admission to Ready and parent
-completion deliberate. Additional scheduling or completion automation needs its own explicit rules.
+starting work, closing an issue, or merging a PR. Closing a prerequisite does not mean its
+dependent is ready: check the merged behavior and the other prerequisites.
 
 ## Parallel work
 
-Before starting, inspect the issue's dependencies, owner, recent comments, and related open PRs.
-Assignment records responsibility, but is not an exclusive lock. Several agent sessions can also
-share one GitHub account, so assignment alone does not identify the active session.
-
-Make active work identifiable through its branch, PR, or a short issue comment. Leave enough
-context to resume an interrupted task. Do not assume that old activity means ownership is released.
+Before starting, inspect the issue's dependencies, assignee, recent comments, and the open PRs,
+drafts included. Open a draft PR with your first commit and keep the branch pushed. That is how
+others see which files your work touches, and how interrupted work is resumed.
 
 Use separate worktrees for independent implementations. Separate checkouts prevent accidental
-file overwrites, but do not prevent incompatible designs. Compare likely files and shared
-contracts before running tasks together. Area labels alone do not establish independence.
+file overwrites, but do not prevent incompatible designs. Two issues collide when they edit the
+same code. Compare the files and the shared contracts before running them together: file moves,
+operation definitions, derivative rules, generated symbols, and plugin contracts can affect work
+outside the edited files. Area labels alone do not establish independence. A collision depends on
+the code as it is today, so it is worked out when planning and never recorded as a dependency.
 
-The [compiler roadmap's parallel-work rules](https://github.com/PREDICT-EPFL/scaly/blob/main/internal/notes/core_compiler_roadmap.md#order-of-work) keep
-one shared constraint: PRs that regenerate generated-C snapshots must not be in flight
-simultaneously. Two such PRs always conflict in their snapshots, and the second must regenerate them
-after the first merges.
-
-File moves, operation definitions, derivative rules, generated symbols, and plugin contracts can
-affect work outside the edited files. Land prerequisite changes before dependent implementation,
-and coordinate an expansion of scope that overlaps active work. Record real prerequisite
-dependencies, not artificial dependency chains for changes that merely need merge coordination.
+PRs that regenerate the generated-C snapshots land one after another. Two such PRs always conflict
+in their snapshots. Both can be worked on at once, but the second is marked ready only after the
+first has merged, once it has rebased, regenerated its snapshots and rerun its checks.
 
 Passing tests on independent branches do not prove that their combination is correct. Main merges
 through a merge queue, which runs the required checks on each PR on top of main and the PRs queued
@@ -156,17 +174,9 @@ every merge, only when it conflicts with main or its PR leaves the queue. Follow
 [the contribution checks](contributing.md#run-the-checks), including the full suite for IR,
 differentiation, or code generation changes.
 
-Task claiming, conflict resolution, dispatch, and abandoned-session recovery procedures remain
-outside these conventions. The tracking conventions must expose enough information for contributors
-and agents to make those decisions.
-
 ## Sources
 
 - [GitHub issue forms](https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms)
-- [Organization issue types](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/managing-issue-types-in-an-organization)
-- [Sub-issues](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/adding-sub-issues)
 - [Issue dependencies](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-issue-dependencies)
 - [References](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/autolinked-references-and-urls)
 - [Closing references](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue)
-- [Project auto-add](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/adding-items-automatically)
-- [Project workflows](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/using-the-built-in-automations)

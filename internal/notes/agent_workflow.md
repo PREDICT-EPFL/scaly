@@ -1,8 +1,9 @@
 > Maintained note on how Scaly's maintainers plan, dispatch and review work done by coding agents.
 > **Status: a proposal of 2026-11-24.** One maintainer has worked it out in discussion with an
-> agent. The other has not agreed to it yet, nothing in the tracker or the skills has changed, and
-> no trial has run. Once it is agreed, this header is replaced by the date of the agreement and the
-> note describes the workflow in force. It replaces the design note of October 2026, which was kept
+> agent. The other has not agreed to it yet, and no trial has run. The skills, `AGENTS.md` and
+> `docs/dev/issue_tracking.md` on this branch are drafts of it. Nothing in the tracker has
+> changed. Once it is agreed, this header is replaced by the date of the agreement and the note
+> describes the workflow in force. It replaces the design note of October 2026, which was kept
 > outside the repository.
 
 # Agent workflow
@@ -177,9 +178,10 @@ one covers are closed as merged into it, with their content carried in its examp
   subagent and gets a check on the fix.
 - **Work that serves the issue's goal is done in the issue.** It is added to `PLAN.md`, not filed
   as a new issue.
-- **Leaving something out needs a strong reason.** The only good one is that doing it would widen
-  the issue beyond its goal. Each thing left out is named in the description with its reason, and
-  the maintainer can refuse it. The thread files what remains in one batch at the end.
+- **Leaving something out needs a strong reason.** There are two: doing it would widen the issue
+  beyond its goal, or it waits on work outside the issue. Each thing left out is named in the
+  description with its reason, and the maintainer can refuse it. The thread files what remains in
+  one batch once the pull request has merged.
 - **If the design cannot work as written**, the thread stops that part and posts the evidence on
   the issue. The maintainer revises the design through `record-decisions`.
 
@@ -190,8 +192,9 @@ early landing costs a full review, so an issue that needs several was drawn wron
 
 The finishing steps, in order:
 
-1. `prune-tests` on the tests the branch added.
-2. Regenerate the C snapshots, once.
+1. `prune-tests` on the tests the branch added or changed.
+2. Regenerate the C snapshots, once. If another pull request that regenerates them is ready for
+   review or queued, the thread waits for it to merge first.
 3. The checks a merge needs, and the measurements the issue asks for, with the raw data committed
    under `internal/notes/<topic>_<date>/`.
 4. `cross-review`: one review from another model, then a short check on the fixes.
@@ -269,8 +272,18 @@ The skills that form this workflow move into the repository so that both maintai
 ones: `implement`, `plan-next`, `record-decisions`, `cross-review` and `prune-tests`.
 `coordinate` is removed, since `implement` covers what it did. They are written for Scaly: they
 name its checks and its tracker directly, and they name T3 Code's tools directly, since both
-maintainers use it. They name roles ("the reviewer for taste", "the reviewer for bugs"), never
-models, because the maintainers use different ones.
+maintainers use it. They never name models, because the maintainers use different ones.
+
+They name five roles, and each maintainer's private instructions say which model fills each and
+at which effort:
+
+| Role | What it does |
+|---|---|
+| The implementer | Writes the delegated parts of an issue |
+| The reviewer for taste | Reviews design, public interfaces, user-facing behaviour and the shape of generated C |
+| The second reviewer for taste | Reviews what the first one wrote |
+| The reviewer for prose | Reviews documentation |
+| The reviewer for bugs | Hunts bugs and edge cases, and adds a review to every high-risk change |
 
 Each skill still says to use it only when a maintainer or another skill asks for it by name, so
 that an outside contributor's agent never runs into them.
@@ -304,24 +317,39 @@ without choosing.
 8. **Milestones are capabilities, and a release is a list of them.** Rejected: one milestone per
    release, which held 95 issues for 0.2.0 and said nothing about progress on any capability.
    Rejected too: a release field on each issue, since the project works on one release at a time.
-9. **The word "lane" is not used for a group of work.** In Scaly it means a vector lane.
+9. **No new word for a group of work.** "Lane" was tried and dropped. In Scaly it already means a
+   vector lane, and the roadmap uses it for its order of work.
+10. **Status is a field on the issue, and the GitHub Project is retired.** The organization's
+    `workflow status` field takes Backlog, Ready, In progress, In review and Deferred. No value
+    means the issue has not been assessed, and a closed issue is done. Rejected: keeping the
+    Project, whose status had to be kept in step with the issues and whose views neither
+    maintainer's tools need.
 
 ## What adopting this changes
 
-Nothing below has been done. It is the list to agree on.
+**Drafted on this branch**, to be read and corrected before anything else moves:
 
-- **Tracker.** Existing issues are regrouped into issues of the new form, closing the small ones
-  they replace. The section issues of the compiler run (#292 to #298) are closed. The capability
-  milestones are repopulated (sparse IR, loop compiler, control flow, generated solvers) and
-  `scaly 0.2.0` is retired as a milestone. Assignments on issues nobody plans to start soon are
-  cleared. The collaborator's work on #70 continues on its branch through all of this.
-- **`docs/dev/issue_tracking.md`.** It gains the form of an issue and the meaning of assignment,
-  loses its sections on sub-issues and stacks, and loses the table of Project views.
-- **Skills.** The five skills move into `.agents/skills/` and are rewritten as described.
-  `record-decisions` drops its rule that each task fits one pull request. `AGENTS.md` and each
-  maintainer's private instructions are updated to match.
-- **Repository settings.** The default squash commit message becomes "Pull request title".
-- **The October note** is marked as replaced by this one.
+- the five skills in `.agents/skills/`, with `inspect-issues` and `update-issues` changed to read
+  and set the status field
+- `docs/dev/issue_tracking.md`, with the form of an issue, the status field, the meaning of
+  assignment, and without sub-issues or the Project
+- `AGENTS.md`, which points to the workflow and lists the skills
+
+**To do once both maintainers agree**, in this order:
+
+1. **The status field.** It currently has two options that this workflow does not use, Done and
+   Triage. Remove them. Setting the field from the command line has not been tried yet, so try the
+   command in `update-issues` on one issue first.
+2. **The tracker.** Regroup the existing issues into issues of the new form, closing the small
+   ones they replace. Close the section issues of the compiler run (#292 to #298). Repopulate the
+   capability milestones (sparse IR, loop compiler, control flow, generated solvers) and retire
+   `scaly 0.2.0` as a milestone. Clear assignments on issues nobody plans to start soon. The work
+   on #70 continues on its branch through all of this.
+3. **Status on every issue**, as one mechanical pass after the regrouping, then retire the Project.
+4. **Each maintainer's own setup.** Remove or rename personal skills with the same names, and map
+   the five roles to models in private instructions.
+5. **Repository settings.** The default squash commit message becomes "Pull request title".
+6. **The October note** is marked as replaced by this one.
 
 ## Open questions
 
@@ -330,8 +358,9 @@ Nothing below has been done. It is the list to agree on.
    maintainers agree on which issue before it starts.
 2. **Is one to three days the right size?** It is a default with no evidence behind it. The trial
    should give a first number.
-3. **Do status and the other Project fields move onto issues, with the Project retired?** If so,
-   `issue_tracking.md` changes further than listed above.
+3. **Can an outside contributor see the status field?** Its visibility is set to organization
+   members only. If it is hidden from others on a public repository, `issue_tracking.md` should
+   say so.
 4. **What should a view of the tracker show for this workflow?** At least: which issues are
    running, with their draft pull request; who holds what and whether they are working on it now;
    and progress per milestone. Changes to a particular tool belong in that tool's own tracker.
