@@ -13,6 +13,9 @@ from ..affine import affine_index_map
 from .fusion import ALIASES, adds_into_zeros, scatter_targets
 
 Entries = np.ndarray | None
+# A node with more entries is demanded whole, so planning never spends memory in proportion to a large
+# value, such as a broadcast that is only ever evaluated where it is read.
+TRACKED = 1 << 22
 
 
 def plan_demand(roots: Sequence[Expr], in_place: frozenset[int], narrows: Callable[[Expr, np.ndarray], bool]) -> dict[int, np.ndarray]:
@@ -35,7 +38,9 @@ def plan_demand(roots: Sequence[Expr], in_place: frozenset[int], narrows: Callab
       entries = np.flatnonzero(want)
       if 0 < len(entries) < node.size and (node.id in in_place or narrows(node, entries)):
         computed = domains[node.id] = entries
-    for arg, read in zip(node.args, operand_entries(node, computed, placeholder=node.id in in_place), strict=True):
+    tracked = all(arg.size <= TRACKED for arg in node.args)
+    reads = operand_entries(node, computed, placeholder=node.id in in_place) if tracked else (None,) * len(node.args)
+    for arg, read in zip(node.args, reads, strict=True):
       if arg.id in wanted and wanted[arg.id] is None:
         continue
       if read is None or arg.type.pattern is not None or not arg.size:

@@ -300,3 +300,18 @@ def test_a_narrowed_scatter_keeps_the_sign_of_zero() -> None:
   fn = _function("signed_zero", ((3,),), lambda v: sc.gather(_scatter_zero(v, np.array([0, 2, 2]), 4), np.array([0])))
   assert not np.signbit(fn((np.array([-0.0, 1.0, 2.0]),))).any()
   _lowered_checked(fn)
+
+
+@pytest.mark.parametrize(
+  ("shapes", "body"),
+  [
+    (((1 << 24, 1), (1, 1 << 24)), lambda a, b: sc.gather(a + b, np.array([0]))),
+    (((2, 1), (1, 1 << 40)), lambda a, b: sc.gather((a + b).sum(axis=1), np.array([0]))),
+    (((1 << 40,), (1 << 40,)), lambda a, b: sc.gather(sc.concat([a, b]), np.array([0, 1 << 40]))),
+  ],
+  ids=["broadcast", "reduction", "concatenation"],
+)
+def test_a_gather_from_a_huge_value_plans_no_work_in_proportion_to_it(shapes, body) -> None:
+  """Demand of a value too large to track is the whole value, so a gather reading one of its entries
+  lowers without allocating anything of its size."""
+  _lowered(_function("huge", shapes, body))

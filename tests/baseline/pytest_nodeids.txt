@@ -4376,6 +4376,9 @@ tests/passes/lowering/test_calls.py::test_unrolling_preserves_reduction_order_bi
 tests/passes/lowering/test_ctx.py::test_duplicate_rule_rejected_without_partial_registration
 tests/passes/lowering/test_ctx.py::test_non_float64_callee_leaves_are_typed_parameters
 tests/passes/lowering/test_demand.py::test_a_computed_part_of_a_concatenation_stays_whole
+tests/passes/lowering/test_demand.py::test_a_gather_from_a_huge_value_plans_no_work_in_proportion_to_it[broadcast]
+tests/passes/lowering/test_demand.py::test_a_gather_from_a_huge_value_plans_no_work_in_proportion_to_it[concatenation]
+tests/passes/lowering/test_demand.py::test_a_gather_from_a_huge_value_plans_no_work_in_proportion_to_it[reduction]
 tests/passes/lowering/test_demand.py::test_a_gather_reaches_a_stored_product_through[concatenation]
 tests/passes/lowering/test_demand.py::test_a_gather_reaches_a_stored_product_through[mostly-zero constant]
 tests/passes/lowering/test_demand.py::test_a_gather_reaches_a_stored_product_through[scatter]
