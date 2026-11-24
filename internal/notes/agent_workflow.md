@@ -99,7 +99,8 @@ A bug or a small task skips step 1. It is one issue, one thread and one pull req
   public record: no pull request, no issue, no tracker update.
 
 There is no level between milestone and issue. An issue is split only when a need appears:
-someone has to wait for a part of it, or wants to take a part over. That part then becomes its own
+someone has to wait for a part of it, someone wants to take a part over, or the work has grown
+well beyond its planned size and a maintainer decides to cut it. That part then becomes its own
 issue, and everyone can see why it exists.
 
 ## Writing an issue

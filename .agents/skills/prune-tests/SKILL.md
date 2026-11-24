@@ -28,7 +28,7 @@ its examples must be kept.
    its report. Do not restate its rules.
 3. **Inspect** its report and diff. Reject edits to production code, deletions outside the scope,
    kills without a reason line, twins whose named survivor does not exist or does not catch the
-   same breakage, and deletions of tests on the leash. For a doubtful twin kill, break the behavior
+   same breakage, and deletions of tests that its own rules keep or that the issue's Pin items need. For a doubtful twin kill, break the behavior
    on purpose, run the survivors, and restore the code after. Delete fixtures, helpers and
    snapshots it left orphaned. If the report is rejected, revert it and rerun once with the failure
    named. If the second report is also rejected, report it as open and stop.

@@ -40,11 +40,11 @@ differentiation and code generation.
         a finding.
      2. Is each choice under *Decisions* sound, and does any contradict the design?
      3. Should any item under *Left out* have been done, because it serves the issue's goal?
-
-     Both lists are in `PLAN.md`. Put them in the brief when the change has no `PLAN.md`.
      4. Does every new test check an example or a real bug? Name tests that only show that code
         exists.
      5. When the snapshots were regenerated, is every changed line explained by the change?
+
+     *Decisions* and *Left out* are in `PLAN.md`. Put them in the brief when the change has none.
    - the standards: `AGENTS.md`, `docs/dev/conventions.md` and `docs/dev/codebase.md`, and
      `.agents/skills/write-docs/brief.md` for prose
    - for a mechanical migration, whether the change serves each caller and does not merely

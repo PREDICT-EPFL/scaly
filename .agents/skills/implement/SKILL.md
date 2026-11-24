@@ -38,9 +38,10 @@ other than the maintainer who started you.
    Confirm with the maintainer who started you that the earlier thread has stopped, then resume:
    check out its branch and read `PLAN.md` and the last comment on the issue. `PLAN.md` says
    which step the work is at and lists the subagents that were running. Read each one's thread
-   and branch, and merge or discard its work before giving its files to anyone else. When
-   `PLAN.md` is already deleted, the work is at step 8 and the description holds its state. Do not
-   open a second pull request.
+   and branch, and merge or discard its work before giving its files to anyone else. Without a
+   `PLAN.md`, the pull request tells you where the work is: one that is ready for review is at
+   step 8, and a draft belongs to a small issue that never had a plan, whose commits and
+   description show what is done. Do not open a second pull request.
 4. Otherwise, stop and report if any of these holds:
    - a blocker is open. An issue depends on what is on main, never on another branch.
    - the issue is assigned to someone else
@@ -76,8 +77,8 @@ subagent's thread, its branch and when it started. It holds *Decisions* and *Lef
 Steps live here and never in the issue or the pull request.
 
 A small issue that you will write alone in a few commits needs no `PLAN.md`. Its decisions and
-left-out items go straight into the description, and its first commit is the failing test from
-step 4.
+left-out items go straight into the description, and its first commit is its first change,
+normally the failing test from step 4.
 
 Commit, push the branch and open a draft pull request at once with `pull_request_create`. Its
 description starts as the issue's examples in a checklist and `Closes #N`. Link it with
@@ -149,7 +150,7 @@ and delegate the remainder as a new part with a new brief.
 
 You may edit code throughout: conflicts, CI failures and review remarks are yours. A fix that
 changes logic in the IR, differentiation or code generation after the review gets a delta check,
-the short check on a fix alone that `cross-review` defines, from the reviewer who read the change.
+the short check on a fix alone that `cross-review` defines, from the main reviewer.
 
 What you or a subagent finds on the way goes one of two ways:
 
@@ -189,7 +190,8 @@ regenerates them. No other failure is acceptable there.
 
    Commit raw measurements, scripts and the snapshot audit under `internal/notes/<topic>_<date>/`.
 5. **Review.** Commit and push everything first: a reviewer reads the committed diff and sees
-   nothing else. Then run `cross-review`, giving it the issue, `PLAN.md` and the diff.
+   nothing else. Then run `cross-review`, giving it the issue, the diff, and `PLAN.md` or, without
+   one, your decisions and left-out items.
 6. **Hand over.** Check once more that no other pull request that regenerates the snapshots has
    become ready in the meantime. Delete `PLAN.md` in the last commit, write the description below,
    mark the pull request ready and set the issue's status to In review.
@@ -238,8 +240,8 @@ turns.
 - **A decision is needed:** ask with your question tool, with a recommendation. If you are blocked
   without one, stop your watches and end with **Needs you** and the exact action.
 - **It merges:** file each remaining *Left out* item as an issue in one batch, with `update-issues`
-  and the label `source:agent`, then unwatch. Write each with its goal and whatever example or
-  reproduction you have.
+  and the label `source:agent`, each with its goal and whatever example or reproduction you have.
+  Then unwatch.
 
 Never merge or queue. The maintainer does both.
 
@@ -251,8 +253,8 @@ When the maintainer says that other work needs a part of this issue now:
 2. Make a second branch from `origin/main` that holds only that part's commits and tests, and
    open a pull request for it that says `Part of #N`. The part must stand on its own on main. The
    issue's own draft stays open with `PLAN.md` in it.
-3. Run steps 6 and 7 on the second branch. Leave the issue's status at In progress, and say in a
-   comment on the issue which part is in review.
+3. Run steps 6 and 7 on the second branch, for the examples of that part only. Leave the issue's
+   status at In progress, and say in a comment on the issue which part is in review.
 4. After it merges, fetch, rebase the issue's branch onto main and continue. *Left out* items are
    filed only when the issue's last pull request has merged.
 
@@ -273,7 +275,8 @@ request.
 
 ## Running out of time or budget
 
-Update `PLAN.md` with what is done, what remains and the state of every running subagent, commit
+Update `PLAN.md`, or the draft's description when there is no plan, with what is done, what
+remains and the state of every running subagent, commit
 and push, and post a short comment on the issue: the branch, what was run with its result, and
 what blocks. Leave the draft open. The next thread starts from the comment, the branch and
 `PLAN.md`.
