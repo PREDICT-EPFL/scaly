@@ -68,6 +68,7 @@ Then:
 | B collides with running work or with A | One after the other, or propose merging them into one issue when they are the same result |
 | Both regenerate the C snapshots | They may run together. The second marks its pull request ready only after the first has merged. Say which goes first. |
 | Same file, different functions | Together. The merge queue tests each on top of the ones ahead of it. |
+| Changes that `AGENTS.md` groups (the plugins' `hatch_build.py`, renames of generated C symbols), performance changes measured against one baseline, renames of public names | One issue, or one right after the other |
 | No overlap | Together |
 
 Each issue ends in a review by a maintainer, and several large reviews on one day are worse than
@@ -88,9 +89,9 @@ have not been assessed. For those only:
 Send one message:
 
 1. the tracker changes: statuses, issues to close with the evidence, grouped issues to create,
-   edits to issues whose ground moved
-2. the issues to start now, each with its evidence that nothing collides, the machine it needs and
-   who reviews it
+   edits to issues that the code has overtaken
+2. the issues to start now, those in the current release's milestones first, each with its
+   evidence that nothing collides, the machine it needs and who reviews it
 3. the order in which they land, with the snapshot order stated
 4. every open question, each with a recommended answer
 
@@ -100,8 +101,8 @@ Then stop and wait for the maintainer.
 
 Apply the approved tracker changes through `update-issues`. Then write the message that starts
 each issue: `implement` and the issue, plus only what the issue does not say, such as "keep the
-pull request in draft until #N merges". Name the role that should run it. The maintainer chooses
-the model and the machine and starts each thread.
+pull request in draft until #N merges". The maintainer chooses the model and the machine and
+starts each thread.
 
 Forbidden: editing code, merging, launching threads, changing an issue's examples beyond what
 step 2 showed, and closing an issue without the check from step 2.

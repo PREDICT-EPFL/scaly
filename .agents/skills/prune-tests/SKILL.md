@@ -17,7 +17,7 @@ Prune the whole suite only when the caller asks for it.
 
 When `implement` calls this at the end of an issue, the scope is the tests the branch added or
 changed, and the issue comes along as context: the last test that asserts a **Pin** item of one of
-its examples is on the leash.
+its examples must be kept.
 
 ## Steps
 

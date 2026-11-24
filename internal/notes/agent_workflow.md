@@ -69,8 +69,9 @@ gets one review from another model and a short check on the fixes.
 ## The workflow in order
 
 1. **A design discussion** between a maintainer and an agent ends with `record-decisions`. It
-   writes the decisions into the design document and writes one issue per coherent result. Each
-   issue states its goal and a list of examples that must hold at the end.
+   presents one checklist: the decisions, and one issue per coherent result, each with its goal
+   and the examples that must hold at the end. The maintainer approves the checklist, and only
+   then are the design document and the issues written.
 2. **`plan-next` proposes what to start.** It reads what is running, what is assigned and what
    would collide, and proposes an order. A maintainer approves.
 3. **A maintainer starts one thread on the issue** with `implement`. The thread opens a draft pull
@@ -114,8 +115,8 @@ An example pairs what goes in with what should come out: the Python a user write
 compiler should generate for it, or the error message, or the interface. Under it are two short
 lists. **Pin** names what the review checks. **Leave free** names what the implementer decides.
 This form was first used on 2026-11-19 for the linear-algebra and generated-solver issues, where
-the maintainer agreed each target before any code was written. #496 carries this one, with
-names that are illustrative. The two lists under it are from its draft:
+the maintainer agreed each target before any code was written. This example is from #496. Its
+names are illustrative, and the two lists under it are from its draft:
 
 ```python
 # lower triangle of an arrow matrix: (0,0) (1,1) (2,0) (2,1) (2,2)
@@ -174,10 +175,11 @@ one covers are closed as merged into it, with their content carried in its examp
   the files it owns, then merges the result into its branch and runs the suite. Whether to delegate
   is the thread's judgement. A small issue is written by the thread itself.
 - **The thread may edit code.** It resolves conflicts, fixes CI failures and applies review
-  remarks itself. A fix that changes logic in the IR, differentiation or code generation goes to a
-  subagent and gets a check on the fix.
+  remarks itself. When a fix made after the review changes logic in the intermediate
+  representation (IR), differentiation or code generation, the reviewer checks that fix alone.
 - **Work that serves the issue's goal is done in the issue.** It is added to `PLAN.md`, not filed
-  as a new issue.
+  as a new issue. The thread writes an example for it and marks it as added in the description,
+  where the maintainer may refuse it.
 - **Leaving something out needs a strong reason.** There are two: doing it would widen the issue
   beyond its goal, or it waits on work outside the issue. Each thing left out is named in the
   description with its reason, and the maintainer can refuse it. The thread files what remains in
@@ -192,13 +194,14 @@ early landing costs a full review, so an issue that needs several was drawn wron
 
 The finishing steps, in order:
 
-1. `prune-tests` on the tests the branch added or changed.
-2. Regenerate the C snapshots, once. If another pull request that regenerates them is ready for
+1. Rebase onto main.
+2. `prune-tests` on the tests the branch added or changed.
+3. Regenerate the C snapshots, once. If another pull request that regenerates them is ready for
    review or queued, the thread waits for it to merge first.
-3. The checks a merge needs, and the measurements the issue asks for, with the raw data committed
+4. The checks a merge needs, and the measurements the issue asks for, with the raw data committed
    under `internal/notes/<topic>_<date>/`.
-4. `cross-review`: one review from another model, then a short check on the fixes.
-5. The description, as the next section says.
+5. `cross-review`: one review from another model, then a short check on the fixes.
+6. The description, as the next section says.
 
 ## Reviewing the pull request
 
@@ -213,8 +216,15 @@ The description is what the maintainer reads, so it carries the review. It holds
 
 The maintainer reads the examples, the decisions and the test names, and relies on the other
 model's review for the rest of the lines. Reading less per line is the accepted cost of this
-workflow. It is acceptable because reviewing every small pull request did not stop weak tests,
-and because the examples were agreed before the code existed.
+workflow. It is acceptable for three reasons. Reviewing every small pull request did not stop
+weak tests. The examples were agreed before the code existed. And correctness in the IR,
+differentiation and code generation does not rest on a maintainer reading lines: each example is
+a differential test against NumPy or an unrolled reference, and every such change gets a second
+review that only hunts bugs.
+
+The maintainer who agreed the examples reviews the pull request. When the other one reviews, they
+read and agree the examples before the work starts. Either may read the draft pull request and
+`PLAN.md` at any time and object early.
 
 Main takes squash merges, and GitHub's default commit message for them is the pull request's
 title and description. With the review written in the description, that setting should become

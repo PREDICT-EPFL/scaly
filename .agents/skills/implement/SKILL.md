@@ -34,9 +34,13 @@ other than the maintainer who started you.
    short name for the result, without the issue number.
 2. Check the checkout. `git rev-parse --git-dir` and `git rev-parse --git-common-dir` differ in a
    linked worktree. In the main checkout, stop and ask for a worktree.
-3. If an earlier thread already started this issue, resume it: check out its branch, read
-   `PLAN.md` and the last comment on the issue, and continue from step 5. Its draft pull request
-   is yours now.
+3. If the issue already has a branch and a draft pull request, an earlier thread started it.
+   Confirm with the maintainer who started you that the earlier thread has stopped, then resume:
+   check out its branch and read `PLAN.md` and the last comment on the issue. `PLAN.md` says
+   which step the work is at and lists the subagents that were running. Read each one's thread
+   and branch, and merge or discard its work before giving its files to anyone else. When
+   `PLAN.md` is already deleted, the work is at step 8 and the description holds its state. Do not
+   open a second pull request.
 4. Otherwise, stop and report if any of these holds:
    - a blocker is open. An issue depends on what is on main, never on another branch.
    - the issue is assigned to someone else
@@ -58,7 +62,8 @@ The decided design and the alternatives it rejected are fixed. Two cases come up
 
 - **The design is silent.** Decide it yourself, prefer the choice that is easy to undo, and record
   it under *Decisions* in `PLAN.md` with the alternative. Ask the maintainer only when the choice
-  changes a public interface or contradicts the design.
+  changes a public interface, changes behaviour the documentation states, or contradicts the
+  design.
 - **The design cannot work as written.** Stop that part, post the evidence on the issue, and
   continue with the parts that do not depend on it. The maintainer revises the design through
   `record-decisions`.
@@ -66,11 +71,13 @@ The decided design and the alternatives it rejected are fixed. Two cases come up
 ## 3. Plan, and open the draft
 
 Write `PLAN.md` at the root of the worktree. It lists the parts of the work, and for each part the
-examples it serves, the files it owns and its state. It also holds *Decisions* and *Left out*.
+examples it serves, the files it owns and its state. For a delegated part it also records the
+subagent's thread, its branch and when it started. It holds *Decisions* and *Left out* too.
 Steps live here and never in the issue or the pull request.
 
 A small issue that you will write alone in a few commits needs no `PLAN.md`. Its decisions and
-left-out items go straight into the description.
+left-out items go straight into the description, and its first commit is the failing test from
+step 4.
 
 Commit, push the branch and open a draft pull request at once with `pull_request_create`. Its
 description starts as the issue's examples in a checklist and `Closes #N`. Link it with
@@ -89,6 +96,9 @@ generation, and a check on the lowered program for a statement about loops, buff
 - Each item under **Pin** becomes an assertion. Nothing under **Leave free** is asserted.
 - Run each test and see it fail on main for the reason the issue gives. Once the implementation
   passes it, perturb the implementation and see the test fail again.
+- An example that states behaviour main already has, which the change must keep, needs no new
+  test when an existing one asserts it. Name that test. An example on a documentation page is
+  checked by running it.
 - Add no other test, with two exceptions: a regression test for a bug found on the way, and a
   test a reviewer asks for with a reason. A test that only shows that new code exists is not
   written.
@@ -125,20 +135,27 @@ Follow the task's `next` and wait for its completion. Do not poll. Answer a suba
 yourself, with `t3_pending_request`, when the issue or `PLAN.md` settles it. Pass a permission
 request on to the maintainer. Then, for each part:
 
-1. Read the diff before merging it. Check that it did not weaken a test.
+1. Read the diff before merging it. If it weakened an assertion, restore the assertion first.
 2. Merge its branch into yours and resolve conflicts yourself.
 3. Run the tests of the parts merged so far, and push.
+
+Parts that own different files can still disagree, for instance on a layout, a signature or a
+generated symbol. State such a shared contract in both briefs, and after merging both parts run an
+example that crosses it. When a design assumption fails, stop the subagents whose parts depend on
+it with `task_cancel`.
 
 Fix small defects in a returned part yourself. If a part misses its examples, keep what is usable
 and delegate the remainder as a new part with a new brief.
 
 You may edit code throughout: conflicts, CI failures and review remarks are yours. A fix that
-changes logic in the IR, differentiation or code generation after the review gets a delta check
-from the main reviewer, on that fix alone.
+changes logic in the IR, differentiation or code generation after the review gets a delta check,
+the short check on a fix alone that `cross-review` defines, from the reviewer who read the change.
 
 What you or a subagent finds on the way goes one of two ways:
 
-- **It serves the issue's goal:** add it to `PLAN.md` and do it.
+- **It serves the issue's goal:** add it to `PLAN.md` and do it. The goal bounds the issue, and
+  the examples illustrate it. Write an example for the new work in the issue's form, test it as
+  in step 4, and mark it "added by the thread" in the description. The maintainer may refuse it.
 - **It does not:** add it to *Left out* with the reason. There are two good reasons: doing it
   would widen the issue beyond its goal, or it waits on work outside the issue, which you name.
   "It was not listed", "it is hard" and "it can come later" are not reasons.
@@ -151,10 +168,11 @@ regenerates them. No other failure is acceptable there.
 
 ## 6. Finish
 
-1. **Catch up with main.** Rebase onto `origin/main`, as you also do earlier whenever the draft
-   shows a conflict. If the branch changes generated C and another pull request that regenerates
-   the snapshots is ready for review or queued, keep yours in draft until that one merges, then
-   rebase again.
+1. **Catch up with main.** Run `git fetch`, rebase onto `origin/main` and push with
+   `--force-with-lease`, as you also do earlier whenever the draft shows a conflict. If the branch
+   changes generated C, keep your pull request in draft while another one that regenerates the
+   snapshots is ready for review or queued, or is the one your start message says lands first.
+   Once that one has merged, fetch and rebase again.
 2. **Prune.** Run `prune-tests` on the tests the branch added or changed, with the issue as
    context.
 3. **Regenerate the C snapshots, once**, and regenerate the node-ID baseline with the recipe in
@@ -170,9 +188,11 @@ regenerates them. No other failure is acceptable there.
    | Tooling or CI | The changed command run locally where possible, and the pull request's own CI run |
 
    Commit raw measurements, scripts and the snapshot audit under `internal/notes/<topic>_<date>/`.
-5. **Review.** Run `cross-review`, giving it the issue, `PLAN.md` and the diff.
-6. **Hand over.** Delete `PLAN.md` in the last commit, write the description below, mark the pull
-   request ready and set the issue's status to In review.
+5. **Review.** Commit and push everything first: a reviewer reads the committed diff and sees
+   nothing else. Then run `cross-review`, giving it the issue, `PLAN.md` and the diff.
+6. **Hand over.** Check once more that no other pull request that regenerates the snapshots has
+   become ready in the meantime. Delete `PLAN.md` in the last commit, write the description below,
+   mark the pull request ready and set the issue's status to In review.
 
 ## 7. The description
 
@@ -181,8 +201,9 @@ order:
 
 1. **What changed and why**, in a few sentences a reader can follow without opening the issue.
 2. **Examples.** Each example from the issue with the same input, what main does and what the
-   branch does, using real output, and the name of its test. Say so plainly when a Pin item is not
-   met.
+   branch does, using real output, and the name of its test. A pull request with an unmet Pin
+   item stays in draft: meet it, or ask the maintainer to change the example. For an internal
+   change, show what happens inside the compiler even when the output stays the same.
 3. **Decisions.** Each choice you made where the design was silent, with the alternative.
    "None" when there were none.
 4. **Left out.** Each item with its reason. The maintainer may refuse any of them. "None" when
@@ -205,24 +226,35 @@ turns.
 
 - **CI fails:** fix and push. A failure the project lists as a known flake gets one rerun with
   `ci_rerun`.
+- **The code changes after the review**, through a fix or a rebase: rerun the checks it affects.
+  If generated C could change, regenerate the snapshots and compare the diff with the reviewed
+  one. Any hunk that differs gets a delta check.
 - **The maintainer reviews:** read the summary and the unresolved threads with
   `pull_request_read`. Treat each comment as a rule: a remark on one example applies to every
   example and every page the pull request touched. Fix, run the checks for what changed, push, and
   reply to each comment with `pull_request_respond`. Resolve the comments applied as written and
-  leave open the ones you interpreted or dispute. A refused *Left out* item is work to do now.
+  leave open the ones you interpreted or dispute. A refused *Left out* item is work to do now,
+  and the description and its evidence are updated when it is done.
 - **A decision is needed:** ask with your question tool, with a recommendation. If you are blocked
   without one, stop your watches and end with **Needs you** and the exact action.
 - **It merges:** file each remaining *Left out* item as an issue in one batch, with `update-issues`
-  and the label `source:agent`, then unwatch.
+  and the label `source:agent`, then unwatch. Write each with its goal and whatever example or
+  reproduction you have.
 
 Never merge or queue. The maintainer does both.
 
 ## Landing a part early
 
-When the maintainer says that other work needs a part of this issue, finish that part first, run
-step 6 on what exists and open a pull request that says `Part of #N`. The part must stand on its
-own on main and pass every check. After it merges, rebase and continue. The issue stays open and
-its status returns to In progress.
+When the maintainer says that other work needs a part of this issue now:
+
+1. Finish that part first, on your branch as usual.
+2. Make a second branch from `origin/main` that holds only that part's commits and tests, and
+   open a pull request for it that says `Part of #N`. The part must stand on its own on main. The
+   issue's own draft stays open with `PLAN.md` in it.
+3. Run steps 6 and 7 on the second branch. Leave the issue's status at In progress, and say in a
+   comment on the issue which part is in review.
+4. After it merges, fetch, rebase the issue's branch onto main and continue. *Left out* items are
+   filed only when the issue's last pull request has merged.
 
 ## Without an issue
 
@@ -235,14 +267,16 @@ The pull request is the record. Before writing code:
    snapshots, is unlikely to fit one thread, or reaches beyond what was described. Check again
    whenever the work grows.
 
-The steps above then apply, except that nothing reads or updates an issue and the description
-names the pull request this change follows up, if any.
+The steps above then apply, except that nothing reads or updates an issue, the description names
+the pull request this change follows up, if any, and a handoff comment goes on the draft pull
+request.
 
 ## Running out of time or budget
 
-Update `PLAN.md` with what is done and what remains, commit and push, and post a short comment on
-the issue: the branch, what was run with its result, and what blocks. Leave the draft open. The
-next thread starts from the comment, the branch and `PLAN.md`.
+Update `PLAN.md` with what is done, what remains and the state of every running subagent, commit
+and push, and post a short comment on the issue: the branch, what was run with its result, and
+what blocks. Leave the draft open. The next thread starts from the comment, the branch and
+`PLAN.md`.
 
 ## Report
 

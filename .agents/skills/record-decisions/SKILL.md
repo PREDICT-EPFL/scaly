@@ -20,7 +20,7 @@ issues the maintainer approved in the checklist. In the main checkout, ask befor
 
 1. **Gather.** Read the whole discussion. Each quoted passage with a comment in the maintainer's
    messages is a separate instruction. List every one, including the small ones.
-2. **Check the ground.** For each result the discussion wants:
+2. **Check the code and the tracker.** For each result the discussion wants:
    - read the code it will change, and run each example's input on main, so that "what happens
      today" in the issue is observed and not guessed
    - search the open issues for ones it covers, overlaps or depends on
@@ -43,9 +43,9 @@ issues the maintainer approved in the checklist. In the main checkout, ask befor
    State the rejected alternatives and the reason in a sentence or two, so that an implementer
    does not reopen them.
 6. **Write the issues.** Each one:
-   - describes one coherent result, sized by default for one to three days of one thread. Do not
-     cut a result into steps, and do not plan sub-issues. Two results that different people could
-     use separately are two issues.
+   - describes one coherent result, sized by default for one to three days of one thread. A
+     result is coherent when it stands on its own on main and can be reviewed against its examples
+     as a whole. Do not cut a result into steps, and do not plan sub-issues.
    - follows the form in `issue_tracking.md`: goal, examples, out of scope, design section
    - carries a milestone, and a blocked-by relation for each prerequisite that is not on main
    - gets the status Ready when nothing blocks it, otherwise Backlog

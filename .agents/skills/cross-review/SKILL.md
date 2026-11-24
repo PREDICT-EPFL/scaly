@@ -16,7 +16,8 @@ differentiation and code generation.
 ## Review a change
 
 1. **Run the checks first.** `wt hook pre-merge --yes` passes before a reviewer is asked. A review
-   is never spent on lint, formatting or types.
+   is never spent on lint, formatting or types. Commit and push everything, and note the head
+   commit: the reviewer reads the committed diff only.
 2. **Choose the main reviewer by role.** It is never the model that wrote most of the change:
    - anything that needs taste (design, public interface, user-facing behaviour, the shape of
      generated C): the reviewer for taste, or the second one when the first wrote the change
@@ -37,8 +38,10 @@ differentiation and code generation.
    - the questions to answer:
      1. Does the code meet every Pin item, and does a test assert it? Nothing under Leave free is
         a finding.
-     2. Is each choice under *Decisions* in `PLAN.md` sound, and does any contradict the design?
+     2. Is each choice under *Decisions* sound, and does any contradict the design?
      3. Should any item under *Left out* have been done, because it serves the issue's goal?
+
+     Both lists are in `PLAN.md`. Put them in the brief when the change has no `PLAN.md`.
      4. Does every new test check an example or a real bug? Name tests that only show that code
         exists.
      5. When the snapshots were regenerated, is every changed line explained by the change?
@@ -88,4 +91,6 @@ Reviewed by <model> (<effort>) at <commit>; fixes confirmed at <commit>. Open: <
 
 The findings and how each was handled go in the final report to whoever started the work. A
 reviewer that failed, timed out, was cut short or hit a usage limit is reported as missing on that
-line and in the report, never as a pass.
+line and in the report, never as a pass. Retry a missing review once. If it is still missing, the
+pull request may be marked ready only with that stated first under *Review* in its description,
+and the maintainer decides whether to merge without it.

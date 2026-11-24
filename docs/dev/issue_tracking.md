@@ -103,7 +103,7 @@ Assignment says who holds an issue, and reads together with its status.
 
 | On the issue | Meaning | To take it |
 | --- | --- | --- |
-| Unassigned | Free | Take it, and assign yourself. |
+| Unassigned | Free | Take it: comment on the issue, and assign yourself if you can. |
 | Assigned, Ready or Backlog | The assignee wants to do it soon. | Ask them. |
 | Assigned, In progress | The assignee is working on it now. | Ask them, and expect a no. |
 
