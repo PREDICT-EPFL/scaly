@@ -107,7 +107,7 @@ NumPy or SciPy without raising an error. Two of the arguments have no default to
 `scipy.linalg.ldl` pivots and returns `(lu, d, perm)` with `d` a block diagonal matrix, while
 `linalg.ldl` returns `(L, d, status)` with `d` the vector of pivots. All of them take float32 or
 float64 matrices, as [below](#float32-matrices) explains, and raise `TypeError` for integer ones.
-`lu_factor`, `solve_triangular` and `solve(..., assume="gen")` take only dense matrices.
+`lu_factor` and `solve(..., assume="gen")` take only dense matrices.
 
 ## Only the lower triangle is read
 
@@ -215,7 +215,7 @@ print(status)
 ## Sparse matrices
 
 A matrix with a [stored pattern](sparse_matrices.md) passes through the same functions:
-`cholesky`, `ldl`, and `solve` with `"pos"` or `"sym"`. The factorization then computes only the
+`cholesky`, `ldl`, `solve_triangular`, and `solve` with `"pos"` or `"sym"`. The factorization then computes only the
 entries of the factor that the pattern allows, and its work grows with those entries rather than
 with the cube of the order. The arrow matrix below couples its first unknown to every other one,
 as a constraint couples the variables of a quadratic program:
@@ -272,6 +272,31 @@ rounding. The factors do. `L` is a sparse matrix of \(P K P^T\), in the reordere
 pattern holds the entries the factorization may fill and the diagonal. `d` is a dense vector in the
 same numbering, and so is the position of the first unusable pivot in the status. `ordering` with a
 dense matrix raises `TypeError`, and a sparse matrix takes no stack over leading axes.
+
+To solve with the factors, as an interior-point method solves twice with one factorization, map
+the right-hand side into the reordered numbering and back. `permutation(K)` returns the ordering
+that `ldl(K)` applies, as a NumPy array `perm` with \((P K P^T)_{ij} = K_{\mathrm{perm}[i], \mathrm{perm}[j]}\),
+computed from the pattern when it is called. `solve_triangular` takes the sparse `L` and reads only
+its stored entries:
+
+```python
+perm = linalg.permutation(K_value)
+print(perm)
+# [1 2 3 0 4]
+
+@sc.function(sc.arg("K", K_type), sc.arg("b", 5), outputs=sc.arg("x", 5))
+def arrow_steps(K: sc.Expr, b: sc.Expr) -> sc.Expr:
+    L, d, status = linalg.ldl(K)
+    y = linalg.solve_triangular(L, sc.gather(b, sc.const(perm)), lower=True, unit_diagonal=True)
+    y = linalg.solve_triangular(L, y / d, lower=True, trans=True, unit_diagonal=True)
+    return sc.gather(y, sc.const(np.argsort(perm)))
+
+print(arrow_steps(K_value, np.ones(5)))
+# [0.   0.25 0.25 0.25 0.25]
+```
+
+Each call of a library function with the same types calls one function of the generated C, so
+the solves of several right-hand sides share their code.
 
 The derivatives of a sparse solve are those of a dense one, with \(\bar K\) on the entries the
 factorization reads and zero on the mirrored entries it does not. Forward mode solves

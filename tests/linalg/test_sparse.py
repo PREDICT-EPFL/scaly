@@ -425,3 +425,107 @@ def test_a_subnormal_pivot_scales_its_column_without_overflow() -> None:
   x, status = solve(sparse.csc_array(a), 1e-310 * np.ones(2))
   assert status == 0
   np.testing.assert_allclose(x, [1 / 3, 1 / 3], rtol=1e-12)
+
+
+TRIANGULAR_CASES = [(lower, trans, unit) for lower in (True, False) for trans in (False, True) for unit in (False, True)]
+
+
+def _triangular_matrix(rng: np.random.Generator, n: int = 9) -> np.ndarray:
+  """Entries in both triangles, so that a solve must read only the one it names, and a dominant diagonal."""
+  m = np.where(rng.random((n, n)) < 0.4, rng.normal(size=(n, n)), 0.0)
+  m[np.diag_indices(n)] = 3.0 + rng.random(n)
+  return m
+
+
+@pytest.mark.parametrize(("lower", "trans", "unit"), TRIANGULAR_CASES)
+def test_sparse_triangular_solves_match_scipy(lower: bool, trans: bool, unit: bool) -> None:
+  rng = np.random.default_rng(21)
+  m = _triangular_matrix(rng)
+  n = m.shape[0]
+
+  @sc.function(sc.arg("T", _sparse_type(m)), sc.arg("b", (n, 2)), outputs=sc.group(sc.arg("X", (n, 2)), sc.arg("x", n)))
+  def run(T, b):
+    solve = lambda rhs: linalg.solve_triangular(T, rhs, lower=lower, trans=trans, unit_diagonal=unit)  # noqa: E731
+    return solve(b), solve(b[:, 0])
+
+  b = rng.normal(size=(n, 2))
+  X, x = run(sparse.csc_array(m), b)
+  expected = scipy.linalg.solve_triangular(m, b, lower=lower, trans=int(trans), unit_diagonal=unit)
+  np.testing.assert_allclose(X, expected, rtol=1e-13, atol=1e-14)
+  np.testing.assert_allclose(x, expected[:, 0], rtol=1e-13, atol=1e-14)
+
+
+@pytest.mark.parametrize(("lower", "trans", "unit"), TRIANGULAR_CASES)
+def test_sparse_triangular_derivatives_match_the_dense_solve(lower: bool, trans: bool, unit: bool) -> None:
+  """The dense solve reads the same triangle, so with the same stored values it is the same function."""
+  rng = np.random.default_rng(22)
+  m = _triangular_matrix(rng, 7)
+  pattern = _pattern(m)
+  n, nnz = m.shape[0], pattern.nnz
+
+  def cost_function(dense: bool):
+    @sc.function(sc.arg("p", nnz + n), outputs=sc.arg("c", ()))
+    def cost(p):
+      T = sc.pack(p[:nnz], pattern)
+      return _cost(linalg.solve_triangular(T.to_dense() if dense else T, p[nnz:], lower=lower, trans=trans, unit_diagonal=unit))
+
+    return cost
+
+  p = np.concatenate([m[np.asarray(pattern.rows), np.asarray(pattern.cols)], rng.normal(size=n)])
+  sparse_cost, dense_cost = cost_function(False), cost_function(True)
+  g = sc.gradient(sparse_cost, "c", "p")(p)
+  np.testing.assert_allclose(g, sc.gradient(dense_cost, "c", "p")(p), rtol=1e-12, atol=1e-13)
+  np.testing.assert_allclose(np.asarray(sc.jacobian(sparse_cost, "c", "p")(p)).reshape(-1), g, rtol=1e-12, atol=1e-13)
+  np.testing.assert_allclose(g, _central(sparse_cost, p, 1e-6), rtol=1e-6, atol=1e-8)
+
+
+@pytest.mark.parametrize("ordering", ORDERINGS)
+def test_ldl_factors_solve_through_the_permutation(ordering: Ordering) -> None:
+  """``solve`` split into its steps: the factor of ``P K P^T``, ``b[perm]``, two triangular solves and the pivots, and back."""
+  rng = np.random.default_rng(23)
+  a = _values(PATTERNS["random"](), rng, negative=3)
+  n = a.shape[0]
+  perm = linalg.permutation(_pattern(a), ordering=ordering)
+  assert not perm.flags.writeable
+  np.testing.assert_array_equal(perm, symbolic.ldl(_pattern(a), ordering).perm)
+
+  @sc.function(sc.arg("K", _sparse_type(a)), sc.arg("b", n), outputs=sc.group(sc.arg("x", n), sc.arg("x_solve", n)))
+  def run(K, b):
+    L, d, _ = linalg.ldl(K, ordering=ordering)
+    y = linalg.solve_triangular(L, sc.gather(b, sc.const(perm)), lower=True, unit_diagonal=True)
+    y = linalg.solve_triangular(L, y / d, lower=True, trans=True, unit_diagonal=True)
+    return sc.gather(y, sc.const(np.argsort(perm))), linalg.solve(K, b, assume="sym", ordering=ordering)[0]
+
+  x, x_solve = run(sparse.csc_array(a), rng.normal(size=n))
+  np.testing.assert_allclose(x, x_solve, rtol=1e-13, atol=1e-14)
+
+
+def test_permutation_takes_a_sparse_square_matrix() -> None:
+  a = _values(PATTERNS["banded"](), np.random.default_rng(24))
+  np.testing.assert_array_equal(linalg.permutation(sparse.csc_array(a)), linalg.permutation(_pattern(a), ordering="amd"))
+  with pytest.raises(TypeError, match="sparse matrix"):
+    linalg.permutation(sc.const(a))
+  with pytest.raises(ValueError, match="ordering must be one of"):
+    linalg.permutation(_pattern(a), ordering=cast(Any, "metis"))
+
+
+def test_triangular_solves_with_one_factor_share_one_kernel() -> None:
+  """A factor read by several solves, as an interior-point step's predictor and corrector read theirs, compiles each solve once."""
+  a = _values(PATTERNS["random"](), np.random.default_rng(25))
+  n = a.shape[0]
+
+  @sc.function(sc.arg("K", _sparse_type(a)), sc.arg("b", n), outputs=sc.arg("x", n))
+  def run(K, b):
+    L, d, _ = linalg.ldl(K)
+    for _ in range(3):
+      b = linalg.solve_triangular(L, linalg.solve_triangular(L, b, lower=True, unit_diagonal=True) / d, lower=True, trans=True, unit_diagonal=True)
+    return b
+
+  source = render_c_source(run)
+  # Each substitution is defined once, beside at most a wrapper that forwards to it, and every
+  # solve calls it.
+  forwards = re.compile(r"static inline void \w+\([^)]*\) \{\n  \w+_raw\([^)]*\);\n\}")
+  for name in ("sparse_solve_triangular_lnu", "sparse_solve_triangular_ltu"):
+    bodies = re.findall(rf"^static inline void {name}\w*_raw\(.*?^}}$", source, re.M | re.S)
+    assert len([body for body in bodies if not forwards.fullmatch(body)]) == 1, name
+    assert len(re.findall(rf"^  {name}\w*_raw\(", source, re.M)) >= 3, name

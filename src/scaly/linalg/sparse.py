@@ -16,7 +16,7 @@ from ..function.tree import arg, group
 from ..ir.expr import Expr, concat, equal, gather, pack, scatter, values, where
 from ..ir.types import CanonicalPattern, TensorType, dtypes
 from . import symbolic
-from .dense import _eps, _like, _status, _unusable
+from .dense import _eps, _like, _name, _status, _unusable
 from .symbolic import LDLSymbolic, Ordering
 
 _INDEX = TensorType((), dtypes.int64)
@@ -454,6 +454,92 @@ def _solve(kind: str, ordering: Ordering) -> Function:
     return _substitute(kind, Lx, d, dB - _symmetric_product(values(dK), X, _pattern(K), tables), tables), _status(0)
 
   return custom_derivative(body, fwd=fwd, tangent=tangent, bwd=bwd)
+
+
+# Triangular solves with a sparse triangular matrix T: its strict triangle as the columns of a
+# lower triangular M, M = T for a lower T and T^T for an upper one, so that every case is a forward
+# substitution with M or a backward one with M^T, the sweeps of the factorizations' solves.
+
+
+@cache
+def _triangle(pattern: CanonicalPattern, lower: bool) -> dict[str, np.ndarray]:
+  """``m_ptr``, ``m_rows`` and ``m_source``: the columns of ``M``'s strict lower triangle, rows ascending, and the position of each entry among ``T``'s values; ``diagonal``: the position of each stored diagonal entry, or -1."""
+  n = pattern.shape[0]
+  rows, cols = np.asarray(pattern.rows, dtype=np.int64), np.asarray(pattern.cols, dtype=np.int64)
+  m_rows, m_cols = (rows, cols) if lower else (cols, rows)
+  strict = np.flatnonzero(m_rows > m_cols)
+  source = strict[np.lexsort((m_rows[strict], m_cols[strict]))]
+  diagonal = np.full(n, -1, dtype=np.int64)
+  on = np.flatnonzero(rows == cols)
+  diagonal[rows[on]] = on
+  return {
+    "m_ptr": np.concatenate([[0], np.cumsum(np.bincount(m_cols[source], minlength=n))]).astype(np.int64),
+    "m_rows": m_rows[source],
+    "m_source": source,
+    "diagonal": diagonal,
+  }
+
+
+@cache
+def _triangular_substitution(lower: bool, trans: bool, unit: bool) -> Function:
+  """``X`` with ``T X = B``, or ``T^T X = B``, for a sparse triangular ``T`` and ``B`` shaped ``(n, k)``."""
+  forward = lower != trans
+
+  @function(_matrix("T"), arg("B", dtype=...), outputs=arg("X", dtype=...), name=f"sparse_{_name(lower, trans, unit)}")
+  def substitution(T: Expr, B: Expr) -> Expr:
+    tables = _triangle(_pattern(T), lower)
+    index = lambda name: Expr.const(tables[name], dtype=dtypes.int64)  # noqa: E731
+    n, entries = T.shape[0], values(T)
+    Mx = gather(entries, index("m_source"))
+    # Without a unit diagonal, the sweeps of a Cholesky factor divide by it; a diagonal entry that
+    # is not stored reads as zero and gives infinities or NaN, as a zero one does.
+    d = _like(entries, np.ones(n)) if unit else gather(entries, index("diagonal"), mode="fill")
+    sweep = (broadcast(Mx), broadcast(d), broadcast(index("m_ptr")), broadcast(index("m_rows")))
+    kind = "ldl" if unit else "cholesky"
+    X, _ = scan((_lower_sweep if forward else _upper_sweep)(kind), B, sweep, length=n, index=True, reverse=not forward)
+    return X
+
+  return substitution
+
+
+@cache
+def _triangular(lower: bool, trans: bool, unit: bool) -> Function:
+  """The substitution with reverse rules: ``B_bar`` a solve with the transposed matrix, ``T_bar`` the outer product sampled on the entries read."""
+  name = _name(lower, trans, unit)
+
+  @function(
+    _matrix("T"), arg("B", dtype=...), outputs=group(arg("X", dtype=...), group(_matrix("T_"), arg("X_", dtype=...))), name=f"sparse_{name}_fwd"
+  )
+  def fwd(T: Expr, B: Expr) -> tuple[Expr, tuple[Expr, Expr]]:
+    X = _triangular_substitution(lower, trans, unit)(T, B)
+    return X, (T, X)
+
+  @function(group(_matrix("T"), arg("X", dtype=...)), arg("X_bar", dtype=...), name=f"sparse_{name}_bwd")
+  def bwd(residuals: tuple[Expr, Expr], X_bar: Expr) -> tuple[Expr, Expr]:
+    T, X = residuals
+    pattern = _pattern(T)
+    B_bar = _triangular_substitution(lower, not trans, unit)(T, X_bar)
+    rows, cols = np.asarray(pattern.rows, dtype=np.int64), np.asarray(pattern.cols, dtype=np.int64)
+    read = np.flatnonzero((rows > cols if lower else rows < cols) | ((rows == cols) & (not unit)))
+    index = lambda a: Expr.const(a, dtype=dtypes.int64)  # noqa: E731
+    # T_bar = -B_bar X^T, or -X B_bar^T with trans, on the entries the solve reads.
+    first, second = (X, B_bar) if trans else (B_bar, X)
+    entries = -(gather(first, index(rows[read]), axis=0) * gather(second, index(cols[read]), axis=0)).sum(1)
+    zero = Expr.const(np.zeros(pattern.nnz, dtype=X.type.dtype.numpy()), dtype=X.type.dtype)
+    return pack(scatter(zero, index(read), entries, combine="set"), pattern), B_bar
+
+  return custom_derivative(_triangular_substitution(lower, trans, unit), fwd=fwd, bwd=bwd)
+
+
+def solve_triangular(T: Expr, B: Expr, lower: bool, trans: bool, unit: bool) -> Expr:
+  _sparse_matrix("solve_triangular", T)
+  return _triangular(lower, trans, unit)(T, B)
+
+
+def permutation(pattern: CanonicalPattern, ordering: Ordering) -> np.ndarray:
+  perm = np.asarray(symbolic.ldl(pattern, ordering).perm, dtype=np.int64)
+  perm.flags.writeable = False
+  return perm
 
 
 def _sparse_matrix(name: str, A: Expr) -> None:

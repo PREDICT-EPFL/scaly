@@ -17,8 +17,8 @@ from scaly.ir.expr_spec import spec_expr
 from scaly.ir.program import ProgramNode, ProgramOp
 from scaly.ir.program_spec import spec_program_full
 from scaly.ir.spec import Rule, Spec, VerifyError
-from scaly.linalg.dense import lu_factor, solve_triangular
-from scaly.linalg.entry import cholesky, ldl, solve
+from scaly.linalg.dense import lu_factor
+from scaly.linalg.entry import cholesky, ldl, permutation, solve, solve_triangular
 from scaly.solvers.paths import SolverLibraryError
 from scaly.solvers.ocp import DiscreteOCP, StageConstraint
 from scaly.solvers.problem import NO_LB, NO_UB, Bounded, Problem, ProblemSpec
@@ -111,9 +111,10 @@ def test_public_exports_are_canonical() -> None:
   assert sc.factory.Fwd is Fwd
   assert sc.factory.Adj is Adj
   assert sc.factory.__all__ == ["Jac", "Grad", "Hess", "SpJac", "SpHess", "Fwd", "Adj", "DerivSpec"]
-  assert sc.linalg.__all__ == ["cholesky", "ldl", "lu_factor", "solve", "solve_triangular"]
+  assert sc.linalg.__all__ == ["cholesky", "ldl", "lu_factor", "permutation", "solve", "solve_triangular"]
   assert sc.linalg.ldl is ldl and sc.linalg.lu_factor is lu_factor
   assert sc.linalg.solve is solve and sc.linalg.cholesky is cholesky and sc.linalg.solve_triangular is solve_triangular
+  assert sc.linalg.permutation is permutation
   assert sc.Rule is Rule
   assert sc.Spec is Spec
   assert sc.VerifyError is VerifyError
