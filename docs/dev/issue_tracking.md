@@ -61,7 +61,8 @@ maintainer's proposal can remain deferred. Apply one origin label and keep it af
 | Origin | `source:community`, `source:maintainer`, `source:agent` | Where the report or proposal originated, regardless of who filed it. `source:agent` marks an issue an agent created during unattended work, which no maintainer has assessed yet. |
 | Kind | `kind:bug`, `kind:feature`, `kind:maintenance`, `kind:research`, `kind:question` | One primary kind. Research can finish with a decision rather than code. |
 | Area | `area:api`, `area:compiler`, `area:solvers`, `area:c-api`, `area:benchmarks`, `area:docs`, `area:tooling` | Usually one area, several for work that crosses boundaries. Tooling includes packaging, continuous integration, and platform support. |
-| Assistance | `needs:reproduction`, `needs:feedback`, `help wanted`, `good first issue` | Missing information or opportunities to contribute. Remove `needs:*` labels when resolved. |
+| Needs | `needs:examples`, `needs:decision` | What a maintainer must add before the work can start: an agreed example such as target code or numbers, or a decision. The issue names the missing piece under a *Needs* heading. Remove the label when it is settled. |
+| Assistance | `help wanted`, `good first issue` | Opportunities to contribute. |
 | Alert | `ci:nightly-failing`, `ci:platforms-failing` | Separate failure issues for Nightly and Platforms. Only their workflows apply these labels. |
 
 Scaly uses kind labels and leaves native issue types unset to avoid duplicate classification.
@@ -73,18 +74,19 @@ Each issue carries its progress in the `workflow status` field, shown in the iss
 
 | Status | Meaning |
 | --- | --- |
-| No value | The report or proposal has not been assessed. |
+| No value, or Triage | The report or proposal has not been assessed. |
 | Backlog | Accepted work with no immediate start planned. |
-| Ready | The goal and examples are clear, and nothing it needs is missing from main. |
+| Ready | The goal and examples are clear, it carries no `needs:` label, and nothing it needs is missing from main. |
 | In progress | Someone is implementing or investigating it. Its draft PR shows the work. |
 | In review | The result awaits a maintainer's review. |
 | Deferred | Deliberately postponed, with a reason or condition for revisiting it. |
+| Done | Set by hand on some closed issues. Closure is what counts. |
 
-A closed issue is done. Its closure reason distinguishes completed work from declined or duplicate
-work, and nothing updates the field when an issue closes.
+A closed issue is done, whatever value the field kept. Its closure reason distinguishes completed
+work from declined or duplicate work, and nothing updates the field when an issue closes.
 
 New submissions arrive without a value. Accepted work becomes Backlog or Deferred until it is
-ready or active. Close duplicates and declined proposals with an explanatory comment and the
+ready or active, and stays Backlog while it carries a `needs:` label. Close duplicates and declined proposals with an explanatory comment and the
 appropriate closure reason. Deferred means postponed, not rejected.
 
 Keep blocked active work In progress and record what it waits for as an issue dependency. Add a

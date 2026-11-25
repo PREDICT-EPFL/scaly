@@ -47,6 +47,8 @@ other than the maintainer who started you.
    - the issue is assigned to someone else
    - another open pull request, drafts included, edits code this issue will edit (`gh pr list`, then
      `gh pr diff <n> --name-only`). Name the file and the function where they meet.
+   - the issue carries a `needs:` label. Its *Needs* section says what a maintainer must settle
+     first.
    - the issue has no examples and is more than a bug with a reproduction or a measurement with
      its numbers. Recommend `record-decisions` to write them.
 5. Set the issue's status to In progress and assign it to the maintainer who started you.

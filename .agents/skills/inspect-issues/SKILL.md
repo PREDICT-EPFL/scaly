@@ -21,7 +21,7 @@ gh pr diff PR -R PREDICT-EPFL/scaly --name-only
 ```
 
 The status is the issue's `workflow status` field, which `gh issue view` does not return. Read it
-separately. No value means the issue has not been assessed, not Backlog or Ready. A closed issue is
+separately. No value, like Triage, means the issue has not been assessed, not Backlog or Ready. A closed issue is
 done whatever value it kept.
 
 ```bash

@@ -48,7 +48,9 @@ issues the maintainer approved in the checklist. In the main checkout, ask befor
      as a whole. Do not cut a result into steps, and do not plan sub-issues.
    - follows the form in `issue_tracking.md`: goal, examples, out of scope, design section
    - carries a milestone, and a blocked-by relation for each prerequisite that is not on main
-   - gets the status Ready when nothing blocks it, otherwise Backlog
+   - gets the status Ready when nothing blocks it, otherwise Backlog. An issue whose examples or
+     decisions the maintainer left open gets Backlog, a *Needs* section naming what is missing,
+     and the `needs:examples` or `needs:decision` label.
 
    Fold each small issue the new one covers: carry its content into the examples, then close it as
    a duplicate with a comment naming the new issue.

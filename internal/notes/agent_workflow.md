@@ -332,7 +332,8 @@ without choosing.
    vector lane, and the roadmap uses it for its order of work.
 10. **Status is a field on the issue, and the GitHub Project is retired.** The organization's
     `workflow status` field takes Backlog, Ready, In progress, In review and Deferred. No value
-    means the issue has not been assessed, and a closed issue is done. Rejected: keeping the
+    means the issue has not been assessed, and a closed issue is done. The field also keeps a
+    Triage and a Done option, which say the same two things explicitly. Rejected: keeping the
     Project, whose status had to be kept in step with the issues and whose views neither
     maintainer's tools need.
 
@@ -348,9 +349,8 @@ without choosing.
 
 **To do once both maintainers agree**, in this order:
 
-1. **The status field.** It currently has two options that this workflow does not use, Done and
-   Triage. Remove them. Setting the field from the command line has not been tried yet, so try the
-   command in `update-issues` on one issue first.
+1. **The status field.** Done on 2026-11-25: the command in `update-issues` works. The Done and
+   Triage options stay, as explicit forms of "closed" and "no value".
 2. **The tracker.** Regroup the existing issues into issues of the new form, closing the small
    ones they replace. Close the section issues of the compiler run (#292 to #298). Repopulate the
    capability milestones (sparse IR, loop compiler, control flow, generated solvers) and retire

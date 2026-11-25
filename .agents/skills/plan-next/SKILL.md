@@ -36,6 +36,8 @@ The tracker can be wrong. For each issue that looks ready:
   so and propose the edit.
 - **Is the failure real?** For a CI failure, read the run history. Waiting for the next nightly
   is a valid proposal.
+- **Does it wait on a maintainer?** An issue with a `needs:examples` or `needs:decision` label
+  is not started. List what its *Needs* section asks for among the open questions.
 - **Can an agent finish it?** Name anything it needs that an agent lacks: a kind of machine, a
   measurement on the reference machine, a platform only CI has. The start message then says who
   provides it.
