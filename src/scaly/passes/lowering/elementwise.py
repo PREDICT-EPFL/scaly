@@ -32,6 +32,9 @@ def _lower_elementwise(ctx: LowerCtx, node: Expr) -> None:
   if lower_supported_elementwise(ctx, node):
     return
   out = ctx.alloc_tmp(node)
+  if (entries := ctx.domains.get(node.id)) is not None:
+    ctx.emit_domain(node, out, entries)
+    return
   if node.id in ctx.permutes:
     ranges, coords = ctx.nest(node.shape, f"i_{out.attrs['name']}")
     ctx.emit(ranges, [ctx.write(node, coords, ctx.compute(node, coords))], delinearize=True)
