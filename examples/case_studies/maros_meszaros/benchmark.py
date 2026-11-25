@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import json
 import os
-import resource
 import shlex
 import subprocess
 import sys
@@ -56,7 +55,11 @@ BUDGET_S = 2.0
 
 
 def _limit_memory() -> None:
-  resource.setrlimit(resource.RLIMIT_AS, (MEMORY, MEMORY))
+  # The benchmark runs on Linux (taskset, size); the platform test keeps resource out of other platforms' type checks.
+  if sys.platform != "win32":
+    import resource
+
+    resource.setrlimit(resource.RLIMIT_AS, (MEMORY, MEMORY))
 
 
 def _child(args: list[str], timeout: float, log: Path, core: int | None = None) -> int | str:
