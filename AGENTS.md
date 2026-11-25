@@ -56,10 +56,7 @@ finished feature is different: document it next to the behaviour it affects.
 What planning, implementing or reviewing a Scaly change needs to know, whatever workflow drives it:
 
 - **Tracking.** Tasks are GitHub issues, tracked as [Tracking work](docs/dev/issue_tracking.md)
-  describes. An issue is one coherent result with the examples that must hold at the end, built by
-  one thread on one branch and reviewed as one pull request. `inspect-issues` reads issues and
-  `update-issues` changes them. A pull request that completes an issue ends with `Closes #N`, one
-  that lands a part early with `Part of #N`.
+  describes.
 - **Design.** Compiler and API design is decided in `internal/notes/core_compiler_roadmap.md`: its
   decisions, *Order of work*, *Release scope* and *Rules for every item*. Other designs are dated
   notes in `internal/notes/`. Compiler work also reads `internal/notes/compiler_maintenance_context.md`
@@ -81,14 +78,13 @@ What planning, implementing or reviewing a Scaly change needs to know, whatever 
 - **Writing and notes.** Published prose follows `.agents/skills/write-docs/brief.md`. Review memos
   and study material go in `internal/notes/<topic>_<date>/`.
 
-`.agents/skills/` holds Scaly's procedures. The workflow is `record-decisions` to end a design
-discussion with issues, `plan-next` to choose what starts, `implement` to build an issue, and
-`cross-review` and `prune-tests` as its finishing steps. Beside them are `inspect-issues` and
-`update-issues` for the tracker, `write-docs` for published prose, `benchmark-study` for
-measurements and the benchmark pages, and `port-from-devrush` for tests and examples from the
-frozen branch. Use them only when the user or another skill asks for one by name. They name
-roles, such as the reviewer for taste, and each maintainer's private instructions say which model
-fills each role.
+Scaly's procedures are skills. The workflow is `record-decisions` to end a design discussion with
+issues, `plan-next` to choose what starts, `implement` to build an issue, and `cross-review` and
+`prune-tests` as its finishing steps. Beside them are `inspect-issues` and `update-issues` for the
+tracker, `write-docs` for published prose, `benchmark-study` for measurements and the benchmark
+pages, and `port-from-devrush` for tests and examples from the frozen branch. Use them only when
+the user or another skill asks for one by name. They name roles, such as the reviewer for taste,
+and each maintainer's private instructions say which model fills each role.
 
 ## Commands
 
