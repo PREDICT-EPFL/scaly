@@ -26,7 +26,8 @@ from ...utils.names import NameScope
 from ..affine import affine_index_map
 from ..arith import constant
 from ...ad.rules import ELEMENTWISE
-from .fusion import ALIASES, SeedEpilogue, _contiguous_slice_offset, plan_fusion, product_outputs
+from .demand import affine, cheap, parts, plan_demand
+from .fusion import ALIASES, SeedEpilogue, _contiguous_slice_offset, adds_into_zeros, plan_fusion, product_outputs
 from .plans import MapRegion, compact_reads, has_compact_map, map_regions, plan_seed_map
 from ..arith import fold_program
 from ..program.fold_arith import _fold_index as _fold_bounded
@@ -286,6 +287,8 @@ class LowerCtx:
     self._indexed: dict[ProgramNode, tuple[np.ndarray, ProgramNode]] = {}
     # Nodes evaluated in place that read through a deferred transpose.
     self.permutes: set[int] = set()
+    # The entries a node is computed at, when its consumers read fewer than all of them.
+    self.domains: dict[int, np.ndarray] = {}
 
   # --- declarations ---------------------------------------------------------
 
@@ -389,6 +392,11 @@ class LowerCtx:
     for node in topo(self._computed):
       if ExprOp(node.op) == ExprOp.TRANSPOSE or any(a.id in self.deferred and a.id in self.permutes for a in node.args):
         self.permutes.add(node.id)
+    # A loop body that updates a carry in place evaluates the scattered values inside the carry's
+    # scatter (``fused_value``), which the walk does not follow, so it computes every entry.
+    if not self.inout_carries:
+      leaves = {leaf.id for chain in self.sums.values() for leaf in chain}
+      self.domains = plan_demand(self._computed, self.deferred | leaves, lambda node, entries: node.id not in groups and self._narrows(node, entries))
     needed = set()
     for node in topo(self._computed):
       operands = node.args
@@ -431,6 +439,59 @@ class LowerCtx:
       rule(self, node)
 
   # --- helpers --------------------------------------------------------------
+
+  def _narrows(self, node: Expr, entries: np.ndarray) -> bool:
+    """Whether a stored node is computed at only the ``entries`` its consumers read.
+
+    A loop over entries that are not an affine run reads them from a table and loses its vector
+    lanes. That pays for an axis reduction and a product with a vector operand, whose entries are
+    each a whole dot product, and for an elementwise value that calls libm when it skips a third of
+    its entries. A product of two matrices, which is vectorized whole along its columns, and any
+    other value narrow only along an affine run. A sum of scatters into zeros stores only some of
+    its values when ``scattered_values`` allows it. Forward helpers keep their seed-support plans."""
+    if any(arg.type.pattern is not None for arg in node.args):
+      return False
+    op = ExprOp(node.op)
+    if node.id in self.sums or op == ExprOp.SCATTER and adds_into_zeros(node):
+      return True
+    if op == ExprOp.REDUCE:
+      support = self.support_of(node.args[0])
+      return len(node.attrs["axes"]) != len(node.args[0].shape) and (support is None or len(support) == node.args[0].size)
+    if op == ExprOp.MATMUL:
+      return not self.seed_pairs and len(node.args) == 2 and (any(len(arg.shape) == 1 for arg in node.args) or affine(entries))
+    if op in ELEMENTWISE:
+      return not self.seed_pairs and (affine(entries) or self._calls_libm(node) and cheap(entries, node.size))
+    if op in (ExprOp.CONCAT, ExprOp.STACK):
+      owner, place = parts(node, entries)
+      return all(affine(place[owner == k]) and affine(entries[owner == k]) for k in range(len(node.args)))
+    if op == ExprOp.GATHER:
+      return node.args[1].value is not None and node.attrs["mode"] != "fill" and affine(entries)
+    return op in (ExprOp.TRANSPOSE, ExprOp.SLICE) and affine(entries)
+
+  def _calls_libm(self, node: Expr) -> bool:
+    """Whether evaluating ``node`` calls libm, in its own operation or in a value evaluated in place under it."""
+    stack, seen = [node], set()
+    while stack:
+      expr = stack.pop()
+      if expr.op in ELEMENTWISE and ELEMENTWISE[ExprOp(expr.op)].expensive:
+        return True
+      stack.extend(arg for arg in expr.args if arg.id in self.deferred and arg.id not in seen)
+      seen.update(arg.id for arg in expr.args)
+    return False
+
+  def emit_domain(self, node: Expr, out: ProgramNode, entries: np.ndarray) -> None:
+    """Store ``node`` at its demanded ``entries`` only, each evaluated by ``compute``."""
+    ranges, (k,) = self.nest((len(entries),), f"i_{out.attrs['name']}")
+    position = self.index_at(entries, k, shared=True)
+    if ExprOp(node.op) in ELEMENTWISE and any(arg.size != node.size for arg in node.args):
+      value = self.compute(node, self.domain_coords(node.shape, entries, k))
+    else:
+      value = self.compute_flat(node, position)
+    self.emit(ranges, [p.store(p.view(out, [position]), value)], delinearize=node.id in self.permutes)
+
+  def domain_coords(self, shape: tuple[int, ...], entries: np.ndarray, k: ProgramNode) -> list[ProgramNode]:
+    """The coordinates of the ``k``-th of ``entries`` in ``shape``, one index map per axis."""
+    return [self.index_at(coord, k, shared=True) for coord in np.unravel_index(entries, shape)]
 
   def _emit_group(self, nodes: Sequence[Expr]) -> None:
     outputs = [self.alloc_tmp(node) for node in nodes]
@@ -809,7 +870,10 @@ class LowerCtx:
         below = ProgramNode(ProgramOp.LT, (position, p.const_int(end)), dtype=dtypes.bool_)
         above = ProgramNode(ProgramOp.LE, (p.const_int(offset), position), dtype=dtypes.bool_)
         active = ProgramNode(ProgramOp.AND, (above, below), dtype=dtypes.bool_)
-        slot = ProgramNode(ProgramOp.SELECT, (active, _shift(position, -offset), p.const_int(0)), dtype=dtypes.int64)
+        # An unselected part is read at an entry it computes and the value discarded.
+        computed = self.domains.get(arg.id)
+        unused = p.const_int(0 if computed is None or not len(computed) else int(computed[0]))
+        slot = ProgramNode(ProgramOp.SELECT, (active, _shift(position, -offset), unused), dtype=dtypes.int64)
         reads.append((arg, True, (slot,)))
         bounds.append(below)
         offset = end

@@ -32,13 +32,16 @@ def _lower_reduce(ctx: LowerCtx, node: Expr) -> None:
     identity = constant(0, node.type.dtype) if kind != "add" and src.type.storage_size < src.size else None
     emit_reduction(ctx, [], reductions, p.view(out, [p.const_int(0)]), value, kind=kind, identity=identity, delinearize=node.id in ctx.permutes)
     return
-  outputs, output_coords = ctx.nest(node.shape, f"i_{name}")
+  if (entries := ctx.domains.get(node.id)) is None:
+    outputs, output_coords = ctx.nest(node.shape, f"i_{name}")
+    slot = _flat(node.shape, output_coords)
+  else:
+    outputs, (entry,) = ctx.nest((len(entries),), f"i_{name}")
+    output_coords, slot = ctx.domain_coords(node.shape, entries, entry), ctx.index_at(entries, entry, shared=True)
   reductions, reduce_coords = ctx.reduce(tuple(src.shape[axis] for axis in axes), f"k_{name}")
   kept, reduced = iter(output_coords), iter(reduce_coords)
   coords = [next(reduced) if axis in axes else next(kept) for axis in range(len(src.shape))]
-  emit_reduction(
-    ctx, outputs, reductions, p.view(out, [_flat(node.shape, output_coords)]), ctx.read(src, coords), kind=kind, delinearize=node.id in ctx.permutes
-  )
+  emit_reduction(ctx, outputs, reductions, p.view(out, [slot]), ctx.read(src, coords), kind=kind, delinearize=node.id in ctx.permutes)
 
 
 def _lower_supported_reduce(ctx: LowerCtx, node: Expr, entries: np.ndarray) -> None:

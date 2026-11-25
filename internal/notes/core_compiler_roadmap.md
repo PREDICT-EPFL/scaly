@@ -887,6 +887,18 @@ IPOPT Jacobian of a mapped multiple-shooting chain ran in 0.39 to 0.42 of its ti
 the tests here, including the guards it found by measuring: a gather that repeats entries does not
 distribute over a sum, and a computed part of a concatenation stays whole.
 
+As built by [#75] (recorded 2026-11-19, PR #510): `passes/lowering/demand.py` walks back from the
+outputs through the access maps `LowerCtx.read` evaluates, and a stored dense value is computed at
+its demanded entries when the loop over them pays: always for an axis reduction and a product with
+a vector operand; for an elementwise value that calls libm when it skips a third of its entries;
+for anything else, matrix-matrix products included, only when the narrowed loop needs no new
+index table (indicative review timings on la015 found table-driven matrix-matrix products and
+libm-free arithmetic slower than computing whole at 30% of the entries and above, and faster for
+reductions and matrix-vector products at 54%). Support is not intersected with
+demand: sparse values and seed-support plans compute all they store, and a dense known zero is
+still multiplied, as documented. A selected concatenation reads a computed part from storage.
+Taking scattered values straight into their reader, without the dense buffer, is not done.
+
 **[#76]. Frame budget.** As the todo describes. It can land any time after [#9]: a budget computed
 over the final program stays valid as the schedules change.
 
