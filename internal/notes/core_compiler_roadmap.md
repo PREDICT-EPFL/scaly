@@ -227,6 +227,11 @@ rejected for the same reason.
 
 After 0.1.0 the work is three milestones, all shipped in one release, 0.2.0 (revised 2026-11-18;
 until then each milestone was its own release, 0.2.0 to 0.4.0, see [Release scope](#release-scope)).
+These three are steps of this order, numbered here and nowhere else. In the tracker a milestone is
+a capability ([Tracking work](../../docs/dev/issue_tracking.md#milestones)), and an issue carries
+one of four: `Fully sparse IR` for the sparse work of milestone 1, `Loop compiler` for milestone 2
+with the hand-written kernels and the compiler's thresholds, and `Control flow support` and
+`Generated solvers` for the two halves of milestone 3. The milestone on the issue is the reference.
 Each milestone ends with something a user can rely on; inside a milestone, items run in lanes,
 sequential inside a lane, with arrows as hard dependencies. One rule holds across lanes: a pull
 request that regenerates C snapshots is never ready for review or queued at the same time as
@@ -284,9 +289,9 @@ Added to 0.2.0 on 2026-11-19
   #509 float32 and int32 statuses in scaly.linalg (before #205 and #206)
   #470 unrolling loops with inner trip counts and indices from constant tables (before #496)
 
-Not yet scheduled
-  #58 Function-level jvp/vjp -> #59 npmpc example and guide;
-  #78 checked builds (after #35, #77)
+In a capability milestone, with no place in this order yet
+  #58 Function-level jvp/vjp -> #59 npmpc example and guide (Loop compiler);
+  #78 checked builds (after #35, #77; Control flow support)
 
 Then #109, the GPU milestone definition.
 ```
@@ -352,10 +357,14 @@ Everything else follows 0.1.0 in the compiler order above; [#64] is the first ca
 ### 0.2.0
 
 Settled 2026-11-18, with no date: the three milestones of the order of work ship as one release,
-whose aim is code generation of entire solvers that fit on microcontrollers. GitHub's `scaly 0.2.0`
-milestone holds all of their issues; more may join as it goes. *Replaced 2026-11-18: one release
+whose aim is code generation of entire solvers that fit on microcontrollers. In the tracker the
+release is a list of capability milestones, and 0.2.0 is these four: `Fully sparse IR`,
+`Loop compiler`, `Control flow support` and `Generated solvers`. An issue belongs to the release
+through its milestone and carries no release field. *Replaced 2026-11-18: one release
 per milestone (0.2.0, 0.3.0 and 0.4.0, settled 2026-10-22), because the first two would have shipped
-without the generated solvers that justify the dtypes, the sparse matrices and the loop compiler.*
+without the generated solvers that justify the dtypes, the sparse matrices and the loop compiler.
+Replaced 2026-11-25: one `scaly 0.2.0` milestone holding every issue of the release, which held 95
+issues and said nothing about progress on any capability.*
 
 - It announces float32 code and typed entry points, oracle builds for bare-metal Cortex-M
   targets ([#207]), and static sparse matrices through expressions, derivatives and generated C.
@@ -397,8 +406,9 @@ without the generated solvers that justify the dtypes, the sparse matrices and t
   - the target description of decision 15, if [#492] makes it public before the tag.
 
   Everything under `examples/` stays free to change, the generated solvers included.
-- Parent issues keep their place; a release milestone goes on the leaves, and on a parent only when
-  all its children are in that release.
+- An issue is one coherent result with one capability milestone. Work is not planned as parent
+  issues with sub-issues. *Replaced 2026-11-25: "parent issues keep their place; a release
+  milestone goes on the leaves".*
 
 The current milestone and issue states are tracked in GitHub. This paragraph preserves the
 release decisions; it is not a separate completion checklist. Release execution is tracked in
