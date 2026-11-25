@@ -517,19 +517,7 @@ def _mapped(fn: Function[Any, Any, Any, Any], batch: tuple[int, ...], *args: Exp
 
 
 def solve_triangular(T: Any, b: Any, *, lower: bool, trans: bool = False, unit_diagonal: bool = False) -> Expr:
-  """Solve ``T x = b``, or ``T^T x = b`` with ``trans``, for a triangular ``T``.
-
-  ``T`` is a float32 or float64 square matrix, or a stack of them over leading axes. ``lower`` has no
-  default, since SciPy's default reads the upper triangle. Only the triangle that ``lower``
-  names is read, and its diagonal only when ``unit_diagonal`` is false. With ``unit_diagonal``
-  the diagonal is taken as ones. ``b`` is one right-hand side, shaped
-  ``(*batch, n)``, or several as the columns of ``(*batch, n, k)``, and ``x`` has its shape. ``b``
-  has the dtype of ``T``, which a Python number or list takes, and so has ``x``.
-  A zero diagonal entry gives infinities or NaN in ``x``.
-
-  The result is differentiable in ``T`` and ``b``. The reverse derivative is one solve with the
-  transposed matrix, and the forward derivative follows the substitution.
-  """
+  """The dense case of ``scaly.linalg.solve_triangular``."""
   T, B, batch, vector = _system("solve_triangular", T, b)
   X = _mapped(_triangular(lower, trans, unit_diagonal), batch, T, B)
   return X.reshape(X.shape[:-1]) if vector else X
