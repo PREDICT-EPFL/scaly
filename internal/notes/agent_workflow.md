@@ -1,10 +1,6 @@
 > Maintained note on how Scaly's maintainers plan, dispatch and review work done by coding agents.
-> **Status: a proposal of 2026-11-24.** One maintainer has worked it out in discussion with an
-> agent. The other has not agreed to it yet, and no trial has run. The skills, `AGENTS.md` and
-> `docs/dev/issue_tracking.md` on this branch are drafts of it. Nothing in the tracker has
-> changed. Once it is agreed, this header is replaced by the date of the agreement and the note
-> describes the workflow in force. It replaces the design note of October 2026, which was kept
-> outside the repository.
+> In force since 2026-11-25. It replaces the design note of October 2026, which was kept outside
+> the repository.
 
 # Agent workflow
 
@@ -29,8 +25,6 @@ are the skills in `.agents/skills/`.
 7. [Choosing what starts next](#choosing-what-starts-next)
 8. [Skills and where things live](#skills-and-where-things-live)
 9. [Decisions, and what they rejected](#decisions-and-what-they-rejected)
-10. [What adopting this changes](#what-adopting-this-changes)
-11. [Open questions](#open-questions)
 
 ## The problems this answers
 
@@ -86,22 +80,13 @@ A bug or a small task skips step 1. It is one issue, one thread and one pull req
 
 ## What each thing is
 
-- **Milestone.** A capability, such as the loop compiler, with its checks in the
-  [compiler roadmap](core_compiler_roadmap.md#milestone-checks). A release is a list of
-  milestones, kept in the roadmap's *Release scope*. An issue has one milestone.
-- **Issue.** One coherent result. By default it is sized for one to three days of one thread. It
-  is what a maintainer assigns, starts a thread on and reviews as a whole.
-- **Pull request.** A change that stands on its own on main and passes every check. Normally one
-  per issue. It is what gets reviewed and merged, and the only place the snapshots are regenerated.
+[Tracking work](../../docs/dev/issue_tracking.md) defines the milestone, the issue and the pull
+request. An issue's thread adds two things that stay out of the tracker:
+
 - **`PLAN.md` on the branch.** The thread's steps and their state. It lets a new thread resume the
   work, and it is deleted in the last pull request. Steps never go into the issue.
 - **Delegated task.** One part of an issue given to a subagent in its own worktree. It leaves no
   public record: no pull request, no issue, no tracker update.
-
-There is no level between milestone and issue. An issue is split only when a need appears:
-someone has to wait for a part of it, someone wants to take a part over, or the work has grown
-well beyond its planned size and a maintainer decides to cut it. That part then becomes its own
-issue, and everyone can see why it exists.
 
 ## Writing an issue
 
@@ -281,9 +266,9 @@ lands early as described above, or the second issue waits.
 
 The skills that form this workflow move into the repository so that both maintainers run the same
 ones: `implement`, `plan-next`, `record-decisions`, `cross-review` and `prune-tests`.
-`coordinate` is removed, since `implement` covers what it did. They are written for Scaly: they
-name its checks and its tracker directly, and they name T3 Code's tools directly, since both
-maintainers use it. They never name models, because the maintainers use different ones.
+They are written for Scaly: they name its checks and its tracker directly, and they name T3 Code's
+tools directly, since both maintainers use it. They never name models, because the maintainers use
+different ones.
 
 They name five roles, and each maintainer's private instructions say which model fills each and
 at which effort:
@@ -338,40 +323,3 @@ without choosing.
     status had to be kept in step with the issues. Rejected on 2026-11-25, two days after GitHub
     released the built-in statuses: a custom `workflow status` field of the organization, which
     was set on every issue for a day, was hidden from outside contributors and moved with nothing.
-
-## What adopting this changes
-
-**Drafted on this branch**, to be read and corrected before anything else moves:
-
-- the five skills in `.agents/skills/`, with `inspect-issues` and `update-issues` changed to read
-  and set the status
-- `docs/dev/issue_tracking.md`, with the form of an issue, the statuses, the meaning of
-  assignment, and without sub-issues or the Project
-- `AGENTS.md`, which points to the workflow and lists the skills
-
-**Done on 2026-11-25**, after both maintainers agreed:
-
-- **The tracker.** The existing issues were regrouped into issues of the new form, and the small
-  ones they replace were closed as duplicates. The section issues of the compiler run and the old
-  parent issues were closed. The milestones are the four capabilities, and `scaly 0.2.0` is
-  retired. Issues that wait on a maintainer carry `needs:examples` or `needs:decision`.
-- **Status on every issue**, as GitHub's built-in status.
-- **Repository settings.** The default squash commit message is the pull request title.
-- **The GitHub Project** is closed, and the organization's `workflow status` field is deleted.
-
-**Still to do:**
-
-1. **Each maintainer's own setup.** Remove or rename personal skills with the same names, and map
-   the five roles to models in private instructions.
-2. **The October note** is marked as replaced by this one.
-
-## Open questions
-
-1. **What is the trial?** One issue of the new form, run from design to merge, compared with the
-   numbers at the top of this note: issues filed, questions asked, test lines per source line. Both
-   maintainers agree on which issue before it starts.
-2. **Is one to three days the right size?** It is a default with no evidence behind it. The trial
-   should give a first number.
-3. **What should a view of the tracker show for this workflow?** At least: which issues are
-   running, with their draft pull request; who holds what and whether they are working on it now;
-   and progress per milestone. Changes to a particular tool belong in that tool's own tracker.
