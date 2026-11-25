@@ -357,13 +357,13 @@ without choosing.
   retired. Issues that wait on a maintainer carry `needs:examples` or `needs:decision`.
 - **Status on every issue**, as GitHub's built-in status.
 - **Repository settings.** The default squash commit message is the pull request title.
+- **The GitHub Project** is closed, and the organization's `workflow status` field is deleted.
 
 **Still to do:**
 
 1. **Each maintainer's own setup.** Remove or rename personal skills with the same names, and map
    the five roles to models in private instructions.
-2. **Retire the GitHub Project** and delete the organization's `workflow status` field.
-3. **The October note** is marked as replaced by this one.
+2. **The October note** is marked as replaced by this one.
 
 ## Open questions
 
