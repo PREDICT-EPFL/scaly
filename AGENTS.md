@@ -22,7 +22,7 @@ Everything under `docs/` is published to the documentation site, all of it, beca
 exclusion mechanism. Anything unpublished lives in `internal/`:
 
 - [GitHub Issues](https://github.com/PREDICT-EPFL/scaly/issues) is the single actionable list.
-  Each issue's `workflow status` field tracks its progress and its milestone names its capability.
+  Each issue's status tracks its progress and its milestone names its capability.
   Follow [Tracking work](docs/dev/issue_tracking.md).
 - `internal/notes/agent_workflow.md` is the maintained note on how work is planned, given to
   agents and reviewed, with the reasons for each rule.

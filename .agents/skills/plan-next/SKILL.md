@@ -47,8 +47,8 @@ The tracker can be wrong. For each issue that looks ready:
 | On the issue | Meaning | What to propose |
 |---|---|---|
 | Unassigned | Free | Either maintainer may take it |
-| Assigned, Ready or Backlog | Its assignee wants it soon | Only for its assignee, or ask them |
-| Assigned, In progress | Being worked on | Leave it |
+| Assigned, Todo or Backlog | Its assignee wants it soon | Only for its assignee, or ask them |
+| Assigned, In progress or In review | Being worked on | Leave it |
 
 Never propose taking an issue from its assignee. Put the question to the maintainer instead.
 

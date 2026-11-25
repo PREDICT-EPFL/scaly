@@ -53,16 +53,15 @@ belong in this guide, not in every issue.
 
 ## Labels
 
-Origin and planning are independent. A community report can become release-critical, and a
-maintainer's proposal can remain deferred. Apply one origin label and keep it after triage.
+Source and planning are independent. A community report can become release-critical, and a
+maintainer's proposal can remain deferred. Apply one source label and keep it after triage.
 
 | Group | Labels | Meaning |
 | --- | --- | --- |
-| Origin | `source:community`, `source:maintainer`, `source:agent` | Where the report or proposal originated, regardless of who filed it. `source:agent` marks an issue an agent created during unattended work, which no maintainer has assessed yet. |
+| Source | `source:community`, `source:maintainer`, `source:agent` | Where the report or proposal originated, regardless of who filed it. `source:agent` marks an issue an agent created during unattended work, which no maintainer has assessed yet. |
 | Kind | `kind:bug`, `kind:feature`, `kind:maintenance`, `kind:research`, `kind:question` | One primary kind. Research can finish with a decision rather than code. |
 | Area | `area:api`, `area:compiler`, `area:solvers`, `area:c-api`, `area:benchmarks`, `area:docs`, `area:tooling` | Usually one area, several for work that crosses boundaries. Tooling includes packaging, continuous integration, and platform support. |
 | Needs | `needs:examples`, `needs:decision` | What a maintainer must add before the work can start: an agreed example such as target code or numbers, or a decision. The issue names the missing piece under a *Needs* heading. Remove the label when it is settled. |
-| Assistance | `help wanted`, `good first issue` | Opportunities to contribute. |
 | Alert | `ci:nightly-failing`, `ci:platforms-failing` | Separate failure issues for Nightly and Platforms. Only their workflows apply these labels. |
 
 Scaly uses kind labels and leaves native issue types unset to avoid duplicate classification.
@@ -70,34 +69,41 @@ Add area labels only when they help readers find work.
 
 ## Status
 
-Each issue carries its progress in the `workflow status` field, shown in the issue's sidebar.
+Each issue carries one of GitHub's built-in statuses, shown beside its title and as the columns of
+the repository's issue board.
 
 | Status | Meaning |
 | --- | --- |
-| No value, or Triage | The report or proposal has not been assessed. |
-| Backlog | Accepted work with no immediate start planned. |
-| Ready | The goal and examples are clear, it carries no `needs:` label, and nothing it needs is missing from main. |
+| Backlog | Not started, and nobody plans to start it now. New reports arrive here. Postponed work stays here too, with the reason in a comment. |
+| Todo | The goal and examples are clear and nothing it needs is missing from main, or someone has taken it. |
 | In progress | Someone is implementing or investigating it. Its draft PR shows the work. |
 | In review | The result awaits a maintainer's review. |
-| Deferred | Deliberately postponed, with a reason or condition for revisiting it. |
-| Done | Set by hand on some closed issues. Closure is what counts. |
+| Done, Not planned, Duplicate | The three ways an issue closes. |
 
-A closed issue is done, whatever value the field kept. Its closure reason distinguishes completed
-work from declined or duplicate work, and nothing updates the field when an issue closes.
+GitHub moves the status by itself in three cases, so set it by hand only in the others:
 
-New submissions arrive without a value. Accepted work becomes Backlog or Deferred until it is
-ready or active, and stays Backlog while it carries a `needs:` label. Close duplicates and declined proposals with an explanatory comment and the
-appropriate closure reason. Deferred means postponed, not rejected.
+- assigning someone moves the issue to Todo
+- a draft PR that links the issue, with `Closes #N` in its description, moves it to In progress
+- marking that PR ready for review, or linking a PR that is already open, moves it to In review
+
+An issue with a `needs:` label is not started, whatever its status. An issue nobody has assessed
+is in Backlog with the `source:agent` label, or with no kind label yet. Close duplicates and
+declined proposals with an explanatory comment, as Duplicate or Not planned.
 
 Keep blocked active work In progress and record what it waits for as an issue dependency. Add a
 comment for a blocker that has no corresponding issue, such as missing access to a Windows machine.
 
-To list issues by status:
+To read one issue's status, and to list the open issues with theirs:
 
 ```bash
-gh issue list -R PREDICT-EPFL/scaly --search 'field.workflow-status:"Ready"'
-gh issue list -R PREDICT-EPFL/scaly --search 'no:field.workflow-status' --limit 200
+gh api repos/PREDICT-EPFL/scaly/issues/ISSUE -q .status.name
+gh api graphql --paginate -f query='query($endCursor: String) { repository(owner: "PREDICT-EPFL", name: "scaly") {
+  issues(first: 100, states: OPEN, after: $endCursor) { pageInfo { hasNextPage endCursor }
+    nodes { number title status { name } } } } }' \
+  -q '.data.repository.issues.nodes[] | select(.status.name == "Todo") | "\(.number)\t\(.title)"'
 ```
+
+The statuses are a GitHub public preview, released on 2026-11-23, so these commands may change.
 
 ## Assignment
 
@@ -106,8 +112,8 @@ Assignment says who holds an issue, and reads together with its status.
 | On the issue | Meaning | To take it |
 | --- | --- | --- |
 | Unassigned | Free | Take it: comment on the issue, and assign yourself if you can. |
-| Assigned, Ready or Backlog | The assignee wants to do it soon. | Ask them. |
-| Assigned, In progress | The assignee is working on it now. | Ask them, and expect a no. |
+| Assigned, Todo or Backlog | The assignee wants to do it soon. | Ask them. |
+| Assigned, In progress or In review | The assignee is working on it now. | Ask them, and expect a no. |
 
 Ask wherever is convenient, and record the outcome on the issue, since that is the only place
 everyone, agents included, can see it. Several agent sessions can share one GitHub account, so

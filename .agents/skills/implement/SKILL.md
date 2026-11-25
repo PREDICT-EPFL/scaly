@@ -51,7 +51,8 @@ other than the maintainer who started you.
      first.
    - the issue has no examples and is more than a bug with a reproduction or a measurement with
      its numbers. Recommend `record-decisions` to write them.
-5. Set the issue's status to In progress and assign it to the maintainer who started you.
+5. Assign the issue to the maintainer who started you. GitHub moves it to In progress when the
+   draft pull request of step 3 opens, and to In review when you mark it ready.
 
 ## 2. Read
 
@@ -196,7 +197,7 @@ regenerates them. No other failure is acceptable there.
    one, your decisions and left-out items.
 6. **Hand over.** Check once more that no other pull request that regenerates the snapshots has
    become ready in the meantime. Delete `PLAN.md` in the last commit, write the description below,
-   mark the pull request ready and set the issue's status to In review.
+   and mark the pull request ready. Check that the issue's status is now In review.
 
 ## 7. The description
 
@@ -255,8 +256,8 @@ When the maintainer says that other work needs a part of this issue now:
 2. Make a second branch from `origin/main` that holds only that part's commits and tests, and
    open a pull request for it that says `Part of #N`. The part must stand on its own on main. The
    issue's own draft stays open with `PLAN.md` in it.
-3. Run steps 6 and 7 on the second branch, for the examples of that part only. Leave the issue's
-   status at In progress, and say in a comment on the issue which part is in review.
+3. Run steps 6 and 7 on the second branch, for the examples of that part only. The issue's
+   status stays In progress, and a comment on the issue says which part is in review.
 4. After it merges, fetch, rebase the issue's branch onto main and continue. *Left out* items are
    filed only when the issue's last pull request has merged.
 

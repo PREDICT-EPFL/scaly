@@ -20,15 +20,16 @@ gh pr list -R PREDICT-EPFL/scaly --state open --json number,title,isDraft,headRe
 gh pr diff PR -R PREDICT-EPFL/scaly --name-only
 ```
 
-The status is the issue's `workflow status` field, which `gh issue view` does not return. Read it
-separately. No value, like Triage, means the issue has not been assessed, not Backlog or Ready. A closed issue is
-done whatever value it kept.
+The status is GitHub's built-in issue status, which `gh issue view` does not return. Read it
+separately. Backlog also holds what nobody has assessed yet. A closed issue is Done, Not planned
+or Duplicate.
 
 ```bash
-gh api repos/PREDICT-EPFL/scaly/issues/ISSUE/issue-field-values \
-  -q '.[] | select(.issue_field_name == "workflow status") | .single_select_option.name'
-gh issue list -R PREDICT-EPFL/scaly --search 'field.workflow-status:"Ready"' --limit 200
-gh issue list -R PREDICT-EPFL/scaly --search 'no:field.workflow-status' --limit 200
+gh api repos/PREDICT-EPFL/scaly/issues/ISSUE -q .status.name
+gh api graphql --paginate -f query='query($endCursor: String) { repository(owner: "PREDICT-EPFL", name: "scaly") {
+  issues(first: 100, states: OPEN, after: $endCursor) { pageInfo { hasNextPage endCursor }
+    nodes { number title status { name } } } } }' \
+  -q '.data.repository.issues.nodes[] | "\(.status.name)\t\(.number)\t\(.title)"'
 ```
 
 The search qualifier takes the field's name with a hyphen. Raise `--limit` above the default 30
@@ -39,7 +40,7 @@ Read prerequisite issues to establish their state and outcome. A prerequisite cl
 planned does not prove the required behavior exists, and an issue depends on what is on main, not
 on a branch. Mentions are not prerequisite relationships.
 
-Read assignment together with status: unassigned is free, assigned with Ready or Backlog means its
+Read assignment together with status: unassigned is free, assigned with Todo or Backlog means its
 assignee wants it soon, assigned with In progress means it is being worked on. Several agent
 sessions may share one GitHub account, so the branch and the draft pull request identify the
 active work, not the assignee.

@@ -248,8 +248,8 @@ they do names the file and the function.
 | On the issue | Meaning | To take it |
 |---|---|---|
 | Unassigned | Free | Take it |
-| Assigned, Ready or Backlog | Someone wants to do it soon | Ask them |
-| Assigned, In progress | Being worked on now | Ask them, and expect a no |
+| Assigned, Todo or Backlog | Someone wants to do it soon | Ask them |
+| Assigned, In progress or In review | Being worked on now | Ask them, and expect a no |
 
 Asking can happen anywhere, including in a chat between the maintainers. The outcome goes on the
 issue, because agents only see the tracker. An agent never takes an assigned issue on its own. It
@@ -330,37 +330,40 @@ without choosing.
    Rejected too: a release field on each issue, since the project works on one release at a time.
 9. **No new word for a group of work.** "Lane" was tried and dropped. In Scaly it already means a
    vector lane, and the roadmap uses it for its order of work.
-10. **Status is a field on the issue, and the GitHub Project is retired.** The organization's
-    `workflow status` field takes Backlog, Ready, In progress, In review and Deferred. No value
-    means the issue has not been assessed, and a closed issue is done. The field also keeps a
-    Triage and a Done option, which say the same two things explicitly. Rejected: keeping the
-    Project, whose status had to be kept in step with the issues and whose views neither
-    maintainer's tools need.
+10. **Status is GitHub's built-in issue status, and the GitHub Project is retired.** An open issue
+    is in Backlog, Todo, In progress or In review, and closing it makes it Done, Not planned or
+    Duplicate. GitHub moves it on assignment and when a linked pull request opens or becomes
+    ready, so a thread rarely sets it. There is no status for postponed or unassessed work: both
+    stay in Backlog, which is acceptable for two maintainers. Rejected: keeping the Project, whose
+    status had to be kept in step with the issues. Rejected on 2026-11-25, two days after GitHub
+    released the built-in statuses: a custom `workflow status` field of the organization, which
+    was set on every issue for a day, was hidden from outside contributors and moved with nothing.
 
 ## What adopting this changes
 
 **Drafted on this branch**, to be read and corrected before anything else moves:
 
 - the five skills in `.agents/skills/`, with `inspect-issues` and `update-issues` changed to read
-  and set the status field
-- `docs/dev/issue_tracking.md`, with the form of an issue, the status field, the meaning of
+  and set the status
+- `docs/dev/issue_tracking.md`, with the form of an issue, the statuses, the meaning of
   assignment, and without sub-issues or the Project
 - `AGENTS.md`, which points to the workflow and lists the skills
 
-**To do once both maintainers agree**, in this order:
+**Done on 2026-11-25**, after both maintainers agreed:
 
-1. **The status field.** Done on 2026-11-25: the command in `update-issues` works. The Done and
-   Triage options stay, as explicit forms of "closed" and "no value".
-2. **The tracker.** Regroup the existing issues into issues of the new form, closing the small
-   ones they replace. Close the section issues of the compiler run (#292 to #298). Repopulate the
-   capability milestones (sparse IR, loop compiler, control flow, generated solvers) and retire
-   `scaly 0.2.0` as a milestone. Clear assignments on issues nobody plans to start soon. The work
-   on #70 continues on its branch through all of this.
-3. **Status on every issue**, as one mechanical pass after the regrouping, then retire the Project.
-4. **Each maintainer's own setup.** Remove or rename personal skills with the same names, and map
+- **The tracker.** The existing issues were regrouped into issues of the new form, and the small
+  ones they replace were closed as duplicates. The section issues of the compiler run and the old
+  parent issues were closed. The milestones are the four capabilities, and `scaly 0.2.0` is
+  retired. Issues that wait on a maintainer carry `needs:examples` or `needs:decision`.
+- **Status on every issue**, as GitHub's built-in status.
+- **Repository settings.** The default squash commit message is the pull request title.
+
+**Still to do:**
+
+1. **Each maintainer's own setup.** Remove or rename personal skills with the same names, and map
    the five roles to models in private instructions.
-5. **Repository settings.** The default squash commit message becomes "Pull request title".
-6. **The October note** is marked as replaced by this one.
+2. **Retire the GitHub Project** and delete the organization's `workflow status` field.
+3. **The October note** is marked as replaced by this one.
 
 ## Open questions
 
@@ -369,9 +372,6 @@ without choosing.
    maintainers agree on which issue before it starts.
 2. **Is one to three days the right size?** It is a default with no evidence behind it. The trial
    should give a first number.
-3. **Can an outside contributor see the status field?** Its visibility is set to organization
-   members only. If it is hidden from others on a public repository, `issue_tracking.md` should
-   say so.
-4. **What should a view of the tracker show for this workflow?** At least: which issues are
+3. **What should a view of the tracker show for this workflow?** At least: which issues are
    running, with their draft pull request; who holds what and whether they are working on it now;
    and progress per milestone. Changes to a particular tool belong in that tool's own tracker.

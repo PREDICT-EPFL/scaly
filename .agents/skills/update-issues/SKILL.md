@@ -37,20 +37,22 @@ When writing an issue, follow *What an issue states* in the tracking conventions
 
 Use kind labels and leave native issue types unset. Record prerequisites with dependency fields.
 Origin describes where the report came from, not its current priority or who implements it. An
-issue an agent files on its own carries `source:agent` and no status.
+issue an agent files on its own carries `source:agent` and stays in Backlog.
 
-The status is the issue's `workflow status` field. Set it with the option's name, through `POST`,
-which leaves the issue's other fields alone. `PUT` on the same endpoint replaces them all.
+The status is GitHub's built-in issue status: Backlog, Todo, In progress or In review while the
+issue is open. GitHub sets it by itself when someone is assigned (Todo), when a draft pull request
+that says `Closes #N` is opened (In progress), and when that pull request is marked ready (In
+review). Read the status first, and set it only when it is not what it should be, for example for
+a pull request that says `Part of #N`, which does not link the issue.
 
 ```bash
-echo '{"issue_field_values":[{"field_id":FIELD_ID,"value":"In progress"}]}' > BODY_FILE
-gh api -X POST repos/PREDICT-EPFL/scaly/issues/ISSUE/issue-field-values --input BODY_FILE
+gh api graphql -f query='{ repository(owner: "PREDICT-EPFL", name: "scaly") { planningStatuses(first: 20) { nodes { id name } } } }'
+gh api graphql -f query='mutation($issue: ID!, $status: ID!) { setIssueStatus(input: {issueId: $issue, statusId: $status}) { clientMutationId } }' \
+  -f issue="$(gh api repos/PREDICT-EPFL/scaly/issues/ISSUE -q .node_id)" -f status=STATUS_ID
 ```
 
-Find `FIELD_ID` once with `gh api orgs/PREDICT-EPFL/issue-fields -q '.[] | select(.name ==
-"workflow status") | .id'`. Set only the requested field. Nothing changes the status when a pull
-request opens, becomes ready or merges, so the thread doing the work sets In progress and In
-review itself. A closed issue is done and its status is left as it was.
+The first command lists the statuses with their ids. Closing an issue gives it its closed status,
+so never set Done, Not planned or Duplicate by hand.
 
 When recording work, identify the active session through its branch, its draft pull request, or
 a brief comment. Progress and handoff notes state what is done, what remains, relevant validation,
@@ -58,8 +60,8 @@ and blockers. Do not replace the contributor's conflict-management decisions wit
 protocol.
 
 Use `Closes #N` in the PR description when the PR completes the issue, and `Part of #N` when it
-lands a part early. Keep the issue open during implementation and review. Deferred work stays
-open, and declined or duplicate work uses the appropriate closure reason with an explanation. An
+lands a part early. Keep the issue open during implementation and review. Postponed work stays
+open in Backlog, and declined or duplicate work uses the appropriate closure reason with an explanation. An
 issue folded into a larger one is closed as a duplicate, with a comment naming the issue that
 carries its content.
 
