@@ -40,10 +40,10 @@ kkt.block_info      # PIQP's block_info: (start, diag_size, off_diag_size) per b
 kkt.blocks          # the D_i, B_i and E_i blocks of PIQP's BlockKKT, as row and column ranges
 ```
 
-To draw the structure on `Psi` and on its factor for a random 12-stage MPC problem:
+To draw the structure on `Psi`, on its factor, and the entries of the factor that change from one stage to the next, for every problem the port was compared on (PIQP's `tests/data` is optional):
 
 ```bash
-uv run examples/piqp_multistage/plot_arrow_structure.py arrow_structure.png
+uv run examples/piqp_multistage/plot_arrow_structure.py out_dir [piqp/tests/data]
 ```
 
 ## Where PIQP's code went
