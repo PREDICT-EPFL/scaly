@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ...ir import program as p
 from ...ir.program import ProgramNode, ProgramOp, walk_program
@@ -50,16 +50,21 @@ class _OverBudget(Exception):
 class _Budget:
   """The values a static loop may still compute, and the work it may still do, before expansion gives up.
 
-  A value counts when it is not a constant after unrolling: index arithmetic and masked entries fold
-  away and never reach the generated code. Work counts every statement, range trip and allocated
-  element, and is charged before it is done.
+  A value counts once, the first time it is stored or assigned, and only when it is not a constant
+  after unrolling: index arithmetic and masked entries fold away, and a value moved through work
+  buffers and carries is one local in the generated code. Each store the expansion leaves in the
+  code is charged apart from the values, so a value copied into many results costs every copy.
+  Work counts every statement, range trip and allocated element, and is charged before it is done.
   """
 
   values: int
   work: int = AUTO_EXPANSION_WORK_PER_PROC
+  seen: set[ProgramNode] = field(default_factory=set)
 
   def spend(self, value: ProgramNode) -> None:
-    self.values -= value.op not in CONSTANTS
+    if value.op not in CONSTANTS and value not in self.seen:
+      self.seen.add(value)
+      self.values -= 1
     if self.values < 0:
       raise _OverBudget
 
@@ -191,9 +196,10 @@ def expand_static_loop(
   """Interpret an ordered static loop, preserving floating arithmetic and writing through mutable storage.
 
   Bounds and branches inside the loop must fold to constants at each step. With ``budget``, the
-  values the carried range stores or assigns through every callee that are not constants, and the
-  constant results, are counted, and ``_OverBudget`` is raised once they exceed it or once the
-  interpretation's work exceeds ``AUTO_EXPANSION_WORK_PER_PROC``.
+  distinct values the carried range stores or assigns through every callee that are not constants,
+  and the stores of the results, are counted, and ``_OverBudget`` is raised once they exceed it or
+  once the interpretation's work exceeds ``AUTO_EXPANSION_WORK_PER_PROC``. Their sum bounds the
+  statements the expansion generates: one declaration per value at most, and one store per result.
   """
   proc = p.proc("static_loop", params, body)
   frame = _Frame(proc, [_Pointer(_InputValues(buf)) for buf in params], procs, {}, strict=True)
@@ -217,8 +223,8 @@ def expand_static_loop(
       assert value is not None
       targets.append(p.view(buf, [p.const_int(offset + at)]))
       values.append(value)
-      # A constant result is never counted inside the loop, yet its store still reaches the generated code.
-      if loop_budget is not None and value.op in CONSTANTS:
+      # Every result is a store in the generated code, whatever its value cost.
+      if loop_budget is not None:
         loop_budget.values -= 1
   if loop_budget is not None and loop_budget.values < 0:
     raise _OverBudget

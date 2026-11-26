@@ -254,10 +254,11 @@ def test_back_substitution_subtracts_each_term_from_the_row_in_turn(budget: int,
 
 @pytest.mark.parametrize("routine", ROUTINES)
 def test_one_size_over_the_budget_keeps_the_loops(routine: str) -> None:
-  """Banded LDL^T of order 8 fits the budget in natural order and order 9 does not; Cholesky, with
-  no products ``d[k] L[j, k]``, switches one order later."""
+  """Banded LDL^T of order 19 fits the budget in natural order and order 20 does not; Cholesky, with
+  no products ``d[k] L[j, k]``, switches one order later. Charging every store again instead of
+  each value once would switch at 8 and 9."""
   kind = _KIND[routine]
-  last = 8 if kind == "ldl" else 9
+  last = 19 if kind == "ldl" else 20
   for n in (last, last + 1):
     a = _values(_banded(n, 2), np.random.default_rng(22), negative=1 if routine == "sym" else 0)
     fn = _routine(a, routine, "natural")
@@ -271,11 +272,13 @@ def test_one_size_over_the_budget_keeps_the_loops(routine: str) -> None:
 
 
 def _stage_matrix() -> np.ndarray:
-  """The lower triangle of a 12x12 stage KKT matrix within the budget: diagonal costs on four states
-  and two inputs, four dynamics rows coupling each state to the next and two inputs, two input bounds."""
+  """The lower triangle of a 12x12 stage KKT matrix, 27 stored entries: diagonal costs on four states
+  and two inputs with their cross terms, four dynamics rows coupling each state to the next and to
+  the inputs, two input bounds."""
   m = np.eye(12, dtype=bool)
-  m[6:10, 0:4] = np.eye(4, dtype=bool)
-  m[7, 4] = m[9, 5] = True
+  m[4:6, 0:4] = [[1, 0, 1, 0], [0, 1, 0, 1]]
+  m[6:10, 0:4] = np.eye(4, dtype=bool) | np.eye(4, k=1, dtype=bool)
+  m[6:10, 4:6] = [[0, 0], [1, 0], [0, 0], [0, 1]]
   m[10:12, 4:6] = np.eye(2, dtype=bool)
   return np.tril(m)
 

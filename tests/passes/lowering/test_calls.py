@@ -412,7 +412,7 @@ def _spd(n):
   return m @ m.T + n * np.eye(n)
 
 
-@pytest.mark.parametrize("n", [4, 8])
+@pytest.mark.parametrize("n", [7, 8])
 def test_dense_factorization_unrolls_its_triangle_within_the_budget(n, tmp_path, monkeypatch) -> None:
   monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path))
 
@@ -427,7 +427,8 @@ def test_dense_factorization_unrolls_its_triangle_within_the_budget(n, tmp_path,
   np.testing.assert_allclose(np.tril(L), np.linalg.cholesky(A), rtol=1e-13, atol=1e-13)
   np.testing.assert_allclose(x, np.linalg.solve(A, b), rtol=1e-12)
   assert int(status) == int(solved) == 0
-  assert ("for (" in _generated_code(factor_and_solve)) == (n > 4)
+  # The budget charges each value of the factor once, however often the loops move it.
+  assert ("for (" in _generated_code(factor_and_solve)) == (n > 7)
 
 
 _COUNTS = np.array([2, 0, 3, 1], dtype=np.int64)
@@ -524,3 +525,21 @@ def test_step_dependent_expansion_charges_trips_and_constant_results() -> None:
   for length, rolled in ((200, False), (300, True)):
     _, (ys,) = sc.scan(count, sc.const(np.int64(0)) + i * 0, length=length, index=True)
     assert _has_carried_loop(ConcreteFunction._from_exprs("constant_results", [i], [ys], ["i"], ["ys"])) == rolled
+
+
+def test_a_value_stored_into_many_results_costs_each_store() -> None:
+  """The budget counts a value once, but each result it reaches is a store in the C."""
+
+  @sc.function(sc.arg("c", ()))
+  def keep(c):
+    return c
+
+  @sc.function(sc.arg("c", ()), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
+  def step(c, j):
+    c, _ = sc.scan(keep, c, length=2, trip=j % 2)
+    return c, c
+
+  x = sc.sym("x")
+  for length, rolled in ((100, False), (300, True)):
+    _, (ys,) = sc.scan(step, x, length=length, index=True)
+    assert _has_carried_loop(ConcreteFunction._from_exprs("copies", [x], [ys], ["x"], ["ys"])) == rolled
