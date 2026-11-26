@@ -16,6 +16,7 @@ from .pack_masks import pack_masks
 from .fuse_ranges import fuse_ranges
 from .hoist_invariant import hoist_invariant
 from .hoist_reciprocals import hoist_reciprocals
+from .name_products import name_products
 from .pack_workspace import pack_workspace
 from .prepare_scalar import prepare_scalar_expressions
 from .scalarize import scalarize_program
@@ -36,6 +37,7 @@ PASS_PIPELINE: tuple[tuple[str, PassFn], ...] = (
   ("unroll_unit_loops", unroll_unit_loops),
   ("fold_arith_after_unroll", fold_arith),
   ("pack_workspace", pack_workspace),
+  ("name_products", name_products),
   ("coalesce_stores", coalesce_stores),
   ("prepare_scalar", prepare_scalar_expressions),
 )

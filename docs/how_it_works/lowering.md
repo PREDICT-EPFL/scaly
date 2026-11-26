@@ -195,6 +195,7 @@ The passes run in the order of `PASS_PIPELINE` in
 | `unroll_unit_loops` | Removes empty loops and inlines one-iteration loops |
 | `fold_arith_after_unroll` | Runs `fold_arith` again on what unrolling exposed |
 | `pack_workspace` | Shares storage between temporaries whose lifetimes do not overlap |
+| `name_products` | Names a product of two locals that several statements repeat, outside widened loops |
 | `coalesce_stores` | Pairs stores to adjacent `float64` elements |
 | `prepare_scalar` | Splits deeply nested scalar expressions into bounded statements |
 

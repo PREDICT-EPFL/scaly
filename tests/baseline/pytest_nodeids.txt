@@ -5004,6 +5004,7 @@ tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[fold_t
 tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[fuse_ranges]
 tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[hoist_invariant]
 tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[hoist_reciprocals]
+tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[name_products]
 tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[pack_masks]
 tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[pack_workspace]
 tests/passes/test_conditionals.py::test_each_pass_preserves_both_branches[prepare_scalar]
@@ -5117,6 +5118,11 @@ tests/passes/test_hoist_reciprocals.py::test_reassignment_anywhere_in_loop_block
 tests/passes/test_hoist_reciprocals.py::test_shared_reciprocal_precedes_loop
 tests/passes/test_hoist_reciprocals.py::test_transitive_definitions_and_index_offsets_are_resolved
 tests/passes/test_hoist_reciprocals.py::test_transitive_loop_varying_definition_is_not_invariant
+tests/passes/test_name_products.py::test_a_product_a_statement_repeats_is_named
+tests/passes/test_name_products.py::test_a_product_two_statements_repeat_is_named_before_the_first
+tests/passes/test_name_products.py::test_a_product_used_once_is_left_alone
+tests/passes/test_name_products.py::test_a_widened_range_keeps_its_products_at_their_uses
+tests/passes/test_name_products.py::test_an_operand_assigned_between_two_uses_ends_the_group
 tests/passes/test_pack_masks.py::test_cleared_bits_are_structural_zeros_for_nonfinite_and_negative_values[1]
 tests/passes/test_pack_masks.py::test_cleared_bits_are_structural_zeros_for_nonfinite_and_negative_values[2]
 tests/passes/test_pack_masks.py::test_cleared_bits_are_structural_zeros_for_nonfinite_and_negative_values[4]
@@ -5686,6 +5692,7 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.progr
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.fuse_ranges]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.hoist_invariant]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.hoist_reciprocals]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.name_products]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.pack_masks]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.pack_workspace]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.prepare_scalar]

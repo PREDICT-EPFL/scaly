@@ -75,11 +75,7 @@ def _generated(fn: sc.Function) -> str:
 
 
 def _operations(proc: ProgramNode) -> dict[ProgramOp, int]:
-  """The floating operations the procedure computes for its outputs other than the status, each value once.
-
-  A value, not an occurrence in the C: the scheduler leaves a product of two locals with two uses
-  at both uses (``schedule_values``), leaving the common subexpression to the C compiler.
-  """
+  """The floating operations the procedure computes for its outputs other than the status, each value once."""
   body = proc.args[proc.attrs["param_count"] :]
   assigned = {stmt.attrs["target"]: stmt.args[0] for stmt in body if stmt.op == ProgramOp.ASSIGN}
   pending = [
@@ -102,6 +98,17 @@ def _operations(proc: ProgramNode) -> dict[ProgramOp, int]:
       counts[node.op] = counts.get(node.op, 0) + 1
     pending.extend(node.args)
   return counts
+
+
+def _text_operations(body: str) -> int:
+  """The floating operators the C text of a procedure writes for its outputs other than the status, each occurrence counted."""
+  count = 0
+  for line in body.splitlines():
+    if "int32_t" in line or "status" in line or "=" not in line:
+      continue
+    value = line.split("=", 1)[1]
+    count += len(re.findall(r" [-+*/] ", value)) + value.count("sqrt(")
+  return count
 
 
 def _flops(analysis: LDLSymbolic, routine: str) -> int:
@@ -149,7 +156,7 @@ def test_a_pattern_within_the_budget_factors_in_straight_line_code(name: str, ro
   analysis = symbolic.ldl(_pattern(a), ordering)
   fn = _routine(a, routine, ordering)
 
-  proc, _ = _procedure(fn, _symbol(routine, ordering))
+  proc, body = _procedure(fn, _symbol(routine, ordering))
   # The entry point reads K and writes L in CSC order straight from the procedure.
   generated = _generated(fn)
   assert "for (" not in generated and "static const" not in generated
@@ -157,6 +164,8 @@ def test_a_pattern_within_the_budget_factors_in_straight_line_code(name: str, ro
   assert proc.attrs.get("scalarized") and not any(stmt.op == ProgramOp.BUFFER for stmt in proc.args[proc.attrs["param_count"] :])
   operations = _operations(proc)
   assert sum(operations.values()) == _flops(analysis, routine)
+  # The C writes each of them once: a product used twice is named, not repeated.
+  assert _text_operations(body) == _flops(analysis, routine)
   assert ProgramOp.NEG not in operations
   if routine in ("cholesky", "ldl"):
     # Each stored entry of L is computed once.

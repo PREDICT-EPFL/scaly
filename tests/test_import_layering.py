@@ -99,6 +99,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.passes.program.hoist_reciprocals": 6,
   "scaly.passes.program.hoist_invariant": 6,
   "scaly.passes.program.pack_workspace": 6,
+  "scaly.passes.program.name_products": 6,
   "scaly.passes.program.unroll_unit_loops": 6,
   "scaly.passes.program.widen_ranges": 6,
   "scaly.passes.program.scalarize": 6,
