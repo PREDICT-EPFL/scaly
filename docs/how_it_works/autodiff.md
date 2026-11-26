@@ -386,6 +386,58 @@ An ordinary call is treated differently. Reverse mode differentiates the callee
 and substitutes the result into the caller, so the adjoint of a call is inlined.
 Only mapped calls get a separate stage adjoint function.
 
+## Custom rules and their residuals
+
+A function with [custom rules](../guide/derivatives.md#custom-derivative-rules) carries them in
+place of its body's derivative. The `fwd` rule returns the outputs and the residuals, the values
+a derivative rule needs from the primal computation, such as a factorization and the solution it
+gave. Scaly makes the residuals extra results of the function, after its outputs. A call that
+reads an output and a call that reads a residual, with the same arguments, are one invocation,
+which computes both once. A program that reads no residual lowers the function with its outputs
+only.
+
+The reverse rule `bwd` and the forward rule `tangent` both read the residuals of that invocation.
+For forward mode with several directions, Scaly builds one helper function per call. It takes the
+residuals as arguments and maps the single-direction `tangent` rule over the directions, with the
+residuals shared by every iteration. Here is the value and Jacobian of the cubic root from the
+guide, whose residual is the solution, with the Newton steps and the rule omitted:
+
+```python
+@sc.function(sc.arg("p", 3), outputs=sc.group(sc.arg("x", 3), sc.arg("dx", (3, 3))))
+def value_and_jacobian(p: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    x = root(p)
+    return x, sc.jacobian(x, p)
+
+print(sc.render_expr_assembly(value_and_jacobian))
+```
+
+```
+  expr.func @cubic_root_3_t772c30_fwd_ef49c06a3c(%fwd:res:0: tensor<3xfloat64 diff>) -> (%fwd:cubic_root:p: tensor<3x3xfloat64 diff>) {
+    %0 = expr.input {lowering="auto", name="fwd:res:0"} : tensor<3xfloat64 diff>
+    %1 = expr.const {lowering="auto", value=[1., 0., 0., ..., 0., 0., 1.]} : tensor<9xfloat64>
+    %2 = expr.loop(%0, %1) {callee="cubic_root_tangent_3_3_t9e26d8", cond=None, in_place=[], index=False, length=3, n_carry=0, output=0, reverse=False, starts=[0, 0], strides=[0, 3]} : tensor<9xfloat64 diff>
+    %3 = expr.reshape(%2) {shape=[3, 3]} : tensor<3x3xfloat64 diff>
+    expr.return %3
+  }
+  expr.func @value_and_jacobian(%p: tensor<3xfloat64 diff>) -> (%x: tensor<3xfloat64 diff>, %dx: tensor<3x3xfloat64 diff>) {
+    %0 = expr.input {lowering="auto", name="p"} : tensor<3xfloat64 diff>
+    %1 = expr.call(%0) {callee="cubic_root_3_t772c30", output=0} : tensor<3xfloat64 diff>
+    %2 = expr.call(%0) {callee="cubic_root_3_t772c30", output=1} : tensor<3xfloat64 diff>
+    %3 = expr.call(%2) {callee="cubic_root_3_t772c30_fwd_ef49c06a3c", output=0} : tensor<3x3xfloat64 diff>
+    %4 = expr.transpose(%3) {axes=[1, 0]} : tensor<3x3xfloat64 diff>
+    expr.return %1, %4
+  }
+```
+
+`%1` is the root and `%2` the residual of the same call, so the Newton steps run once. The helper
+receives `%2` and maps the rule over the three directions in `%1` of the helper, reading the
+residual with stride zero and each direction with stride three. A mapped call works the same way,
+with the helper mapped over the stages and each stage reading its own residual.
+
+The residuals are results of the function, so they keep their dependence on the inputs. A second
+derivative differentiates the rule and the residuals it reads, through the body of `fwd`, as it
+would differentiate any other result. Freezing them would give wrong Hessians.
+
 ## Non-smooth and unsupported derivatives
 
 The guide records the [non-smooth conventions](../guide/derivatives.md#non-smooth-conventions),

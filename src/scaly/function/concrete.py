@@ -75,19 +75,23 @@ class CustomRules:
   output. ``bwd`` takes the residuals and then one cotangent per output and returns one cotangent
   per input. ``residuals`` are expressions over the function's own inputs; a call computes them
   with its outputs, as the results after them. ``sparsity`` holds the declared pattern of each
-  output in each input, ``[output][input]``, or ``None`` for dense.
+  output in each input, ``[output][input]``, or ``None`` for dense. ``tangent`` takes the residuals
+  and then one tangent per input, flat, and returns one tangent per output; at most one of ``jvp``
+  and ``tangent`` is set.
   """
 
   jvp: ConcreteFunction | None = None
   bwd: ConcreteFunction | None = None
   residuals: tuple[Expr, ...] = ()
   sparsity: tuple[tuple[SparsityPattern, ...], ...] | None = None
+  tangent: ConcreteFunction | None = None
 
   @cached_property
   def key(self) -> tuple[str, ...]:
     """A deterministic identity for the names of derivative helpers."""
     patterns = "" if self.sparsity is None else hashlib.sha1(repr(self.sparsity).encode()).hexdigest()[:10]
-    return (self.jvp.name if self.jvp else "", self.bwd.name if self.bwd else "", patterns)
+    names = (self.jvp.name if self.jvp else "", self.bwd.name if self.bwd else "", patterns)
+    return (*names, self.tangent.name) if self.tangent else names
 
 
 @dataclass

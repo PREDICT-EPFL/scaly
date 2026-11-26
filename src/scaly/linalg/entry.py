@@ -1,14 +1,16 @@
-"""The entry points ``solve``, ``cholesky`` and ``ldl``: one spelling each, the factorization chosen by the matrix's type and ``assume``."""
+"""The entry points ``solve``, ``solve_triangular``, ``cholesky``, ``ldl`` and ``permutation``: one spelling each, the routine chosen by the matrix's type and ``assume``."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
 
+import numpy as np
 import scipy.sparse
 
 from ..function.model import Function
 from ..ir.expr import Expr, _operands, as_expr, promote_dtype
+from ..ir.types import CanonicalPattern
 from . import dense, sparse
 from .dense import _general, _mapped, _positive, _symmetric, _system
 from .symbolic import ORDERINGS, Ordering
@@ -48,9 +50,9 @@ def solve(K: Any, b: Any, *, assume: str, ordering: Ordering | None = None) -> t
   ``x`` is differentiable in ``K`` and ``b``. The reverse derivative reuses the factorization
   of the solve: ``b_bar = K^{-T} x_bar`` and ``K_bar = -b_bar x^T``, with the two mirrored
   entries of each lower-triangle entry summed when only the lower triangle is read. Forward
-  derivatives of a dense solve use the forward rule of the factorization and follow the
-  substitutions. Those of a sparse solve are ``dx = K^{-1} (db - dK x)``, solved with the same
-  factorization. The derivative is meaningless when ``status`` is nonzero.
+  derivatives are ``dx = K^{-1} (db - dK x)``, solved with the same factorization, so a
+  solution and its Jacobian factor ``K`` once. The derivative is meaningless when ``status`` is
+  nonzero.
   """
   # A SciPy matrix becomes a sparse expression first, so that a Python ``b`` takes its dtype.
   K, b = _operands(as_expr(K) if scipy.sparse.issparse(K) else K, b)
@@ -58,7 +60,7 @@ def solve(K: Any, b: Any, *, assume: str, ordering: Ordering | None = None) -> t
   if ordering is not None:
     if assume not in ("pos", "sym"):
       raise ValueError(f"solve: a sparse matrix takes assume 'pos' or 'sym', got {assume!r}")
-    return sparse.solve(K, _sparse_right_hand_side(K, b), assume, ordering)
+    return sparse.solve(K, _sparse_right_hand_side("solve", K, b), assume, ordering)
   if assume not in _DENSE:
     raise ValueError(f"solve: assume must be one of {sorted(_DENSE)}, got {assume!r}")
   K, B, batch, vector = _system("solve", K, b)
@@ -66,17 +68,73 @@ def solve(K: Any, b: Any, *, assume: str, ordering: Ordering | None = None) -> t
   return (X.reshape(X.shape[:-1]) if vector else X), status
 
 
-def _sparse_right_hand_side(K: Expr, b: Expr) -> Expr:
+def _sparse_right_hand_side(name: str, K: Expr, b: Expr) -> Expr:
   if b.type.pattern is not None:
-    raise TypeError("solve takes a dense right-hand side, got a sparse one")
+    raise TypeError(f"{name} takes a dense right-hand side, got a sparse one")
   try:
     promote_dtype(K, b)
   except TypeError as error:
-    raise TypeError(f"solve: {error}") from None
+    raise TypeError(f"{name}: {error}") from None
   n = K.shape[-1]
   if b.shape[:1] != (n,) or len(b.shape) > 2:
-    raise ValueError(f"solve: the right-hand side has shape {b.shape}, expected {(n,)} or {(n, 'k')}")
+    raise ValueError(f"{name}: the right-hand side has shape {b.shape}, expected {(n,)} or {(n, 'k')}")
   return b
+
+
+def solve_triangular(T: Any, b: Any, *, lower: bool, trans: bool = False, unit_diagonal: bool = False) -> Expr:
+  """Solve ``T x = b``, or ``T^T x = b`` with ``trans``, for a triangular ``T``.
+
+  ``T`` is a float32 or float64 square matrix, or a stack of them over leading axes. ``lower`` has no
+  default, since SciPy's default reads the upper triangle. Only the triangle that ``lower``
+  names is read, and its diagonal only when ``unit_diagonal`` is false. With ``unit_diagonal``
+  the diagonal is taken as ones. ``b`` is one right-hand side, shaped
+  ``(*batch, n)``, or several as the columns of ``(*batch, n, k)``, and ``x`` has its shape. ``b``
+  has the dtype of ``T``, which a Python number or list takes, and so has ``x``.
+  A zero diagonal entry gives infinities or NaN in ``x``.
+
+  A sparse ``T`` is one matrix, such as the ``L`` of a sparse `cholesky` or `ldl`, and ``b`` and
+  ``x`` stay dense. Each substitution is one loop over the columns of the triangle read, whose
+  work follows its stored entries. A diagonal entry that is not stored reads as zero.
+
+  The result is differentiable in ``T`` and ``b``. The reverse derivative is one solve with the
+  transposed matrix, and the forward derivative follows the substitution. A sparse ``T``'s
+  derivative is on its stored entries that the solve reads.
+  """
+  if scipy.sparse.issparse(T):
+    T = as_expr(T)
+  T, b = _operands(T, b)
+  if T.type.pattern is None:
+    return dense.solve_triangular(T, b, lower=lower, trans=trans, unit_diagonal=unit_diagonal)
+  b = _sparse_right_hand_side("solve_triangular", T, b)
+  vector = len(b.shape) == 1
+  X = sparse.solve_triangular(T, b.reshape((*b.shape, 1)) if vector else b, lower, trans, unit_diagonal)
+  return X.reshape(X.shape[:-1]) if vector else X
+
+
+def permutation(A: Any, *, ordering: Ordering | None = None) -> np.ndarray:
+  """The reordering that a sparse `cholesky` or `ldl` of ``A`` with this ``ordering`` applies.
+
+  Returns ``perm``, a read-only int64 NumPy array with ``(P A P^T)[i, j] = A[perm[i], perm[j]]``,
+  computed from the pattern of ``A`` while the graph is built: ``A`` is a sparse expression, a
+  SciPy sparse matrix or a ``CanonicalPattern``. ``ordering`` is ``"amd"`` by default, as for
+  the factorizations. Their factors are in the reordered numbering, so a solve with them reads
+  ``b[perm]`` and writes ``x[perm] = y``: gather with ``perm``, solve with `solve_triangular`, and
+  gather the result with ``np.argsort(perm)``.
+  """
+  if isinstance(A, CanonicalPattern):
+    pattern = A
+  else:
+    A = as_expr(A)
+    if A.type.pattern is None:
+      raise TypeError("permutation takes a sparse matrix, got a dense one")
+    pattern = A.type.pattern
+  if pattern.shape[0] != pattern.shape[1]:
+    raise ValueError(f"permutation needs a square matrix, got shape {pattern.shape}")
+  if ordering is None:
+    ordering = "amd"
+  elif ordering not in ORDERINGS:
+    raise ValueError(f"permutation: ordering must be one of {ORDERINGS}, got {ordering!r}")
+  return sparse.permutation(pattern, ordering)
 
 
 def cholesky(A: Any, *, ordering: Ordering | None = None) -> tuple[Expr, Expr]:
@@ -102,7 +160,7 @@ def cholesky(A: Any, *, ordering: Ordering | None = None) -> tuple[Expr, Expr]:
 
   ``L`` is differentiable in ``A``. The derivative of an entry below the diagonal is the sum of
   the derivatives with respect to the two mirrored entries it stands for. The reverse derivative
-  of a dense factor reuses ``L``, and its forward derivative factors ``A`` once more. A sparse
+  and the forward derivative of a dense factor reuse ``L``. A sparse
   ``L`` is meant to be read, not differentiated, and is declared nondifferentiable: differentiate
   `solve` instead.
   """
@@ -130,8 +188,8 @@ def ldl(A: Any, *, ordering: Ordering | None = None) -> tuple[Expr, Expr, Expr]:
   reordered numbering.
 
   The factors are meant to be read, not differentiated: differentiate `solve` instead. Dense
-  factors have a forward rule, which factors ``A`` once more for every direction, and no reverse
-  rule, so a gradient through them differentiates the loops of the factorization. Sparse factors
+  factors have a forward rule, which reads the factors of the call, and no reverse rule, so a
+  gradient through them differentiates the loops of the factorization. Sparse factors
   are declared nondifferentiable.
   """
   A = as_expr(A)

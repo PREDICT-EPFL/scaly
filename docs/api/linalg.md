@@ -13,3 +13,5 @@ the derivatives with examples.
 ::: scaly.linalg.lu_factor
 
 ::: scaly.linalg.solve_triangular
+
+::: scaly.linalg.permutation

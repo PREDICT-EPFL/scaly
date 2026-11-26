@@ -107,7 +107,7 @@ NumPy or SciPy without raising an error. Two of the arguments have no default to
 `scipy.linalg.ldl` pivots and returns `(lu, d, perm)` with `d` a block diagonal matrix, while
 `linalg.ldl` returns `(L, d, status)` with `d` the vector of pivots. All of them take float32 or
 float64 matrices, as [below](#float32-matrices) explains, and raise `TypeError` for integer ones.
-`lu_factor`, `solve_triangular` and `solve(..., assume="gen")` take only dense matrices.
+`lu_factor` and `solve(..., assume="gen")` take only dense matrices.
 
 ## Only the lower triangle is read
 
@@ -215,7 +215,7 @@ print(status)
 ## Sparse matrices
 
 A matrix with a [stored pattern](sparse_matrices.md) passes through the same functions:
-`cholesky`, `ldl`, and `solve` with `"pos"` or `"sym"`. The factorization then computes only the
+`cholesky`, `ldl`, `solve_triangular`, and `solve` with `"pos"` or `"sym"`. The factorization then computes only the
 entries of the factor that the pattern allows, and its work grows with those entries rather than
 with the cube of the order. The arrow matrix below couples its first unknown to every other one,
 as a constraint couples the variables of a quadratic program:
@@ -272,6 +272,31 @@ rounding. The factors do. `L` is a sparse matrix of \(P K P^T\), in the reordere
 pattern holds the entries the factorization may fill and the diagonal. `d` is a dense vector in the
 same numbering, and so is the position of the first unusable pivot in the status. `ordering` with a
 dense matrix raises `TypeError`, and a sparse matrix takes no stack over leading axes.
+
+To solve with the factors, as an interior-point method solves twice with one factorization, map
+the right-hand side into the reordered numbering and back. `permutation(K)` returns the ordering
+that `ldl(K)` applies, as a NumPy array `perm` with \((P K P^T)_{ij} = K_{\mathrm{perm}[i], \mathrm{perm}[j]}\),
+computed from the pattern when it is called. `solve_triangular` takes the sparse `L` and reads only
+its stored entries:
+
+```python
+perm = linalg.permutation(K_value)
+print(perm)
+# [1 2 3 0 4]
+
+@sc.function(sc.arg("K", K_type), sc.arg("b", 5), outputs=sc.arg("x", 5))
+def arrow_steps(K: sc.Expr, b: sc.Expr) -> sc.Expr:
+    L, d, status = linalg.ldl(K)
+    y = linalg.solve_triangular(L, sc.gather(b, sc.const(perm)), lower=True, unit_diagonal=True)
+    y = linalg.solve_triangular(L, y / d, lower=True, trans=True, unit_diagonal=True)
+    return sc.gather(y, sc.const(np.argsort(perm)))
+
+print(arrow_steps(K_value, np.ones(5)))
+# [0.   0.25 0.25 0.25 0.25]
+```
+
+Each call of a library function with the same types calls one function of the generated C, so
+the solves of several right-hand sides share their code.
 
 The derivatives of a sparse solve are those of a dense one, with \(\bar K\) on the entries the
 factorization reads and zero on the mirrored entries it does not. Forward mode solves
@@ -336,16 +361,25 @@ print(sc.gradient(cost, "cost", "K")(np.array([[4.0, 0.0], [1.0, 3.0]]), np.arra
 #  [-0.14049587 -0.17355372]]
 ```
 
-Forward mode differentiates the substitutions step by step. For the factor it uses a closed form.
-For Cholesky it is \(dL = L\, \Phi(L^{-1}\, dK\, L^{-T})\), where \(\Phi\) keeps the lower triangle
-and halves the diagonal. For \(L D L^T\), with \(F = L^{-1}\, dK\, L^{-T}\), the pivots change by
-the diagonal of \(F\) and \(dL = L X\), where \(X\) is the strict lower triangle of \(F\) with each
-column divided by its pivot. For LU, with \(F = L^{-1} P\, dK\, U^{-1}\), \(dL\) is \(L\) times the
-strict lower triangle of \(F\) and \(dU\) is the upper triangle of \(F\) times \(U\), the row
-exchanges staying fixed. Each rule factors `K` once more for every direction, so a forward
-derivative and a Hessian with respect to `K` cost one factorization per entry of `K` they
-differentiate in, and generate correspondingly more code. Second derivatives, such as those of `sc.hessian`, hold with
-`K` and `b` varying together, and a gradient may itself be differentiated in reverse mode.
+Forward mode, which Jacobians and Hessians use, differentiates \(K x = b\) the same way:
+
+\[
+dx = K^{-1} (db - dK\, x),
+\]
+
+solved with the factorization and the solution of the call. A solution and its Jacobian with
+respect to `K` factor `K` once, however many directions the Jacobian has. Second derivatives, such
+as those of `sc.hessian`, hold with `K` and `b` varying together, and a gradient may itself be
+differentiated in reverse mode.
+
+A second derivative also differentiates the factorization the first derivative reads. For that the
+factors have closed-form forward rules, which read the factors of their own call. For Cholesky it
+is \(dL = L\, \Phi(L^{-1}\, dK\, L^{-T})\), where \(\Phi\) keeps the lower triangle and halves the
+diagonal. For \(L D L^T\), with \(F = L^{-1}\, dK\, L^{-T}\), the pivots change by the diagonal of
+\(F\) and \(dL = L X\), where \(X\) is the strict lower triangle of \(F\) with each column divided
+by its pivot. For LU, with \(F = L^{-1} P\, dK\, U^{-1}\), \(dL\) is \(L\) times the strict lower
+triangle of \(F\) and \(dU\) is the upper triangle of \(F\) times \(U\), the row exchanges staying
+fixed.
 
 `cholesky` and `solve_triangular` follow the same rules. The reverse derivative of a triangular
 solve is one more triangular solve with the transposed matrix, and that of `cholesky` takes two.

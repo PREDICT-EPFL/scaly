@@ -131,7 +131,12 @@ The rest of the roadmap is built from these. All were confirmed by the maintaine
     `sc.custom_derivative` sets rules when a Function is built, in JAX's `custom_vjp` form: a forward
     rule returns outputs and residuals, a backward rule consumes them, so a solve's derivatives
     reuse its factorization. External C is its own construct, `sc.extern`, always concrete, with the
-    build description in `sc.CLibrary`. There is no expression-level customization.
+    build description in `sc.CLibrary`. There is no expression-level customization. Since
+    2026-11-19 ([#491]) a forward rule may also reuse the residuals: `tangent(residuals,
+    directions)` mirrors `bwd(residuals, weights)` and needs `fwd`, so every seed direction of a
+    solve reuses the one factorization. `jvp(*inputs, *directions)` stays for rules without
+    residuals. *Rejected: giving `jvp` the residuals as a leading argument whenever `fwd` is
+    passed, because a rule whose arguments depend on the other keywords fails without an error.*
 11. **One typed workspace struct per Function, with one array per dtype ([#372]).** The entry
     takes the Function's `<fn>_workspace_t`, which holds an array for each dtype the Function uses
     and no member for the others, so every temporary of every dtype can go to caller memory and the
@@ -152,7 +157,11 @@ The rest of the roadmap is built from these. All were confirmed by the maintaine
 13. **A reference schedule, not bits fixed by definition.** Each kernel has one reproducible
     reference schedule. Target schedules (lanes, blocking, unrolling) may round differently and are
     checked by numerical and solver-robustness tests against it. This replaces the earlier rule
-    that a factorization's summation order is part of its definition.
+    that a factorization's summation order is part of its definition. The sign of a zero result
+    is one of those bits (decided 2026-11-19 on [#429], since folded into [#71]): a sum of
+    negative zeros may be `-0.0` under one lowering and `+0.0` under another or in NumPy, and
+    tests compare values without the sign of zero. *Rejected: NumPy's `+0.0`, which costs one
+    addition in every scalar-lowered sum.*
 14. **Predictable lowering.** Users and libraries write performance-critical kernels, such as
     register-blocked dense products with tile sizes chosen in Python, as ordinary expressions.
     Lowering keeps the structure they wrote (Function boundaries, loops, lowering hints), keeps
@@ -160,21 +169,23 @@ The rest of the roadmap is built from these. All were confirmed by the maintaine
     Scaly does not try to rediscover BLASFEO's kernels by itself. Devrush's later speed work
     (register tiles, cache panels and blocked factorizations chosen in lowering) is a study for
     after this roadmap, not part of it.
-15. **Open since 2026-11-18: how processor knowledge and the compiler's thresholds reach the
-    compiler.** The maintainer and the owner of [#492] settle it there (see
-    [Open questions](#open-questions)). [#492] asks for the thresholds of the program passes and of
-    lowering, and hardware facts such as cache sizes, to become parameters an expert or an
-    autotuner can set per chip, possibly as one target description. Until then the earlier decision
-    stands as written below, and its reason is what any answer must address. *The earlier decision:*
-    processor knowledge reaches lowering only, as build options, and there is no target object.
-    What the processor and the compiler can do reaches the compiler as main's `BuildRecipe` fields
-    (`cpu`, `lanes`, `dialect`, `vector_libm`, `reciprocal`), and a field joins when a lowering
-    choice first needs one. Only lowering and the program passes read them: the expression graph,
-    derivative helpers and library Functions are the same for every recipe, so a derivative cache
-    or a template instance never keeps the choices of the recipe it was first built under (devrush
-    read its target while building seed groups, and its caches kept the first target's grouping).
-    A library Function that wants a schedule chosen by size says so with a lowering hint, which
-    lowering resolves against the recipe.
+15. **One target description, read only by lowering, the program passes and code generation
+    (settled 2026-11-19 for [#492]).** A frozen target value holds hardware facts (cache sizes,
+    vector width, alignment, stack limit) and the compiler's budgets, each derived from the facts
+    and open to an override. Named presets cover the common chips, so a user rarely sets a number
+    and an autotuner can sweep all of them. `BuildRecipe` holds the target. Only
+    `passes/lowering/`, `passes/program/` and `codegen/` may read it, which the import-layer test
+    enforces: the expression graph, derivative helpers and library Functions are the same for every
+    target, so a derivative cache or a template instance never keeps the choices of the target it
+    was first built under (devrush read its target while building seed groups, and its caches kept
+    the first target's grouping). Nothing decided while a graph is traced may therefore depend on
+    the target. A library Function that wants a schedule chosen by size says so with a lowering
+    hint, which lowering resolves against the target. Which facts and budgets the target holds,
+    their defaults and the presets are [#492]'s to propose. *Replaced 2026-11-19: "processor
+    knowledge reaches lowering only, as build options, and there is no target object" (flat
+    `BuildRecipe` fields `cpu`, `lanes`, `dialect`, `vector_libm`, `reciprocal`, one added per
+    need), because the thresholds an expert tunes per chip are too many to stay flat fields and
+    most follow from a few hardware facts.*
 
 ## The core language
 
@@ -216,9 +227,15 @@ rejected for the same reason.
 
 After 0.1.0 the work is three milestones, all shipped in one release, 0.2.0 (revised 2026-11-18;
 until then each milestone was its own release, 0.2.0 to 0.4.0, see [Release scope](#release-scope)).
+These three are steps of this order, numbered here and nowhere else. In the tracker a milestone is
+a capability ([Tracking work](../../docs/dev/issue_tracking.md#milestones)), and an issue carries
+one of four: `Fully sparse IR` for the sparse work of milestone 1, `Loop compiler` for milestone 2
+with the hand-written kernels and the compiler's thresholds, and `Control flow support` and
+`Generated solvers` for the two halves of milestone 3. The milestone on the issue is the reference.
 Each milestone ends with something a user can rely on; inside a milestone, items run in lanes,
 sequential inside a lane, with arrows as hard dependencies. One rule holds across lanes: a pull
-request that regenerates C snapshots is never in flight at the same time as another one ([#19],
+request that regenerates C snapshots is never ready for review or queued at the same time as
+another one ([#19],
 [#27], [#45], [#28], [#69] and [#46] regenerate them). Edits to the shared vocabulary (`ir/expr.py`,
 `ir/program.py`, the verifiers) used to merge one at a time as a second rule. The merge queue now
 does that by testing each pull request on top of the ones ahead of it, so they run in parallel.
@@ -253,9 +270,11 @@ Milestone 3: control flow, dense and sparse linear algebra, and generated solver
                after #31: #34 VMAP folded into LOOP, #50 unrolling static loops, #53 COND,
                #32 forward AD -> #33 reverse AD
   linalg       #51 dense factorizations and solves (after #31, #36, #50) -> #52 dense LDL^T and LU
-  sparse       #495 symbolic analysis -> #496 straight-line sparse factorizations (after #52)
+  sparse       #495 symbolic analysis -> #54 sparse LDL^T, Cholesky and solves, written as loops
+               (after #46, #52, #53) -> #70 generated sparse IPM
+               #470 lowering unrolls loops whose inner trip counts and indices become constants
+               #54, #470 -> #496 small sparse factorizations lower to straight-line code
                -> #497 multistage KKT with sparse or dense stage blocks over a stage loop
-               #495 -> #54 looped sparse LDL^T (after #46, #52, #53) -> #70 generated sparse IPM
   kernels      #74 predictable lowering of hand-written kernels (after #69, #31)
   solvers      #72 TinyMPC (after #51, #71); #205 stagewise IPM and #206 SQP-RTI (after #51, #36;
                their timings after #71) -> #208 microcontroller benchmarks (after #72, #207)
@@ -266,9 +285,13 @@ Added to 0.2.0 on 2026-11-18, outside the milestones
   parameters; #493 Cortex-A53 builds under emulation
   release gate: #481 no benchmark kernel slower than at e7f80e1f (after #69, #75, #71)
 
-Not yet scheduled
-  #58 Function-level jvp/vjp -> #59 npmpc example and guide;
-  #78 checked builds (after #35, #77)
+Added to 0.2.0 on 2026-11-19
+  #509 float32 and int32 statuses in scaly.linalg (before #205 and #206)
+  #470 unrolling loops with inner trip counts and indices from constant tables (before #496)
+
+In a capability milestone, with no place in this order yet
+  #58 Function-level jvp/vjp -> #59 npmpc example and guide (Loop compiler);
+  #78 checked builds (after #35, #77; Control flow support)
 
 Then #109, the GPU milestone definition.
 ```
@@ -334,10 +357,14 @@ Everything else follows 0.1.0 in the compiler order above; [#64] is the first ca
 ### 0.2.0
 
 Settled 2026-11-18, with no date: the three milestones of the order of work ship as one release,
-whose aim is code generation of entire solvers that fit on microcontrollers. GitHub's `scaly 0.2.0`
-milestone holds all of their issues; more may join as it goes. *Replaced 2026-11-18: one release
+whose aim is code generation of entire solvers that fit on microcontrollers. In the tracker the
+release is a list of capability milestones, and 0.2.0 is these four: `Fully sparse IR`,
+`Loop compiler`, `Control flow support` and `Generated solvers`. An issue belongs to the release
+through its milestone and carries no release field. *Replaced 2026-11-18: one release
 per milestone (0.2.0, 0.3.0 and 0.4.0, settled 2026-10-22), because the first two would have shipped
-without the generated solvers that justify the dtypes, the sparse matrices and the loop compiler.*
+without the generated solvers that justify the dtypes, the sparse matrices and the loop compiler.
+Replaced 2026-11-25: one `scaly 0.2.0` milestone holding every issue of the release, which held 95
+issues and said nothing about progress on any capability.*
 
 - It announces float32 code and typed entry points, oracle builds for bare-metal Cortex-M
   targets ([#207]), and static sparse matrices through expressions, derivatives and generated C.
@@ -357,15 +384,31 @@ without the generated solvers that justify the dtypes, the sparse matrices and t
   its derivatives; the dense and sparse library factorizations; and the generated solvers ([#72],
   [#205], [#206], [#497], [#70]) with the microcontroller benchmarks of [#208] on a Crazyflie 2.1's
   STM32F405. The solvers stay in `examples/`, and only the factorizations and solves of [#51],
-  [#52], [#495], [#496] and [#54] join `scaly.linalg`.
+  [#52], [#495] and [#54] join `scaly.linalg`.
 - Conditions for the tag, decided 2026-11-18: the sparse interface stays as published (`sc.arg`
   with a pattern and a layout, `sc.pack`, `sc.values`, `to_dense`, `sc.sparsify`, and per-leaf
   header tables for the leaf's own layout), and changes to it after the tag are ABI changes; no
   benchmark kernel is slower than at `e7f80e1f` without an explanation ([#481]); and the chain
   M=9 Hessian stage keeps the straight-line build accepted in [#214], with its operation count and
   build cost left to [#427] after [#75].
-- Parent issues keep their place; a release milestone goes on the leaves, and on a parent only when
-  all its children are in that release.
+- What the tag freezes, listed 2026-11-25. A change to any of these after the tag is a breaking
+  change:
+  - the default entry signature and the typed workspace struct ([#372]), and the `casadi=True`
+    entry;
+  - the C type of a leaf for each dtype, and the per-leaf header tables of sparse leaves;
+  - the sparse interface, as the conditions above list it;
+  - `scaly.linalg`: `solve`, `solve_triangular`, `cholesky`, `ldl` and `lu_factor`, their
+    keywords (`assume=`, `ordering=`, `lower=`) and the int32 status;
+  - the rule signatures of `sc.custom_derivative` (`jvp`, `fwd`, `bwd`, `tangent`);
+  - `sc.scan`, `sc.while_loop` and `sc.cond`, with `in_place=` and `max_trajectory=`;
+  - `sc.extern` and `sc.CLibrary`;
+  - the builder for optimal-control problems ([#88]);
+  - the target description of decision 15, if [#492] makes it public before the tag.
+
+  Everything under `examples/` stays free to change, the generated solvers included.
+- An issue is one coherent result with one capability milestone. Work is not planned as parent
+  issues with sub-issues. *Replaced 2026-11-25: "parent issues keep their place; a release
+  milestone goes on the leaves".*
 
 The current milestone and issue states are tracked in GitHub. This paragraph preserves the
 release decisions; it is not a separate completion checklist. Release execution is tracked in
@@ -886,6 +929,18 @@ IPOPT Jacobian of a mapped multiple-shooting chain ran in 0.39 to 0.42 of its ti
 the tests here, including the guards it found by measuring: a gather that repeats entries does not
 distribute over a sum, and a computed part of a concatenation stays whole.
 
+As built by [#75] (recorded 2026-11-19, PR #510): `passes/lowering/demand.py` walks back from the
+outputs through the access maps `LowerCtx.read` evaluates, and a stored dense value is computed at
+its demanded entries when the loop over them pays: always for an axis reduction and a product with
+a vector operand; for an elementwise value that calls libm when it skips a third of its entries;
+for anything else, matrix-matrix products included, only when the narrowed loop needs no new
+index table (indicative review timings on la015 found table-driven matrix-matrix products and
+libm-free arithmetic slower than computing whole at 30% of the entries and above, and faster for
+reductions and matrix-vector products at 54%). Support is not intersected with
+demand: sparse values and seed-support plans compute all they store, and a dense known zero is
+still multiplied, as documented. A selected concatenation reads a computed part from storage.
+Taking scattered values straight into their reader, without the dense buffer, is not done.
+
 **[#76]. Frame budget.** As the todo describes. It can land any time after [#9]: a budget computed
 over the final program stays valid as the schedules change.
 
@@ -1345,8 +1400,8 @@ procedure outputs, each message naming the function and the op as `format_expr` 
 
 ## Linear algebra as library Functions
 
-The dense solves [#51] and [#52], the sparse factorizations [#495], [#496] and [#54], and the
-multistage solve [#497] are in milestone 3. Decision 10:
+The dense solves [#51] and [#52], the sparse factorizations [#495] and [#54] with their
+straight-line lowering [#496], and the multistage solve [#497] are in milestone 3. Decision 10:
 every factorization and solve is a `Function` in `scaly.linalg` over
 `LOOP`, `GATHER`, `SCATTER` and the elementwise table, with `sc.custom_derivative` on the solves.
 None of them adds an op. Devrush's `linalg/ops/{dense,trisolve,sparse_ldl,ragged}.py` are the
@@ -1356,7 +1411,11 @@ reference for the algorithms and the measurements, not for the structure.
 triangle of a symmetric matrix (the lower), and an off-diagonal stored entry stands for both
 mirrored entries, so its cotangent is the sum of both mirrored contributions. A factorization that
 meets an unusable pivot reports it through a status output, never through a NaN alone. A pivot is
-unusable when it is zero or, finite, at most machine epsilon times the diagonal entry it came from:
+unusable when it is zero or, finite, at most machine epsilon times the diagonal entry it came from,
+with the epsilon of the matrix's dtype, float32 or float64, which every routine follows ([#509]).
+The status is an int32 scalar per matrix, 0 or one plus the index of the first unusable pivot, in
+the factored order when the matrix was reordered (decided 2026-11-19; int64 before). Why the
+threshold:
 devrush's sparse LDL^T passed pivots 12 to 30 orders below that, and QRECIPE took 74 IPM
 iterations instead of 19 on steps of length 1e-25.
 `solve(K, b)` is a semantic boundary built with `custom_derivative`: the forward rule returns the
@@ -1378,20 +1437,33 @@ reduction come from [#71]'s lanes rather than hand-written four-lane code (devru
 dropped terms for any value but 4). Gates: npmpc's and TinyMPC's dense blocks against devrush's
 `linalg/ops/dense.py` and `trisolve.py` timings. `solve` has one entry point, chosen by the
 matrix's type, so [#54] extends it for sparse matrices instead of adding a second spelling.
+For a sparse matrix (decided 2026-11-19), `cholesky`, `ldl` and `solve` take `ordering=`, with the
+values and default of the symbolic analysis ([#495]), and raise when it is passed with a dense
+matrix. A sparse factor is a sparse value with the analysis' pattern of `L`, in the reordered
+numbering; the permutation is static, so it is read from the analysis and is not an output, and
+`solve` applies it itself.
 
 **[#52]. Dense LDL^T and LU, and `solve(assume="sym"|"gen")`.** `LDL` without pivoting for
 symmetric quasi-definite matrices, `LU` with partial pivoting for general ones; row swaps are
-same-index updates that [#36] keeps in place. The factor outputs refuse differentiation; the solves
-are differentiable through the contract above.
+same-index updates that [#36] keeps in place. The factor outputs refuse differentiation: they are
+declared with `diff=False`, which [#477] makes a declared output enforce by raising on a derivative
+request that reaches it (decided 2026-11-19, with no new keyword; a rule's own residuals are
+exempt). The solves are differentiable through the contract above.
 
 **Block-structured solvers.** Multistage solvers ([#72], [#205], [#206], [#497]) loop over a
 leading stage axis, the batch axes of decision 4, with stage derivatives from a mapped stage
 Function, and need no global sparse Jacobian. A stage block is dense or sparse. A sparse stage
 block is factored by straight-line code over its pattern ([#496], from [#495]'s symbolic analysis),
 unrolled inside one stage of the loop, so the generated C grows with the stage's pattern and not
-with the horizon. That unrolling happens while tracing at first; compiler-chosen unrolling waits for
-[#470] and [#492]. [#54]'s looped factorization stays for patterns too large to unroll. The
-solvers themselves are examples under `examples/`, not library code. Whether they later solve
+with the horizon. Lowering does that unrolling, never the library while tracing (decided
+2026-11-19): [#54]'s looped Function is the only sparse factorization, [#470] lets lowering unroll
+a loop whose inner trip counts and gather and scatter indices become constants once the outer loop
+is unrolled, and [#496] is the check that a small pattern then gives straight-line code. A pattern
+over the budget stays [#54]'s loops, and the budget is the target's (decision 15). *Replaced
+2026-11-19: "that unrolling happens while tracing at first", a second, trace-time implementation
+in `scaly.linalg` chosen by size, because a choice made while tracing cannot follow the target and
+the library would carry two factorizations.* The solvers themselves are examples under
+`examples/`, not library code. Whether they later solve
 problems from the OCP builder of [#88] is open. *Replaced 2026-11-18: dense stage blocks only, with
 the sparse route waiting, because densifying a sparse stage multiplies its work and the target
 users write sparse multistage solvers.*
@@ -1399,7 +1471,7 @@ users write sparse multistage solvers.*
 **[#54]. Sparse LDL^T.** A symbolic analysis module below `Function` ([#495]: natural, RCM and
 minimum-degree orderings, the elimination tree, the pattern of L, column chunks), immutable and
 named by a digest of its tables; it replaces `scaly-sqp`'s private `_ldl_symbolic` and runs on a
-sparse type's pattern. [#496] and [#54] share it. The factorization is a library Function: an outer
+sparse type's pattern. The factorization is a library Function: an outer
 `LOOP` over columns carrying `L`, `D` and a dense work column, inner loops with run-time trip counts
 over each column's runs ([#31]), gathers and accumulating scatters through the analysis tables, and
 `in_place=("L", "D", "w")`. Chunks of up to eight columns sharing rows are a `COND` over chunk
@@ -1551,12 +1623,9 @@ Choices this roadmap leaves open on purpose. Each names the item that settles it
   and leaves `memcpy` accessors open as a later, caller-compatible change.* *Replaced 2026-11-18
   by decision 11's typed struct ([#372]); the byte workspace remains only where [#372] keeps
   `void* w`.*
-- **How processor knowledge and the compiler's thresholds reach the compiler** ([#492], decision
-  15): build options read only by lowering and the program passes, as decided before, or one target
-  description holding hardware facts and the budgets derived from them. To be discussed by the
-  maintainer and [#492]'s owner. The point the earlier decision protected is the one to address:
-  a derivative cache or a template instance should not keep the choices of the target it was first
-  built under.
+- **What the target description holds** ([#492], decision 15): *its form was settled
+  2026-11-19, one target value with presets.* Which thresholds and hardware facts it holds, which
+  are set and which derived, their defaults and the presets stay open until [#492]'s note.
 - **Whether reverse mode should keep call boundaries** ([#73]). The design keeps them and lets
   lowering inline; the item lands only if the benchmark problems do not slow down after [#71].
 - **Per-step Jacobian compression in loop derivatives** (after [#32]): devrush's idea, with
@@ -1763,6 +1832,10 @@ writing the guide).
 [#492]: https://github.com/PREDICT-EPFL/scaly/issues/492
 [#495]: https://github.com/PREDICT-EPFL/scaly/issues/495
 [#496]: https://github.com/PREDICT-EPFL/scaly/issues/496
+[#509]: https://github.com/PREDICT-EPFL/scaly/issues/509
+[#491]: https://github.com/PREDICT-EPFL/scaly/issues/491
+[#477]: https://github.com/PREDICT-EPFL/scaly/issues/477
+[#429]: https://github.com/PREDICT-EPFL/scaly/issues/429
 [#497]: https://github.com/PREDICT-EPFL/scaly/issues/497
 [#511]: https://github.com/PREDICT-EPFL/scaly/issues/511
 [#442]: https://github.com/PREDICT-EPFL/scaly/issues/442
