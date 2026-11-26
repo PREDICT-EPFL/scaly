@@ -1,9 +1,10 @@
 """The solver, PIQP 0.7.0's ``SparseSolver``: ``setup``, ``update`` and ``solve`` in Python, and the proximal interior-point method of ``solver.tpp`` as generated code.
 
-Two Scaly Functions are generated for each structure and settings. ``setup`` is PIQP's setup and
-update: the data's infinite bounds, its Ruiz equilibration and the product ``A^T A`` the
-factorizations reuse. ``solve`` is PIQP's ``solve``: the whole iteration, from the initial point
-to the unscaled result, as one call.
+``build_solver`` returns the three Scaly Functions generated for each structure and settings.
+``setup`` is PIQP's setup: the data's infinite bounds, its Ruiz equilibration and the product
+``A^T A`` the factorizations reuse. ``solve`` is PIQP's ``solve``: the whole iteration, from the
+initial point to the unscaled result, as one call. ``update`` is PIQP's update when the scaling is
+reused: the setup without the equilibration.
 """
 
 from __future__ import annotations
@@ -22,12 +23,12 @@ from .data import Data, Structure, data_types, make_data
 from .kkt import KKT, Factor
 from .kkt_system import KKTSystem, Scalings
 from .preconditioner import Scaling, reuse_scaling, scale_data, scaling_types
-from .results import INFO_FIELDS, INTEGER_INFO, Info, Result, Status
+from .results import FROM_SCALY_STATUS, INFO_FIELDS, INTEGER_INFO, TO_SCALY_STATUS, Info, Result, Status
 from .settings import Settings
 from .utils import (
   Kernel,
   F64,
-  I64,
+  I32,
   INF,
   Layout,
   any_true,
@@ -42,12 +43,12 @@ from .utils import (
   std_max,
   std_min,
   to_float,
-  unique_name,
   zeros,
 )
 from .variables import Variables
 
 _EPS = float(np.finfo(np.float64).eps)
+RAW_INPUTS = ("P", "c", "A", "b", "G", "h_l", "h_u", "x_l", "x_u")
 _RESIDUALS = ("x", "y", "z_l", "z_u", "z_bl", "z_bu")
 _BOUNDS = ("l", "u", "bl", "bu")
 _COUNTERS = ("iter", "factor_retires", "no_primal_update", "no_dual_update")
@@ -69,6 +70,7 @@ class _Method:
 
   structure: Structure
   settings: Settings
+  name: str = "piqp_sparse"
 
   @cached_property
   def kkt(self) -> KKT:
@@ -291,7 +293,7 @@ class _Method:
     st["z_u"] = sc.where(primal, sc.where(data.h_u_mask, d["z_u"] / norm_dual, 0.0), st["z_u"])
     st["x"] = sc.where(dual, d["x"] / norm_dx, st["x"])
     status = sc.where(primal, int(Status.PRIMAL_INFEASIBLE), sc.where(dual, int(Status.DUAL_INFEASIBLE), int(Status.UNSOLVED)))
-    st["status"] = sc.cast(status, I64)
+    st["status"] = sc.cast(status, I32)
     return st
 
   # Factorization with PIQP's retries: refinement first, then larger regularization.
@@ -370,7 +372,7 @@ class _Method:
       out["refine"] = a["refine"] | failed_now
       out["rho"] = sc.where(retry, a["rho"] * 100.0, a["rho"])
       out["delta"] = sc.where(retry, a["delta"] * 100.0, a["delta"])
-      out["factor_retires"] = a["factor_retires"] + sc.cast(retry, I64)
+      out["factor_retires"] = a["factor_retires"] + sc.cast(retry, I32)
       out["reg_limit"] = sc.where(retry, std_min(10.0 * a["reg_limit"], settings.eps_abs), a["reg_limit"])
       out["changed"] = a["changed"] | retry
       out["failed"] = failed_now & a["refine"] & ~retry
@@ -703,7 +705,7 @@ class _Method:
     st = self.update_primal_prox_center(st, dual_ok)
     shrink = ~dual_ok & (early | (st["dual_prox_inf"] < settings.infeasibility_threshold))
     st["rho"] = sc.where(dual_ok, std_max(st["reg_limit"], moved * st["rho"]), sc.where(shrink, std_max(st["reg_limit"], held * st["rho"]), st["rho"]))
-    st["no_primal_update"] = st["no_primal_update"] + sc.cast(~dual_ok, I64)
+    st["no_primal_update"] = st["no_primal_update"] + sc.cast(~dual_ok, I32)
 
     primal_ok = (st["primal_res"] < 0.95 * st["prev_primal_res"]) | (st["primal_res"] < settings.eps_abs) | (st["primal_res_rel"] < settings.eps_rel)
     if finetuned:
@@ -711,7 +713,7 @@ class _Method:
     st = self.update_dual_prox_center(st, primal_ok)
     shrink = ~primal_ok & (early | (st["primal_prox_inf"] < settings.infeasibility_threshold))
     st["delta"] = sc.where(primal_ok, std_max(st["reg_limit"], moved * st["delta"]), sc.where(shrink, std_max(st["reg_limit"], held * st["delta"]), st["delta"]))
-    st["no_dual_update"] = st["no_dual_update"] + sc.cast(~primal_ok, I64)
+    st["no_dual_update"] = st["no_dual_update"] + sc.cast(~primal_ok, I32)
     return st
 
   def unscale_results(self, st: State, data: Data, sc_: Scaling) -> Variables:
@@ -749,14 +751,14 @@ class _Method:
     st = loop(lambda st_, _: self.continue_iterating(st_), iteration, st, p, max(self.settings.max_iter, 1), "piqp_iteration")
 
     status = sc.where(sc.equal(st["status"], int(Status.UNSOLVED)), const_int(int(Status.MAX_ITER_REACHED)), st["status"])
-    return self.unscale_results(st, data, scaling), status, st
+    return self.unscale_results(st, data, scaling), _scaly_status(status), st
 
   # The generated Functions.
 
   def _raw_inputs(self) -> Any:
     s = self.structure
-    sizes = {"P": s.P.nnz, "c": s.n, "A": s.A.nnz, "b": s.p, "G": s.G.nnz, "h_l": s.m, "h_u": s.m, "x_l": s.n, "x_u": s.n}
-    return Layout(tuple(sizes), tuple(sc.TensorType((size,), F64) for size in sizes.values()), "raw_")
+    sizes = dict(zip(RAW_INPUTS, (s.P.nnz, s.n, s.A.nnz, s.p, s.G.nnz, s.m, s.m, s.n, s.n), strict=True))
+    return Layout(RAW_INPUTS, tuple(sc.TensorType((size,), F64) for size in sizes.values()), "raw_")
 
   @cached_property
   def _data_layout(self) -> Layout:
@@ -776,7 +778,7 @@ class _Method:
     raw, data_layout, scaling_layout = self._raw_inputs(), self._data_layout, self._scaling_layout
     outputs = sc.group(data_layout.tree(), scaling_layout.tree(), sc.arg("AtA", self._AtA_type))
 
-    @sc.function(raw.tree(), outputs=outputs, name=unique_name("piqp_sparse_setup"))
+    @sc.function(raw.tree(), outputs=outputs, name=f"{self.name}_setup")
     def setup(tree: Any) -> Any:
       data = make_data(self.structure, **raw.unpack(tree))
       data, scaling = scale_data(self.structure, data, self.settings)
@@ -790,7 +792,7 @@ class _Method:
     raw, data_layout, scaling_layout = self._raw_inputs(), self._data_layout, self._scaling_layout
     outputs = sc.group(data_layout.tree(), sc.arg("AtA", self._AtA_type))
 
-    @sc.function(raw.tree(), scaling_layout.tree(), outputs=outputs, name=unique_name("piqp_sparse_update"))
+    @sc.function(raw.tree(), scaling_layout.tree(), outputs=outputs, name=f"{self.name}_update")
     def update(tree: Any, scaling_tree: Any) -> Any:
       data = make_data(self.structure, **raw.unpack(tree))
       data = reuse_scaling(self.structure, data, Scaling(**scaling_layout.unpack(scaling_tree)))
@@ -800,20 +802,28 @@ class _Method:
 
   @cached_property
   def solve_function(self) -> sc.Function:
-    """PIQP's ``solve``: the variables, the status and the statistics of ``INFO_FIELDS``."""
+    """PIQP's ``solve``: the variables, the ``ScalySolveStatus`` code and the statistics of ``INFO_FIELDS``."""
     data_layout, scaling_layout = self._data_layout, self._scaling_layout
     s = self.structure
     variables = Layout(Variables._fields, tuple(sc.TensorType((size,), F64) for size in (s.n, s.p, s.m, s.m, s.n, s.n, s.m, s.m, s.n, s.n)), "result_")
-    info = Layout(INFO_FIELDS, tuple(sc.TensorType((), I64 if f in INTEGER_INFO else F64) for f in INFO_FIELDS), "info_")
-    outputs = sc.group(variables.tree(), sc.arg("status", sc.TensorType((), I64)), info.tree())
+    info = Layout(INFO_FIELDS, tuple(sc.TensorType((), I32 if f in INTEGER_INFO else F64) for f in INFO_FIELDS), "info_")
+    outputs = sc.group(variables.tree(), sc.arg("status", sc.TensorType((), I32)), info.tree())
 
-    @sc.function(data_layout.tree(), scaling_layout.tree(), sc.arg("AtA", self._AtA_type), outputs=outputs, name=unique_name("piqp_sparse_solve"))
+    @sc.function(data_layout.tree(), scaling_layout.tree(), sc.arg("AtA", self._AtA_type), outputs=outputs, name=f"{self.name}_solve")
     def solve(data_tree: Any, scaling_tree: Any, AtA: sc.Expr) -> Any:
       data, scaling = Data(**data_layout.unpack(data_tree)), Scaling(**scaling_layout.unpack(scaling_tree))
       result, status, st = self.solve_impl(data, scaling, AtA)
       return variables.pack(result._asdict()), status, info.pack(st)
 
     return solve
+
+
+def _scaly_status(status: sc.Expr) -> sc.Expr:
+  """PIQP's final status as its ``ScalySolveStatus`` code, ``ERROR`` for any other."""
+  out = const_int(int(sc.ScalySolveStatus.ERROR))
+  for piqp, scaly in TO_SCALY_STATUS.items():
+    out = sc.where(sc.equal(status, int(piqp)), const_int(int(scaly)), out)
+  return out
 
 
 def _ones_like(x: sc.Expr) -> sc.Expr:
@@ -823,11 +833,39 @@ def _ones_like(x: sc.Expr) -> sc.Expr:
 _METHODS: dict[tuple[Any, ...], _Method] = {}
 
 
-def _method(structure: Structure, settings: Settings) -> _Method:
-  key = (structure.n, structure.P.digest, structure.A.digest, structure.G.digest, settings)
+def _method(structure: Structure, settings: Settings, name: str = "piqp_sparse") -> _Method:
+  key = (structure.n, structure.P.digest, structure.A.digest, structure.G.digest, settings, name)
   if (cached := _METHODS.get(key)) is None:
-    cached = _METHODS[key] = _Method(structure, settings)
+    cached = _METHODS[key] = _Method(structure, settings, name)
   return cached
+
+
+def build_solver(P: Any, A: Any = None, G: Any = None, settings: Settings | None = None, name: str = "piqp_sparse") -> tuple[sc.Function, sc.Function, sc.Function]:
+  """The generated ``setup``, ``solve`` and ``update`` for the patterns of ``P`` (its upper triangle), ``A`` and ``G``.
+
+  Only the patterns are read; the values come in at run time, as the stored entries of each matrix
+  in the order of ``Structure.from_matrices``. With ``raw`` the values of ``P, c, A, b, G, h_l, h_u,
+  x_l, x_u``, nested by ``pack_raw``::
+
+    raw = pack_raw(P_values, c, A_values, b, G_values, h_l, h_u, x_l, x_u)
+    data, scaling, AtA = setup(raw)              # infinite bounds, equilibration, A^T A
+    variables, status, info = solve(data, scaling, AtA)
+    data, AtA = update(raw, scaling)             # new values, the same scaling
+
+  ``status`` is an int32 ``ScalySolveStatus`` code and ``info`` holds ``INFO_FIELDS``, whose
+  counters are int32. The C entry points are ``{name}_setup``, ``{name}_solve`` and ``{name}_update``.
+  """
+  P = sparse.csc_array(P)
+  n = P.shape[0]
+  A = sparse.csc_array((0, n)) if A is None else sparse.csc_array(A)
+  G = sparse.csc_array((0, n)) if G is None else sparse.csc_array(G)
+  method = _method(Structure.from_matrices(P, A, G)[0], settings or Settings(), name)
+  return method.setup_function, method.solve_function, method.update_function
+
+
+def pack_raw(*values: np.ndarray) -> Any:
+  """The values of ``P, c, A, b, G, h_l, h_u, x_l, x_u``, in order, as the nested input of ``setup`` and ``update``: ``sc.group`` takes at most eight parts."""
+  return Layout(RAW_INPUTS, (), "").pack(dict(zip(RAW_INPUTS, values, strict=True)))
 
 
 def _vector(value: Any, size: int, fill: float, name: str) -> np.ndarray:
@@ -931,8 +969,7 @@ class SparseSolver:
   def _scale(self, reuse: bool) -> None:
     assert self._structure is not None
     method = _method(self._structure, self.settings)
-    raw = tuple(self._raw[name] for name in ("P", "c", "A", "b", "G", "h_l", "h_u", "x_l", "x_u"))
-    nested = method._raw_inputs().pack(dict(zip(("P", "c", "A", "b", "G", "h_l", "h_u", "x_l", "x_u"), raw, strict=True)))  # type: ignore[arg-type]
+    nested = pack_raw(*(self._raw[name] for name in RAW_INPUTS))
     if reuse and self._scaled is not None:
       data, AtA = method.update_function(nested, self._scaled[1])
       self._scaled = (data, self._scaled[1], AtA)
@@ -949,7 +986,7 @@ class SparseSolver:
     variables, status, info = method.solve_function(*self._scaled)
     values = dict(zip(Variables._fields, _leaves(variables), strict=True))
     stats = dict(zip(INFO_FIELDS, _leaves(info), strict=True))
-    status = Status(int(status))
+    status = FROM_SCALY_STATUS[sc.ScalySolveStatus(int(status))]
     fields: dict[str, Any] = {k: (int(v) if k in INTEGER_INFO else float(v)) for k, v in stats.items()}
     self._result = Result(**{k: np.asarray(v) for k, v in values.items()}, info=Info(status=status, **fields))
     return status

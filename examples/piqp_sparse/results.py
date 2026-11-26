@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+import scaly as sc
+
 
 class Status(enum.IntEnum):
   """PIQP's ``Status`` codes."""
@@ -19,6 +21,17 @@ class Status(enum.IntEnum):
   UNSOLVED = -9
   INVALID_SETTINGS = -10
 
+
+# The generated solve returns the codes every generated solver shares, ScalySolveStatus; the Python
+# solver reports PIQP's. UNSOLVED never leaves the iteration and INVALID_SETTINGS never reaches it.
+TO_SCALY_STATUS = {
+  Status.SOLVED: sc.ScalySolveStatus.OK,
+  Status.MAX_ITER_REACHED: sc.ScalySolveStatus.MAX_ITER,
+  Status.PRIMAL_INFEASIBLE: sc.ScalySolveStatus.PRIMAL_INFEASIBLE,
+  Status.DUAL_INFEASIBLE: sc.ScalySolveStatus.DUAL_INFEASIBLE,
+  Status.NUMERICS: sc.ScalySolveStatus.NUMERICS,
+}
+FROM_SCALY_STATUS = {scaly: piqp for piqp, scaly in TO_SCALY_STATUS.items()}
 
 # The statistics the generated solve returns, in this order, after its status. PIQP's timings are
 # left out: a Python-level clock around a compiled call would mostly measure the call.
@@ -52,6 +65,7 @@ INFO_FIELDS = (
   "no_dual_update",
 )
 
+# The counters among them, int32 like the status. reg_limit is a regularization, not a count.
 INTEGER_INFO = frozenset({"iter", "factor_retires", "no_primal_update", "no_dual_update"})
 
 
