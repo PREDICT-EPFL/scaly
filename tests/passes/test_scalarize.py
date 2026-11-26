@@ -735,8 +735,46 @@ def _reversal_program(case: str) -> ProgramNode:
 
 @pytest.mark.parametrize("case", ["plain", "alias", "inout", "index", "descending"])
 def test_a_copy_folds_only_when_nothing_else_reaches_its_buffers(case: str) -> None:
-  procs = {pr.attrs["name"] for pr in scalarize_program(_reversal_program(case)).args}
-  assert ("rev_reordered" in procs) == (case == "plain")
+  # The plain copy keeps every index, so the folded call reads ``base`` itself and ``rev`` stays as it is.
+  entry = scalarize_program(_reversal_program(case)).args[-1]
+  assert any(stmt.op == ProgramOp.FOR for stmt in _body(entry)) == (case != "plain")
+
+
+def test_a_copy_that_keeps_every_index_passes_its_buffer_to_the_unchanged_callee() -> None:
+  """Two calls of one expanded callee, one of them copied element for element into an output: the
+  call writes the output itself, and both calls keep the one callee."""
+
+  def tagged(node: ProgramNode, **extra) -> ProgramNode:
+    return ProgramNode(node.op, node.args, {**node.attrs, **extra}, dtype=node.dtype)
+
+  def at(buffer: ProgramNode, index: ProgramNode | int) -> ProgramNode:
+    return p.view(buffer, [p.const_int(index) if isinstance(index, int) else index])
+
+  def call(ins: list[ProgramNode], outs: list[ProgramNode]) -> ProgramNode:
+    return tagged(p.call("double", ins + outs), n_in=len(ins), n_out=len(outs))
+
+  x, y = p.buffer("x", dtypes.float64, (3,)), p.buffer("y", dtypes.float64, (3, 1))
+  double = tagged(
+    p.proc("double", [x, y], [p.store(at(y, i), p.mul(p.const_float(2.0), p.load(at(x, i)))) for i in range(3)]),
+    input_count=1,
+    lowering="auto",
+    scalarize_mode="procedure",
+  )
+  given, first, second = (p.buffer(name, dtypes.float64, (3,)) for name in ("given", "first", "second"))
+  tmp = p.buffer("tmp", dtypes.float64, (3,), address_space="private")
+  copy = p.for_(p.range_("i", 0, 3), [p.store(at(second, p.var("i")), p.load(at(tmp, p.var("i"))))])
+  entry = tagged(
+    p.proc("entry", [given, first, second], [tmp, call([given], [first]), call([given], [tmp]), copy]), input_count=1, fold_reorders=True
+  )
+
+  result = scalarize_program(p.program([double, entry]))
+  assert [pr.attrs["name"] for pr in result.args] == ["double", "entry"]
+  body = _body(result.args[-1])
+  assert [(stmt.attrs["callee"], stmt.args[-1].attrs["name"]) for stmt in body if stmt.op == ProgramOp.CALL] == [
+    ("double", "first"),
+    ("double", "second"),
+  ]
+  assert not any(stmt.op in (ProgramOp.FOR, ProgramOp.BUFFER) for stmt in body)
 
 
 def test_specializations_of_one_callee_count_against_the_growth_limit(monkeypatch) -> None:

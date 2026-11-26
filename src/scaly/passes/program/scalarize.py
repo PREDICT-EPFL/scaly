@@ -348,7 +348,7 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
     called = {node.attrs["callee"] for pr in (*args[:-1], root) for node in walk_program(pr) if node.op == ProgramOp.CALL}
     stems = {pr.attrs["reordered_from"] for pr in specialized} - called
     copies = sum(_scalar_cost(pr)[1] for pr in specialized) - sum(_scalar_cost(pr)[1] for pr in args[:-1] if pr.attrs["name"] in stems)
-    if specialized and scalar_growth + copies <= AUTO_SCALAR_GROWTH_PER_PROGRAM:
+    if (specialized or root.args != args[-1].args) and scalar_growth + copies <= AUTO_SCALAR_GROWTH_PER_PROGRAM:
       args = [*args[:-1], *specialized, root]
       return ProgramNode(prog.op, tuple(args), {**prog.attrs, "proc_count": len(args)}, dtype=prog.dtype)
   return ProgramNode(prog.op, tuple(args), prog.attrs, dtype=prog.dtype)
@@ -449,8 +449,10 @@ def _fold_reorders(proc: ProgramNode, procs: dict[str, ProgramNode], expanded: s
     callee, args, removed = folded
     old = callee.attrs["name"]
     stem = callee.attrs.get("reordered_from", old)
-    # Calls that fold the same copies into the same callee share one specialization.
-    name = next((n for n, pr in specialized.items() if pr.args == callee.args and pr.attrs["reordered_from"] == stem), None)
+    # Calls that fold the same copies into the same callee share one specialization, and copies
+    # that keep every index leave the callee unchanged.
+    name = old if callee is procs[old] else None
+    name = name or next((n for n, pr in specialized.items() if pr.args == callee.args and pr.attrs["reordered_from"] == stem), None)
     if name is None:
       # A specialization only this call uses is specialized again under its own name.
       others = sum(s.op == ProgramOp.CALL and s.attrs["callee"] == old for s in body) > 1
@@ -515,8 +517,10 @@ def _fold_call(
       copied = _copied(body[loop], buffers[temp], source, buffers, procs)
       if copied is None or len(copied) != math.prod(buffers[temp].attrs["shape"]):
         continue
-      formals[k] = _formal(formal, buffers[source])
-      loads[formal.attrs["name"]] = formals[k], copied
+      # A copy that keeps every index passes the source itself, and the callee stays as it is.
+      if not _identity(copied):
+        formals[k] = _formal(formal, buffers[source])
+        loads[formal.attrs["name"]] = formals[k], copied
       args[k] = buffers[source]
     else:
       # The temporary is read by one copy loop into one buffer, which nothing reads or writes in between.
@@ -534,15 +538,19 @@ def _fold_call(
       copied = _copied(body[loop], buffers[target], temp, buffers, procs)
       if not copied:
         continue
-      targets: dict[int, list[int]] = {}
-      for to, frm in copied.items():
-        targets.setdefault(frm, []).append(to)
-      formals[k] = _formal(formal, buffers[target])
-      stores[formal.attrs["name"]] = formals[k], targets
+      # A copy that keeps every index of the whole temporary passes the target itself.
+      if not (_identity(copied) and len(copied) == math.prod(buffers[temp].attrs["shape"])):
+        targets: dict[int, list[int]] = {}
+        for to, frm in copied.items():
+          targets.setdefault(frm, []).append(to)
+        formals[k] = _formal(formal, buffers[target])
+        stores[formal.attrs["name"]] = formals[k], targets
       args[k] = buffers[target]
     removed |= {loop, declared[temp]}
   if not removed:
     return None
+  if not loads and not stores:
+    return callee, args, removed
   try:
     statements = _rewrite(callee.args[n_params:], loads, stores)
   except (_DataDependent, KeyError):
@@ -550,6 +558,10 @@ def _fold_call(
   if statements is None:
     return None
   return ProgramNode(callee.op, (*formals, *statements), callee.attrs, dtype=callee.dtype), args, removed
+
+
+def _identity(copied: dict[int, int]) -> bool:
+  return all(to == frm for to, frm in copied.items())
 
 
 def _formal(formal: ProgramNode, actual: ProgramNode) -> ProgramNode:
