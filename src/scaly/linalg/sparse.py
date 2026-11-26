@@ -13,10 +13,10 @@ from ..function.api import custom_derivative, function
 from ..function.model import Function
 from ..function.sugar import broadcast, scan
 from ..function.tree import arg, group
-from ..ir.expr import Expr, concat, equal, gather, pack, scatter, values, where
+from ..ir.expr import Expr, concat, gather, not_equal, pack, scatter, values, where
 from ..ir.types import CanonicalPattern, TensorType, dtypes
 from . import symbolic
-from .dense import _eps, _like, _status, _unusable
+from .dense import _eps, _like, _status
 from .symbolic import LDLSymbolic, Ordering
 
 _INDEX = TensorType((), dtypes.int64)
@@ -203,11 +203,11 @@ def _column(kind: str) -> Function:
     pivot = gather(w, j)
     diagonal = gather(A, gather(diagonal_source, j), mode="fill")
     if kind == "ldl":
-      unusable, value = _unusable(pivot, diagonal), pivot
+      usable, value = (pivot.abs() > _eps(pivot) * diagonal.abs()) & pivot.isfinite(), pivot
     else:
-      unusable, value = ~(pivot > _eps(A) * diagonal.abs()), pivot.sqrt()
+      usable, value = pivot > _eps(A) * diagonal.abs(), pivot.sqrt()
     Lx, w = _ragged(_store, (Lx, w), l_ptr, j, n, broadcast(l_rows), broadcast(value))
-    status = where(unusable & equal(status, 0), _status(j + 1), status)
+    status = where(usable | not_equal(status, 0), status, _status(j + 1))
     return Lx, scatter(d, j, value, combine="set"), w, status
 
   return column

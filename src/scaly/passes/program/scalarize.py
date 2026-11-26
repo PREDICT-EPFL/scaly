@@ -48,13 +48,15 @@ class _OverBudget(Exception):
 
 @dataclass(slots=True)
 class _Budget:
-  """The values a static loop may still compute, and the work it may still do, before expansion gives up.
+  """The operations a static loop may still compute, and the work it may still do, before expansion gives up.
 
-  A value counts once, the first time it is stored or assigned, and only when it is not a constant
-  after unrolling: index arithmetic and masked entries fold away, and a value moved through work
-  buffers and carries is one local in the generated code. Each store the expansion leaves in the
-  code is charged apart from the values, so a value copied into many results costs every copy.
-  Work counts every statement, range trip and allocated element, and is charged before it is done.
+  Each operation of a stored or assigned value counts once, the first time the loop reaches it, and
+  only when it is not a constant after unrolling: index arithmetic and masked entries fold away, a
+  value moved through work buffers and carries is one local in the generated code, and an expression
+  nested in one store costs each of its operations. A read costs nothing of its own, since it
+  reaches the code only as an operand or as a stored value. Each store the expansion leaves in the
+  code is charged apart, so a value copied into many results costs every copy. Work counts every
+  statement, range trip and allocated element, and is charged before it is done.
   """
 
   values: int
@@ -62,9 +64,14 @@ class _Budget:
   seen: set[ProgramNode] = field(default_factory=set)
 
   def spend(self, value: ProgramNode) -> None:
-    if value.op not in CONSTANTS and value not in self.seen:
-      self.seen.add(value)
+    pending = [value]
+    while pending:
+      node = pending.pop()
+      if node.op in CONSTANTS or node.op in (ProgramOp.VAR, ProgramOp.LOAD) or node in self.seen:
+        continue
+      self.seen.add(node)
       self.values -= 1
+      pending.extend(node.args)
     if self.values < 0:
       raise _OverBudget
 
@@ -196,10 +203,10 @@ def expand_static_loop(
   """Interpret an ordered static loop, preserving floating arithmetic and writing through mutable storage.
 
   Bounds and branches inside the loop must fold to constants at each step. With ``budget``, the
-  distinct values the carried range stores or assigns through every callee that are not constants,
-  and the stores of the results, are counted, and ``_OverBudget`` is raised once they exceed it or
-  once the interpretation's work exceeds ``AUTO_EXPANSION_WORK_PER_PROC``. Their sum bounds the
-  statements the expansion generates: one declaration per value at most, and one store per result.
+  distinct operations that are not constants in the values the carried range stores or assigns
+  through every callee, and the stores of the results, are counted, and ``_OverBudget`` is raised
+  once they exceed it or once the interpretation's work exceeds ``AUTO_EXPANSION_WORK_PER_PROC``.
+  Their sum bounds the code the expansion generates: its operations, and one store per result.
   """
   proc = p.proc("static_loop", params, body)
   frame = _Frame(proc, [_Pointer(_InputValues(buf)) for buf in params], procs, {}, strict=True)

@@ -263,11 +263,11 @@ def test_back_substitution_subtracts_each_term_from_the_row_in_turn(budget: int,
 
 @pytest.mark.parametrize("routine", ROUTINES)
 def test_one_size_over_the_budget_keeps_the_loops(routine: str) -> None:
-  """Banded LDL^T of order 19 fits the budget in natural order and order 20 does not; Cholesky, with
-  no products ``d[k] L[j, k]``, switches one order later. Charging every store again instead of
-  each value once would switch at 8 and 9."""
+  """Banded LDL^T of order 12 fits the budget in natural order and order 13 does not; Cholesky, with
+  no products ``d[k] L[j, k]`` and no finiteness check of its pivots, switches three orders later.
+  Charging every store again instead of each operation once would switch at 8 and 9."""
   kind = _KIND[routine]
-  last = 19 if kind == "ldl" else 20
+  last = 12 if kind == "ldl" else 15
   for n in (last, last + 1):
     a = _values(_banded(n, 2), np.random.default_rng(22), negative=1 if routine == "sym" else 0)
     fn = _routine(a, routine, "natural")
