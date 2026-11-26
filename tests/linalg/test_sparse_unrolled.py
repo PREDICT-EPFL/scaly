@@ -232,6 +232,26 @@ def test_an_unusable_pivot_sets_the_status_without_an_early_return(routine: str)
   assert int(_results(fn, negative, routine, b)[-1]) == (iperm[3] + 1 if _KIND[routine] == "cholesky" else 0)
 
 
+@pytest.mark.parametrize("budget", [calls.STATIC_LOOP_BUDGET, 0], ids=["straight-line", "looped"])
+def test_back_substitution_subtracts_each_term_from_the_row_in_turn(budget: int, monkeypatch) -> None:
+  """``x[0] = (z[0] - L[1, 0] x[1]) - L[2, 0] x[2]``, QDLDL's order, not ``z[0] - (L[1, 0] x[1] + L[2, 0] x[2])``.
+
+  Floating subtraction does not associate, so each order overflows on an input where the other does
+  not: here ``z[0] = 1e308`` and both terms ``1e308`` stay finite, and ``z[0] = -1e308`` with terms
+  ``1e308`` then ``-1e308`` overflows.
+  """
+  monkeypatch.setattr(calls, "STATIC_LOOP_BUDGET", budget)
+  # K = L D L^T with L[1, 0] = L[2, 0] = 1, L[2, 1] = 0 and D = diag(1e-300, 1, 1), so z[0] = b[0] / 1e-300.
+  d0 = 1e-300
+  a = np.array([[d0, 0.0, 0.0], [d0, d0 + 1.0, 0.0], [d0, d0, d0 + 1.0]])
+  fn = _routine(a != 0.0, "sym", "natural")
+  x, status = _results(fn, a, "sym", np.array([1e8, 1e308, 1e308]))
+  np.testing.assert_array_equal(x, [-1e308, 1e308, 1e308])
+  x, status = _results(fn, a, "sym", np.array([-1e8, 1e308, -1e308]))
+  np.testing.assert_array_equal(x, [-np.inf, 1e308, -1e308])
+  assert int(status) == 0
+
+
 @pytest.mark.parametrize("routine", ROUTINES)
 def test_one_size_over_the_budget_keeps_the_loops(routine: str) -> None:
   """Banded LDL^T of order 8 fits the budget in natural order and order 9 does not; Cholesky, with
