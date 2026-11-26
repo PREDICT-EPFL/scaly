@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import math
+import tracemalloc
 
 from scaly.ir.expr import _scatter_zero
 
 import numpy as np
+from scipy import sparse
 import pytest
 
 from scaly.function.sugar import _mapped_call
@@ -23,6 +25,7 @@ from scaly.passes.program.scalarize import (
   AUTO_SCALAR_OPS_PER_PROC,
   scalarize_program,
 )
+from scaly.passes.program import scalarize
 from scaly.passes.program.coalesce_stores import coalesce_stores
 from scaly.passes.program.prepare_scalar import prepare_scalar_expressions
 from scaly.passes.program.scheduling import MAX_SCALAR_DEPTH
@@ -553,3 +556,259 @@ def test_final_preparation_reserves_later_scalar_declarations() -> None:
   assert len(names) > 1
   assert len(names) == len(set(names))
   assert names[-1] == "v0"
+
+
+def _tridiagonal() -> tuple[sparse.csc_array, sc.TensorType]:
+  a = sparse.csc_array([[4.0, -1.0, 0.0], [-1.0, 4.0, -1.0], [0.0, -1.0, 4.0]])
+  pattern, _ = sc.SparsityPattern.from_csc((3, 3), a.indptr.tolist(), a.indices.tolist()).canonicalize()
+  return a, sc.TensorType((3, 3), pattern=pattern)
+
+
+@pytest.mark.parametrize("layout", ["csc", "csr"])
+def test_layout_copies_move_into_the_expanded_callee_they_feed(layout: str) -> None:
+  a, a_type = _tridiagonal()
+
+  @sc.function(sc.arg("A", a_type), sc.arg("x", 3), outputs=sc.group(sc.arg("y"), sc.arg("B", a_type)), name="inner")
+  def inner(A, x):
+    return A @ x, 2.0 * A
+
+  @sc.function(sc.arg("A", a_type, layout=layout), sc.arg("x", 3), outputs=sc.group(sc.arg("y"), sc.arg("B", a_type, layout=layout)), name="outer")
+  def outer(A, x):
+    return inner(A, x)
+
+  # The entry reads and writes the declared layout straight from the callee: no copy loop, index
+  # table or temporary is left. Without the fold, the copies stay.
+  root = main_proc(lower_function(outer))
+  assert [stmt.op for stmt in _body(root)] == [ProgramOp.CALL]
+  source = render_c_source(outer)
+  assert "for (" not in source[source.index('extern "C"') :] and "static const" not in source
+  kept = main_proc(lower_function(outer, fold_reorders=False))
+  assert any(stmt.op == ProgramOp.FOR for stmt in _body(kept))
+
+  x = np.array([1.0, 2.0, 3.0])
+  y, b = outer(a if layout == "csc" else sparse.csr_array(a), x)
+  assert isinstance(b, sparse.csc_array | sparse.csr_array)
+  np.testing.assert_array_equal(y, a @ x)
+  np.testing.assert_array_equal(b.toarray(), 2.0 * a.toarray())
+
+
+def test_a_layout_copy_two_calls_read_stays() -> None:
+  a, a_type = _tridiagonal()
+
+  @sc.function(sc.arg("A", a_type), sc.arg("x", 3), outputs=sc.arg("y"), name="inner")
+  def inner(A, x):
+    return A @ x
+
+  @sc.function(sc.arg("A", a_type), sc.arg("x", 3), outputs=sc.arg("y"), name="outer")
+  def outer(A, x):
+    return inner(A, x) + inner(A, 2.0 * x)
+
+  # Each call's own copy folds into one shared specialization; the canonical copy both read stays.
+  root = main_proc(lower_function(outer))
+  assert [stmt.attrs["callee"] for stmt in _body(root) if stmt.op == ProgramOp.CALL] == ["inner_reordered"] * 2
+  assert sum(stmt.op == ProgramOp.FOR for stmt in _body(root)) == 3
+  x = np.array([1.0, 2.0, 3.0])
+  np.testing.assert_array_equal(outer(a, x), a @ x + a @ (2.0 * x))
+
+
+def test_a_copy_indexed_by_a_value_known_only_at_run_time_stays() -> None:
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="inner")
+  def inner(x):
+    return x.sin() * 2.0
+
+  @sc.function(sc.arg("c", 3), outputs=sc.arg("go", sc.TensorType((), sc.dtypes.bool_)), name="small")
+  def small(c):
+    return c.sum() < 10.0
+
+  @sc.function(sc.arg("c", 3), outputs=sc.arg("n"), name="double")
+  def double(c):
+    return c * 2.0
+
+  @sc.function(sc.arg("x", 3), outputs=sc.arg("y"), name="outer")
+  def outer(x):
+    carry, _ = sc.while_loop(small, double, x, max_iter=8)
+    return inner(carry)
+
+  # The copy out of the loop reads the slot the exit step left, so it is not the same at every call.
+  x = np.array([1.0, 2.0, 3.0])
+  np.testing.assert_array_equal(outer(x), np.sin(2.0 * x) * 2.0)
+
+
+def test_a_second_copy_of_a_callee_counts_against_the_growth_limit(monkeypatch) -> None:
+  a, a_type = _tridiagonal()
+
+  @sc.function(sc.arg("A", a_type), sc.arg("x", 3), outputs=sc.arg("y"), name="inner")
+  def inner(A, x):
+    return A @ x
+
+  @sc.function(sc.arg("A", a_type), sc.arg("xs", (2, 3)), outputs=sc.group(sc.arg("y"), sc.arg("ys")), name="outer")
+  def outer(A, xs):
+    return inner(A, xs[0]), sc.vmap(inner, 2)(sc.broadcast(A), xs)
+
+  # The mapped call keeps the canonical callee, so the specialization adds a second body.
+  def callees(prog: ProgramNode) -> set[str]:
+    return {node.attrs["callee"] for node in walk_program(main_proc(prog)) if node.op == ProgramOp.CALL}
+
+  assert "inner_reordered" in callees(lower_function(outer))
+  # Exactly what the expansions themselves take, so the second copy no longer fits.
+  expanded: list[ProgramNode] = []
+
+  def observe(name: str, prog: ProgramNode) -> None:
+    if name == "pass:scalarize":
+      expanded.extend(pr for pr in prog.args if pr.attrs.get("scalarized"))
+
+  lower_function(outer, observe, fold_reorders=False)
+  monkeypatch.setattr(scalarize, "AUTO_SCALAR_GROWTH_PER_PROGRAM", sum(scalarize._scalar_cost(pr)[1] for pr in expanded))
+  assert "inner_reordered" not in callees(lower_function(outer))
+  xs = np.array([[1.0, 2.0, 3.0], [0.5, -1.0, 2.0]])
+  y, ys = outer(a, xs)
+  np.testing.assert_array_equal(y, a @ xs[0])
+  np.testing.assert_array_equal(ys, xs @ a.toarray().T)
+
+
+def _reversal_program(case: str) -> ProgramNode:
+  """An entry that copies ``base`` into ``tmp`` and calls an expanded reversal on it, around a hazard named by ``case``."""
+
+  def tagged(node: ProgramNode, **extra) -> ProgramNode:
+    return ProgramNode(node.op, node.args, {**node.attrs, **extra}, dtype=node.dtype)
+
+  def at(buffer: ProgramNode, index: ProgramNode | int) -> ProgramNode:
+    return p.view(buffer, [p.const_int(index) if isinstance(index, int) else index])
+
+  def copy(source: ProgramNode, target: ProgramNode) -> ProgramNode:
+    return p.for_(p.range_("i", 0, 3), [p.store(at(target, p.var("i")), p.load(at(source, p.var("i"))))])
+
+  def call(name: str, ins: list[ProgramNode], outs: list[ProgramNode], **extra) -> ProgramNode:
+    return tagged(p.call(name, ins + outs), n_in=len(ins), n_out=len(outs), **extra)
+
+  x, y, out = (p.buffer(name, dtypes.float64, (3,)) for name in ("x", "y", "out"))
+  base, tmp = (p.buffer(name, dtypes.float64, (3,), address_space="private") for name in ("base", "tmp"))
+  arg = p.buffer("arg", dtypes.float64, (3,), intent="inout")
+  reverse = tagged(
+    p.proc("rev", [x, y], [p.store(at(y, i), p.load(at(x, 2 - i))) for i in range(3)]),
+    input_count=1,
+    lowering="auto",
+    scalarize_mode="procedure",
+  )
+  mutate = tagged(p.proc("mut", [arg], [p.store(at(arg, 0), p.const_float(9.0))]), input_count=1)
+  fill = [p.store(at(base, i), p.const_float(float(i + 1))) for i in range(3)]
+  body = {
+    "plain": [base, tmp, *fill, copy(base, tmp), call("rev", [tmp], [out])],
+    # The source is an alias of the buffer the call writes.
+    "alias": [
+      base,
+      alias := tagged(base, name="alias", alias_of="base", alias_offset=0),
+      tmp,
+      *fill,
+      copy(alias, tmp),
+      call("rev", [tmp], [base]),
+      copy(base, out),
+    ],
+    # A call between the copy and its reader updates the source in place.
+    "inout": [base, tmp, *fill, copy(base, tmp), call("mut", [at(base, 0)], [], inout=(0,)), call("rev", [tmp], [out])],
+    # The call also reads the temporary in another argument's index.
+    "index": [
+      base,
+      tmp,
+      *fill,
+      copy(base, tmp),
+      call("rev", [tmp], [at(out, p.sub(ProgramNode(ProgramOp.CAST, (p.load(at(tmp, 0)),), dtype=dtypes.int64), p.const_int(1)))]),
+    ],
+    # A nested range counting down, which runs no trip in C.
+    "descending": [
+      base,
+      tmp,
+      *fill,
+      p.for_(
+        p.range_("i", 0, 3),
+        [
+          p.store(at(tmp, p.var("i")), p.load(at(base, p.var("i")))),
+          p.for_(p.range_("j", 2, -1, step=-1), [p.store(at(tmp, p.var("j")), p.load(at(base, p.sub(p.const_int(2), p.var("j")))))]),
+        ],
+      ),
+      call("rev", [tmp], [out]),
+    ],
+  }[case]
+  entry = tagged(p.proc("entry", [out], body), input_count=0, fold_reorders=True)
+  return p.program([reverse, mutate, entry])
+
+
+@pytest.mark.parametrize("case", ["plain", "alias", "inout", "index", "descending"])
+def test_a_copy_folds_only_when_nothing_else_reaches_its_buffers(case: str) -> None:
+  # The plain copy keeps every index, so the folded call reads ``base`` itself and ``rev`` stays as it is.
+  entry = scalarize_program(_reversal_program(case)).args[-1]
+  assert any(stmt.op == ProgramOp.FOR for stmt in _body(entry)) == (case != "plain")
+
+
+def test_a_copy_that_keeps_every_index_passes_its_buffer_to_the_unchanged_callee() -> None:
+  """Two calls of one expanded callee, one of them copied element for element into an output: the
+  call writes the output itself, and both calls keep the one callee."""
+
+  def tagged(node: ProgramNode, **extra) -> ProgramNode:
+    return ProgramNode(node.op, node.args, {**node.attrs, **extra}, dtype=node.dtype)
+
+  def at(buffer: ProgramNode, index: ProgramNode | int) -> ProgramNode:
+    return p.view(buffer, [p.const_int(index) if isinstance(index, int) else index])
+
+  def call(ins: list[ProgramNode], outs: list[ProgramNode]) -> ProgramNode:
+    return tagged(p.call("double", ins + outs), n_in=len(ins), n_out=len(outs))
+
+  x, y = p.buffer("x", dtypes.float64, (3,)), p.buffer("y", dtypes.float64, (3, 1))
+  double = tagged(
+    p.proc("double", [x, y], [p.store(at(y, i), p.mul(p.const_float(2.0), p.load(at(x, i)))) for i in range(3)]),
+    input_count=1,
+    lowering="auto",
+    scalarize_mode="procedure",
+  )
+  given, first, second = (p.buffer(name, dtypes.float64, (3,)) for name in ("given", "first", "second"))
+  tmp = p.buffer("tmp", dtypes.float64, (3,), address_space="private")
+  copy = p.for_(p.range_("i", 0, 3), [p.store(at(second, p.var("i")), p.load(at(tmp, p.var("i"))))])
+  entry = tagged(
+    p.proc("entry", [given, first, second], [tmp, call([given], [first]), call([given], [tmp]), copy]), input_count=1, fold_reorders=True
+  )
+
+  result = scalarize_program(p.program([double, entry]))
+  assert [pr.attrs["name"] for pr in result.args] == ["double", "entry"]
+  body = _body(result.args[-1])
+  assert [(stmt.attrs["callee"], stmt.args[-1].attrs["name"]) for stmt in body if stmt.op == ProgramOp.CALL] == [
+    ("double", "first"),
+    ("double", "second"),
+  ]
+  assert not any(stmt.op in (ProgramOp.FOR, ProgramOp.BUFFER) for stmt in body)
+
+
+def test_specializations_of_one_callee_count_against_the_growth_limit(monkeypatch) -> None:
+  @sc.function(sc.arg("x", 3), name="inner")
+  def inner(x):
+    return x.sin()
+
+  @sc.function(sc.arg("x", 3), sc.arg("y", 3), outputs=sc.group(sc.arg("a"), sc.arg("b")), name="sliced")
+  def sliced(x, y):
+    return inner(x)[::-1], inner(y)[::2]
+
+  # Two slicings give two specializations, which together outgrow a limit the callee alone fits.
+  def names() -> set[str]:
+    return {pr.attrs["name"] for pr in lower_function(sliced).args}
+
+  assert {"inner_reordered", "inner_reordered_2"} <= names()
+  monkeypatch.setattr(scalarize, "AUTO_SCALAR_GROWTH_PER_PROGRAM", 6)
+  assert "inner" in names() and not any("reordered" in name for name in names())
+
+
+def test_a_short_copy_into_a_large_buffer_takes_no_memory_of_its_size() -> None:
+  @sc.function(sc.arg("x", 2), name="small")
+  def small(x):
+    return x.sin()
+
+  @sc.function(sc.arg("x", 2), sc.arg("big", 1_000_000), name="joined")
+  def joined(x, big):
+    return sc.concat([small(x), big])
+
+  lower_function(joined, fold_reorders=False)
+  tracemalloc.start()
+  try:
+    lower_function(joined)
+    peak = tracemalloc.get_traced_memory()[1]
+  finally:
+    tracemalloc.stop()
+  assert peak < 4 * 2**20

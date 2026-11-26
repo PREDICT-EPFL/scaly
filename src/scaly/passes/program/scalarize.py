@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ...ir import program as p
-from ...ir.program import ProgramNode, ProgramOp
+from ...ir.program import ProgramNode, ProgramOp, walk_program
 from ...ir.support import Support
 from ...utils.names import NameScope, c_ident
 from ..arith import CONSTANTS, constant, fold_program
+from ._common import buffer_refs, name_scope
 from .scheduling import ScalarNameAllocator, schedule_values
 
 
@@ -32,7 +33,7 @@ class _InputValues(dict[int, ProgramNode | None]):
 
 @dataclass(slots=True)
 class _Pointer:
-  values: list[ProgramNode | None] | _InputValues
+  values: list[ProgramNode | None] | dict[int, ProgramNode | None]
   offset: int = 0
   support: Support = None
 
@@ -47,18 +48,30 @@ class _OverBudget(Exception):
 
 @dataclass(slots=True)
 class _Budget:
-  """The values a static loop may still compute, and the work it may still do, before expansion gives up.
+  """The operations a static loop may still compute, and the work it may still do, before expansion gives up.
 
-  A value counts when it is not a constant after unrolling: index arithmetic and masked entries fold
-  away and never reach the generated code. Work counts every statement, range trip and allocated
-  element, and is charged before it is done.
+  Each operation of a stored or assigned value counts once, the first time the loop reaches it, and
+  only when it is not a constant after unrolling: index arithmetic and masked entries fold away, a
+  value moved through work buffers and carries is one local in the generated code, and an expression
+  nested in one store costs each of its operations. A read costs nothing of its own, since it
+  reaches the code only as an operand or as a stored value. Each store the expansion leaves in the
+  code is charged apart, so a value copied into many results costs every copy. Work counts every
+  statement, range trip and allocated element, and is charged before it is done.
   """
 
   values: int
   work: int = AUTO_EXPANSION_WORK_PER_PROC
+  seen: set[ProgramNode] = field(default_factory=set)
 
   def spend(self, value: ProgramNode) -> None:
-    self.values -= value.op not in CONSTANTS
+    pending = [value]
+    while pending:
+      node = pending.pop()
+      if node.op in CONSTANTS or node.op in (ProgramOp.VAR, ProgramOp.LOAD) or node in self.seen:
+        continue
+      self.seen.add(node)
+      self.values -= 1
+      pending.extend(node.args)
     if self.values < 0:
       raise _OverBudget
 
@@ -190,9 +203,10 @@ def expand_static_loop(
   """Interpret an ordered static loop, preserving floating arithmetic and writing through mutable storage.
 
   Bounds and branches inside the loop must fold to constants at each step. With ``budget``, the
-  values the carried range stores or assigns through every callee that are not constants, and the
-  constant results, are counted, and ``_OverBudget`` is raised once they exceed it or once the
-  interpretation's work exceeds ``AUTO_EXPANSION_WORK_PER_PROC``.
+  distinct operations that are not constants in the values the carried range stores or assigns
+  through every callee, and the stores of the results, are counted, and ``_OverBudget`` is raised
+  once they exceed it or once the interpretation's work exceeds ``AUTO_EXPANSION_WORK_PER_PROC``.
+  Their sum bounds the code the expansion generates: its operations, and one store per result.
   """
   proc = p.proc("static_loop", params, body)
   frame = _Frame(proc, [_Pointer(_InputValues(buf)) for buf in params], procs, {}, strict=True)
@@ -216,8 +230,8 @@ def expand_static_loop(
       assert value is not None
       targets.append(p.view(buf, [p.const_int(offset + at)]))
       values.append(value)
-      # A constant result is never counted inside the loop, yet its store still reaches the generated code.
-      if loop_budget is not None and value.op in CONSTANTS:
+      # Every result is a store in the generated code, whatever its value cost.
+      if loop_budget is not None:
         loop_budget.values -= 1
   if loop_budget is not None and loop_budget.values < 0:
     raise _OverBudget
@@ -252,6 +266,18 @@ def _scalarize_proc(proc: ProgramNode, procs: dict[str, ProgramNode]) -> Program
   return ProgramNode(proc.op, (*params, *body), {**proc.attrs, "scalarized": True}, dtype=proc.dtype)
 
 
+def _scalar_cost(proc: ProgramNode) -> tuple[int, int]:
+  """The scalar operations a procedure emits, and those plus its statements, counting products repeated at their uses."""
+  ops = statements = 0
+  stack = list(proc.args[proc.attrs["param_count"] :])
+  while stack:
+    node = stack.pop()
+    ops += node.op in p.SCALAR_OPS - {*CONSTANTS, ProgramOp.VAR, ProgramOp.LOAD}
+    statements += node.op in {ProgramOp.ASSIGN, ProgramOp.STORE}
+    stack.extend(node.args)
+  return ops, ops + statements
+
+
 def scalarize_program(prog: ProgramNode) -> ProgramNode:
   """Expand selected procedures, bounded under auto and only through eligible pure callees."""
   procs = {pr.attrs["name"]: pr for pr in prog.args[: prog.attrs["proc_count"]]}
@@ -283,17 +309,6 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
         return None
     return total
 
-  def scalar_cost(proc: ProgramNode) -> tuple[int, int]:
-    # Count emitted occurrences, including products repeated at their uses.
-    ops = statements = 0
-    stack = list(proc.args[proc.attrs["param_count"] :])
-    while stack:
-      node = stack.pop()
-      ops += node.op in p.SCALAR_OPS - {*CONSTANTS, ProgramOp.VAR, ProgramOp.LOAD}
-      statements += node.op in {ProgramOp.ASSIGN, ProgramOp.STORE}
-      stack.extend(node.args)
-    return ops, ops + statements
-
   scalar_growth = 0
   replacements: dict[str, ProgramNode] = {}
   for name, proc in procs.items():
@@ -319,12 +334,280 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
     except _DataDependent:
       expansion_work[name] = None
       continue
-    ops, growth = scalar_cost(candidate)
+    ops, growth = _scalar_cost(candidate)
     if proc.attrs["lowering"] == "auto" and (ops > AUTO_SCALAR_OPS_PER_PROC or scalar_growth + growth > AUTO_SCALAR_GROWTH_PER_PROGRAM):
       expansion_work[name] = None
       continue
     replacements[name] = candidate
     expansion_work[name] = total_work
     scalar_growth += growth
-  args = tuple(replacements.get(pr.attrs.get("name"), pr) for pr in prog.args)
-  return ProgramNode(prog.op, args, prog.attrs, dtype=prog.dtype)
+  args = [replacements.get(pr.attrs.get("name"), pr) for pr in prog.args]
+  if args and args[-1].attrs.get("fold_reorders"):
+    root, specialized = _fold_reorders(args[-1], {pr.attrs["name"]: pr for pr in args}, set(replacements), name_scope(prog))
+    # Each specialization adds its body; an original that nothing calls any more gives its own back.
+    called = {node.attrs["callee"] for pr in (*args[:-1], root) for node in walk_program(pr) if node.op == ProgramOp.CALL}
+    stems = {pr.attrs["reordered_from"] for pr in specialized} - called
+    copies = sum(_scalar_cost(pr)[1] for pr in specialized) - sum(_scalar_cost(pr)[1] for pr in args[:-1] if pr.attrs["name"] in stems)
+    if (specialized or root.args != args[-1].args) and scalar_growth + copies <= AUTO_SCALAR_GROWTH_PER_PROGRAM:
+      args = [*args[:-1], *specialized, root]
+      return ProgramNode(prog.op, tuple(args), {**prog.attrs, "proc_count": len(args)}, dtype=prog.dtype)
+  return ProgramNode(prog.op, tuple(args), prog.attrs, dtype=prog.dtype)
+
+
+# An entry point converts each sparse argument from its declared layout to canonical order, and each
+# sparse result back, with copy loops around its calls. Once a callee is expanded, its loads and
+# stores have constant indices, so a copy can instead change the indices of a specialized callee:
+# the loop, its index table and its temporary leave the generated code.
+
+
+def _references(stmt: ProgramNode) -> tuple[frozenset[str], frozenset[str]]:
+  """The buffers a statement reads and writes, through its loops and calls, ``inout`` arguments included."""
+  refs = buffer_refs(stmt)
+  return refs.reads, refs.writes
+
+
+def _mentions(node: ProgramNode, name: str) -> int:
+  """How many times ``node`` names buffer ``name``, as an argument or in a view, counting repeats."""
+  here = node.op == ProgramOp.BUFFER and node.attrs.get("name") == name or node.op == ProgramOp.VIEW and node.attrs["buffer"] == name
+  return here + sum(_mentions(arg, name) for arg in node.args)
+
+
+def _buffer_name(arg: ProgramNode) -> str:
+  return arg.attrs["name"] if arg.op == ProgramOp.BUFFER else arg.attrs["buffer"]
+
+
+def _copy_loop(stmt: ProgramNode, bound: frozenset[str] = frozenset()) -> bool:
+  """Whether ``stmt`` is a loop with constant bounds whose every statement copies one loaded value.
+
+  Its indices may use only its own loop variables, so the copy is the same at every call.
+  """
+  if stmt.op != ProgramOp.FOR:
+    return False
+  rng = stmt.args[0]
+  if rng.attrs.get("carried") or any(a.op != ProgramOp.CONST_INT for a in rng.args) or rng.args[2].attrs["value"] <= 0:
+    return False
+  bound = bound | {rng.attrs["name"]}
+  for s in stmt.args[1:]:
+    if s.op == ProgramOp.FOR:
+      if not _copy_loop(s, bound):
+        return False
+    elif s.op != ProgramOp.STORE or s.args[1].op != ProgramOp.LOAD:
+      return False
+    elif any(n.op == ProgramOp.VAR and n.attrs["name"] not in bound for n in walk_program(s)):
+      return False
+  return True
+
+
+def _copied(
+  loop: ProgramNode, target: ProgramNode, source: str, buffers: dict[str, ProgramNode], procs: dict[str, ProgramNode]
+) -> dict[int, int] | None:
+  """For each element of ``target`` that ``loop`` writes, the element of ``source`` it copies, or None."""
+  frame = _Frame(p.proc("copy", (), ()), [], procs, {})
+  for name in {node.attrs["buffer"] for node in walk_program(loop) if node.op == ProgramOp.VIEW} - {target.attrs["name"]}:
+    buf = buffers[name]
+    if buf.attrs.get("values") is not None:
+      frame.run((buf,))
+    else:
+      frame.buffers[name] = _Pointer(_InputValues(buf))
+  # Only the written elements are kept, and the work is bounded like any expansion's.
+  written: dict[int, ProgramNode | None] = {}
+  frame.buffers[target.attrs["name"]] = _Pointer(written)
+  frame.budget = _Budget(values=math.prod(target.attrs["shape"]))
+  try:
+    frame.run((loop,))
+  except (_DataDependent, _OverBudget, NotImplementedError):
+    return None
+  copied: dict[int, int] = {}
+  for at, value in sorted(written.items()):
+    view = value.args[0] if value is not None and value.op == ProgramOp.LOAD else None
+    if view is None or view.attrs["buffer"] != source or view.args[0].op != ProgramOp.CONST_INT:
+      return None
+    copied[at] = view.args[0].attrs["value"]
+  return copied
+
+
+def _fold_reorders(proc: ProgramNode, procs: dict[str, ProgramNode], expanded: set[str], names: NameScope) -> tuple[ProgramNode, list[ProgramNode]]:
+  """Move the copy loops around ``proc``'s calls to expanded procedures into specialized callees."""
+  procs, expanded = dict(procs), set(expanded)
+  n_params = proc.attrs["param_count"]
+  params, body = proc.args[:n_params], list(proc.args[n_params:])
+  specialized: dict[str, ProgramNode] = {}
+  while True:
+    folded = None
+    if any(stmt.op == ProgramOp.FOR for stmt in body):
+      scope = _Scope(params, body)
+      for at, stmt in enumerate(body):
+        # A noinline callee stays the call frame it is, a workaround for a compiler bug.
+        if stmt.op == ProgramOp.CALL and stmt.attrs["callee"] in expanded and not procs[stmt.attrs["callee"]].attrs.get("noinline"):
+          folded = _fold_call(at, body, procs, scope)
+          if folded is not None:
+            break
+    if folded is None:
+      # A specialization that a later fold specialized again is no longer called.
+      called = {node.attrs["callee"] for stmt in body for node in walk_program(stmt) if node.op == ProgramOp.CALL}
+      return ProgramNode(proc.op, (*params, *body), proc.attrs, dtype=proc.dtype), [pr for n, pr in specialized.items() if n in called]
+    callee, args, removed = folded
+    old = callee.attrs["name"]
+    stem = callee.attrs.get("reordered_from", old)
+    # Calls that fold the same copies into the same callee share one specialization, and copies
+    # that keep every index leave the callee unchanged.
+    name = old if callee is procs[old] else None
+    name = name or next((n for n, pr in specialized.items() if pr.args == callee.args and pr.attrs["reordered_from"] == stem), None)
+    if name is None:
+      # A specialization only this call uses is specialized again under its own name.
+      others = sum(s.op == ProgramOp.CALL and s.attrs["callee"] == old for s in body) > 1
+      name = old if old in specialized and not others else names.procedure(f"{stem}_reordered")
+      expanded.add(name)
+      specialized[name] = procs[name] = ProgramNode(
+        callee.op, callee.args, {**callee.attrs, "name": name, "reordered_from": stem}, dtype=callee.dtype
+      )
+    call = ProgramNode(ProgramOp.CALL, tuple(args), {**body[at].attrs, "callee": name}, dtype=body[at].dtype)
+    body = [call if i == at else s for i, s in enumerate(body) if i not in removed]
+
+
+class _Scope:
+  """The buffers of a procedure body and the statements that read or write each one."""
+
+  def __init__(self, params: tuple[ProgramNode, ...], body: list[ProgramNode]) -> None:
+    self.buffers = {b.attrs["name"]: b for b in (*params, *body) if b.op == ProgramOp.BUFFER}
+    self.declared = {
+      s.attrs["name"]: i for i, s in enumerate(body) if s.op == ProgramOp.BUFFER and s.attrs.get("values") is None and "alias_of" not in s.attrs
+    }
+    self.tables = {name for name, b in self.buffers.items() if b.attrs.get("values") is not None}
+    # A buffer another one aliases is reached under two names, so it keeps its copies.
+    self.aliased = {name for b in self.buffers.values() if "alias_of" in b.attrs for name in (b.attrs["name"], b.attrs["alias_of"])}
+    self.refs = [_references(s) for s in body]
+    self.users: dict[str, list[int]] = {}
+    for i, (reads, writes) in enumerate(self.refs):
+      for name in reads | writes:
+        self.users.setdefault(name, []).append(i)
+
+
+def _fold_call(
+  at: int, body: list[ProgramNode], procs: dict[str, ProgramNode], scope: _Scope
+) -> tuple[ProgramNode, list[ProgramNode], set[int]] | None:
+  """The callee of ``body[at]`` with the copies into its inputs and out of its outputs folded in, its arguments, and the statements it replaces."""
+  call = body[at]
+  callee = procs[call.attrs["callee"]]
+  n_params, n_in = callee.attrs["param_count"], callee.attrs["input_count"]
+  formals = list(callee.args[:n_params])
+  buffers, declared, tables, aliased, refs = scope.buffers, scope.declared, scope.tables, scope.aliased, scope.refs
+  args = list(call.args)
+  loads: dict[str, tuple[ProgramNode, dict[int, int]]] = {}
+  stores: dict[str, tuple[ProgramNode, dict[int, list[int]]]] = {}
+  removed: set[int] = set()
+  for k, arg in enumerate(call.args):
+    temp = _buffer_name(arg)
+    if arg.op != ProgramOp.BUFFER or temp not in declared or temp in aliased or _mentions(call, temp) != 1:
+      continue
+    users = scope.users.get(temp, [])
+    writers = [i for i in users if temp in refs[i][1]]
+    formal = formals[k]
+    if k < n_in:
+      # The temporary is filled by one copy loop from one buffer, which nothing writes before the call reads it.
+      if len(writers) != 1 or set(users) != {writers[0], at} or writers[0] > at:
+        continue
+      loop = writers[0]
+      sources = refs[loop][0] - tables
+      if not _copy_loop(body[loop]) or refs[loop][1] != {temp} or len(sources) != 1:
+        continue
+      (source,) = sources
+      if source in aliased or buffers[source].dtype != formal.dtype or any(loop < i <= at and source in refs[i][1] for i in scope.users[source]):
+        continue
+      copied = _copied(body[loop], buffers[temp], source, buffers, procs)
+      if copied is None or len(copied) != math.prod(buffers[temp].attrs["shape"]):
+        continue
+      # A copy that keeps every index passes the source itself, and the callee stays as it is.
+      if not _identity(copied):
+        formals[k] = _formal(formal, buffers[source])
+        loads[formal.attrs["name"]] = formals[k], copied
+      args[k] = buffers[source]
+    else:
+      # The temporary is read by one copy loop into one buffer, which nothing reads or writes in between.
+      readers = [i for i in users if i != at]
+      if writers != [at] or len(readers) != 1 or readers[0] < at:
+        continue
+      loop = readers[0]
+      if not _copy_loop(body[loop]) or len(refs[loop][1]) != 1 or refs[loop][0] - tables != {temp}:
+        continue
+      (target,) = refs[loop][1]
+      if target in aliased or buffers[target].dtype != formal.dtype or any(_buffer_name(a) == target for a in args):
+        continue
+      if any(at <= i < loop for i in scope.users[target]):
+        continue
+      copied = _copied(body[loop], buffers[target], temp, buffers, procs)
+      if not copied:
+        continue
+      # A copy that keeps every index of the whole temporary passes the target itself.
+      if not (_identity(copied) and len(copied) == math.prod(buffers[temp].attrs["shape"])):
+        targets: dict[int, list[int]] = {}
+        for to, frm in copied.items():
+          targets.setdefault(frm, []).append(to)
+        formals[k] = _formal(formal, buffers[target])
+        stores[formal.attrs["name"]] = formals[k], targets
+      args[k] = buffers[target]
+    removed |= {loop, declared[temp]}
+  if not removed:
+    return None
+  if not loads and not stores:
+    return callee, args, removed
+  try:
+    statements = _rewrite(callee.args[n_params:], loads, stores)
+  except (_DataDependent, KeyError):
+    return None
+  if statements is None:
+    return None
+  return ProgramNode(callee.op, (*formals, *statements), callee.attrs, dtype=callee.dtype), args, removed
+
+
+def _identity(copied: dict[int, int]) -> bool:
+  return all(to == frm for to, frm in copied.items())
+
+
+def _formal(formal: ProgramNode, actual: ProgramNode) -> ProgramNode:
+  """``formal`` with the shape of the buffer now passed to it."""
+  attrs = {key: value for key, value in formal.attrs.items() if key != "support"}
+  return ProgramNode(ProgramOp.BUFFER, (), {**attrs, "shape": actual.attrs["shape"]}, dtype=formal.dtype)
+
+
+def _rewrite(
+  statements: tuple[ProgramNode, ...],
+  loads: dict[str, tuple[ProgramNode, dict[int, int]]],
+  stores: dict[str, tuple[ProgramNode, dict[int, list[int]]]],
+) -> list[ProgramNode] | None:
+  """Expanded statements reading and writing through the copies, or None for a body that is not expanded."""
+  memo: dict[ProgramNode, ProgramNode] = {}
+
+  def scalar(node: ProgramNode) -> ProgramNode:
+    if node in memo:
+      return memo[node]
+    if node.op == ProgramOp.LOAD and node.args[0].attrs["buffer"] in loads:
+      formal, copied = loads[node.args[0].attrs["buffer"]]
+      out = p.load(p.view(formal, [p.const_int(copied[_index(node.args[0])])]))
+    else:
+      args = tuple(scalar(a) for a in node.args)
+      out = node if args == node.args else ProgramNode(node.op, args, node.attrs, dtype=node.dtype)
+    memo[node] = out
+    return out
+
+  out: list[ProgramNode] = []
+  for stmt in statements:
+    if stmt.op == ProgramOp.ASSIGN:
+      out.append(scalar(stmt))
+    elif stmt.op == ProgramOp.STORE:
+      view, value = stmt.args
+      if view.attrs["buffer"] in stores:
+        formal, targets = stores[view.attrs["buffer"]]
+        out.extend(p.store(p.view(formal, [p.const_int(to)]), scalar(value)) for to in targets.get(_index(view), ()))
+      else:
+        out.append(ProgramNode(stmt.op, (scalar(view), scalar(value)), stmt.attrs, dtype=stmt.dtype))
+    else:
+      return None
+  return out
+
+
+def _index(view: ProgramNode) -> int:
+  index = view.args[0]
+  if index.op != ProgramOp.CONST_INT:
+    raise _DataDependent
+  return index.attrs["value"]

@@ -1369,9 +1369,17 @@ generated tangent and backward loops, which otherwise rejected Hessians at the g
 **[#50]. Unrolling static loops by a straight-line budget.** `LOOP` lowering unrolls a loop whose
 length is static and whose per-step slices are constants when the body, times the length, fits a
 straight-line budget, honouring the node's lowering hint. The budget is a constant in lowering, and
-becomes a parameter in the form [#492] settles (decision 15). It counts the whole
-body, every right-hand side of a solve included: devrush counted one and a Hessian's 100-seed solves
-became 860 KB of C. Constant folding then deletes
+becomes a parameter in the form [#492] settles (decision 15). It counts what the unrolled code
+writes: each distinct operation of a stored value once, however often the loops move the value, and
+each store left in the C; reads, constants and loop variables cost nothing of their own. A loop with
+constant bounds is estimated the same way before it unrolls (decided 2026-11-26 on [#496], replacing
+a charge for every store, which counted a factorization each time it moved a value and missed the
+operations nested in one value). A repeated computation, every right-hand side of a solve included,
+is still counted each time, since each repeat computes new values: devrush counted one and a
+Hessian's 100-seed solves became 860 KB of C. A library check, such as a pivot's status, costs its
+operations like any other code. *Rejected: a larger budget, which would go on counting moves rather
+than code; counting only stored values, which let 90 steps of 20 sines unroll into 1,800 calls; and
+a reduced charge for status checks, which would let a chain of boolean operations unroll uncounted.* Constant folding then deletes
 the masked terms of a triangle written with `where(iota < j, ...)`, so a library Cholesky of a small
 dense block gives the straight-line code devrush's `Unroll` option produced, without an option.
 Unrolling never changes the reference schedule's summation order (decision 13). A loop with a condition or any trip operand is not static, even when the trip operand is constant.
@@ -1416,6 +1424,11 @@ factorization; forward is `dx = K^-1 (db - dK x)`, reverse is `bbar = K^-T xbar`
 `Kbar = -bbar x^T` sampled on the read triangle. Second-order tests have both the matrix and the
 right-hand side active. Each factorization has one reference schedule (decision 13); lanes,
 unrolling and chunking are checked against it numerically.
+In that schedule back substitution subtracts each term from its row in turn, rows ascending, as
+QDLDL does: `x[j] = (z[j] - L[i1, j] x[i1]) - L[i2, j] x[i2] ...` (decided 2026-11-26 on [#496]).
+The C then holds exactly the factorization's flops. Each order overflows on inputs where the other
+does not, and a test names one input of each kind. *Rejected: summing the terms from zero and
+subtracting the sum, main's order before, which leaves a `0.0 +` and negations in the C.*
 
 **[#51]. Triangular solves, Cholesky, and `solve(assume="pos")`.** Library Functions over `LOOP`:
 lower or upper, transposed, unit diagonal, one or many right-hand sides. Small sizes become

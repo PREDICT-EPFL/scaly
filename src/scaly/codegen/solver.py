@@ -185,6 +185,7 @@ def solver_extern(library: _SolverLibrary, recipe: BuildRecipe, prepare: Callabl
     lanes=recipe.lanes,
     reciprocal=recipe.reciprocal,
     frame_budget=recipe.frame_budget,
+    fold_reorders=False,
   )
   count = int(prog.attrs["proc_count"])
   procs = prog.args[: count - 1]

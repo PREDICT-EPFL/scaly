@@ -12,6 +12,7 @@ from ...ir.program import ProgramNode, ProgramOp, RangeKind, walk_program
 from ...ir.types import DType, dtypes
 from ...function.concrete import ConcreteFunction
 from ...ir.support import Support, _mapped_support_groups
+from ..arith import CONSTANTS
 from ..program.scalarize import _DataDependent, _OverBudget, expand_static_loop
 from .ctx import LowerCtx, LoweringError, lowers, _lower_to_proc, _normalize_function
 from .in_place import carry_reuse
@@ -415,7 +416,7 @@ def _lower_loop(ctx: LowerCtx, node: Expr) -> None:
 
 
 def _loop_cost(proc: ProgramNode, procs: dict[str, ProgramNode]) -> tuple[int, bool] | None:
-  """Count scalar right-hand sides through every range, branch and callee, or reject unsafe substitution.
+  """Count stores and the operations of their values through every range, branch and callee, or reject unsafe substitution.
 
   The flag marks a body whose range bounds or branches are known only at each step, such as an
   inner loop whose trip count is the outer step. Such a body is counted by expansion as it runs,
@@ -450,10 +451,23 @@ def _loop_cost(proc: ProgramNode, procs: dict[str, ProgramNode]) -> tuple[int, b
       step_dependent = True
       stack.extend((child, 0) for branch in stmt.args[1:] for child in branch.args)
     elif stmt.op in (ProgramOp.STORE, ProgramOp.ASSIGN):
-      total += factor
+      total += factor * (1 + _operations(stmt.args[-1] if stmt.op == ProgramOp.STORE else stmt.args[0]))
     elif stmt.op != ProgramOp.BUFFER:
       return None
   return max(1, total), step_dependent
+
+
+def _operations(value: ProgramNode) -> int:
+  """The distinct operations of a stored value, without its reads, loop variables and constants."""
+  seen: set[ProgramNode] = set()
+  pending = [value]
+  while pending:
+    node = pending.pop()
+    if node in seen or node.op in CONSTANTS or node.op in (ProgramOp.VAR, ProgramOp.LOAD):
+      continue
+    seen.add(node)
+    pending.extend(node.args)
+  return len(seen)
 
 
 def _call(ctx: LowerCtx, fn: ConcreteFunction, ins: list[ProgramNode], outs: list[ProgramNode]) -> ProgramNode:

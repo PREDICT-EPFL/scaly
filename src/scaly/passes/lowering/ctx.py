@@ -34,7 +34,10 @@ from ..program.fold_arith import _fold_index as _fold_bounded
 from ..program.scheduling import ScalarNameAllocator, schedule_values
 from ..expr import cse_many, simplify
 
-_EXACT_STORES = (dtypes.float64, dtypes.float32, dtypes.int64, dtypes.bool_)
+# Dtypes whose stores scalar substitution may skip. int32 qualifies because the renderer and the folder
+# wrap its signed arithmetic in the expression itself, before any store; narrower and unsigned
+# integers would promote to int in C.
+_EXACT_STORES = (dtypes.float64, dtypes.float32, dtypes.int64, dtypes.int32, dtypes.bool_)
 LowerRule = Callable[["LowerCtx", Expr], None]
 ProcKey = ConcreteFunction | tuple[ConcreteFunction, tuple[Support, ...]]
 _RULES: dict[ExprOp, LowerRule] = {}
@@ -77,17 +80,22 @@ def lower_function(
   lanes: Literal["auto"] | Literal[1, 2, 4, 8] = 1,
   frame_budget: int = 65536,
   reserved_names: Iterable[str] = (),
+  fold_reorders: bool = True,
 ) -> ProgramNode:
   """Lower ``fun`` into a Program IR ``PROGRAM`` node (verified before return).
 
   The returned PROGRAM holds every lowered callee PROC in topological order
-  followed by ``fun``'s main PROC last.
+  followed by ``fun``'s main PROC last. ``fold_reorders`` lets the main PROC's layout copies
+  move into specialized copies of the expanded callees they feed; a caller that calls the
+  callees itself, as a solver's oracle bundle does, turns it off to keep their signatures.
 
   """
   fun = as_concrete(fun)
   names, symbols, residuals, broadcasts = _function_names(fun, reserved_names)
   callees: dict[ProcKey, ProgramNode] = {}
   root = _lower_to_proc(fun, callees, names, symbols, residuals, broadcasts, auto_scalarize=False, observe_expr=observe_expr)
+  if fold_reorders:
+    root = ProgramNode(root.op, root.args, {**root.attrs, "fold_reorders": True}, dtype=root.dtype)
   prog = p.program([*callees.values(), root])
   externs = tuple(fn for fn in symbols if isinstance(fn, _Extern))
   prog = ProgramNode(
