@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import scaly as sc
 from scipy import sparse
 
 EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
@@ -167,6 +168,31 @@ def test_update_refuses_another_pattern():
   denser[denser == 0] = 1.0
   with pytest.raises(ValueError, match="G has a different sparsity pattern"):
     solver.update(G=sparse.csc_array(denser))
+
+
+@pytest.mark.parametrize(
+  ("make", "expected"),
+  [(_primal_infeasible, "PRIMAL_INFEASIBLE"), (_dual_infeasible, "DUAL_INFEASIBLE"), (lambda: _qp(6), "OK")],
+  ids=["primal_infeasible", "dual_infeasible", "qp"],
+)
+def test_functions_return_int32_scaly_status(make, expected):
+  """``build_solver``'s three Functions, called as a caller of the generated C would: the status is an int32 ``ScalySolveStatus`` code and every counter is int32."""
+  problem = make()
+  setup, solve, update = piqp_sparse.build_solver(problem["P"], problem.get("A"), problem.get("G"))
+  assert (setup.name, solve.name, update.name) == ("piqp_sparse_setup", "piqp_sparse_solve", "piqp_sparse_update")
+  solver = SparseSolver()
+  solver.setup(**problem)
+  raw = piqp_sparse.pack_raw(*(solver._raw[name] for name in piqp_sparse.solver.RAW_INPUTS))
+  data, scaling, AtA = setup(raw)
+  _, status, info = solve(data, scaling, AtA)
+  assert status.dtype == np.int32
+  assert int(status) == sc.ScalySolveStatus[expected]
+  counters = dict(zip(piqp_sparse.results.INFO_FIELDS, piqp_sparse.solver._leaves(info), strict=True))
+  assert {name for name, value in counters.items() if value.dtype == np.int32} == piqp_sparse.results.INTEGER_INFO
+  # The same values with the same scaling give the same data.
+  updated, _ = update(raw, scaling)
+  for ours, theirs in zip(piqp_sparse.solver._leaves(updated), piqp_sparse.solver._leaves(data), strict=True):
+    np.testing.assert_allclose(ours, theirs, rtol=1e-14)
 
 
 def _ruiz(problem, max_iter=10, epsilon=1e-3):

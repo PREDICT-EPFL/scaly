@@ -46,11 +46,11 @@ sys.path[:0] = [str(HERE.parents[1]), str(HERE)]
 
 import maros_meszaros as mm  # noqa: E402
 
-GENERATE_S = 1800
-COMPILE_S = 1800
-MEMORY = 6 << 30
+GENERATE_S = 600
+COMPILE_S = 600
+MEMORY = 12 << 30  # address space per build; one build at a time (--jobs 1) on a 16 GB machine
 SOURCE_BYTES = 256 << 20
-PIQP_S = 1800
+PIQP_S = 600
 BUDGET_S = 2.0
 
 
@@ -165,7 +165,7 @@ def build(name: str, work: Path) -> None:
   vector = solver_mod._vector
   raw = [P_values, vector(q["c"], n, 0.0, "c"), A_values, vector(q["b"], s.p, 0.0, "b"), G_values]
   raw += [vector(q["h_l"], s.m, -np.inf, "h_l"), vector(q["h_u"], s.m, np.inf, "h_u"), vector(q["x_l"], n, -np.inf, "x_l"), vector(q["x_u"], n, np.inf, "x_u")]
-  method = solver_mod._method(s, Settings())
+  setup_function, solve_function, _ = solver_mod.build_solver(q["P"], q["A"], q["G"], Settings())
   compiler = find_c_compiler()
   assert compiler is not None, "no C compiler"
   cc = compiler.command
@@ -174,7 +174,7 @@ def build(name: str, work: Path) -> None:
   record["recipe"] = options
 
   modules = {}
-  for part, fun in (("setup", method.setup_function), ("solve", method.solve_function)):
+  for part, fun in (("setup", setup_function), ("solve", solve_function)):
     t = time.perf_counter()
     modules[part] = write_module(fun, work / part, cpu=recipe.cpu, lanes=recipe.lanes, dialect=recipe.dialect, vector_libm=recipe.vector_libm)
     record[f"generate_{part}_s"] = round(time.perf_counter() - t, 3)
@@ -285,12 +285,15 @@ def _fmt(value: Any, kind: str = "g") -> str:
   return str(value)
 
 
-def _status(code: int) -> str:
-  from piqp_sparse.results import Status
+def _status(code: int, scaly: bool = False) -> str:
+  """The PIQP status name of a code, which the generated solver gives as a ``ScalySolveStatus`` code."""
+  from piqp_sparse.results import FROM_SCALY_STATUS, Status
+
+  from scaly import ScalySolveStatus
 
   try:
-    return Status(code).name.lower()
-  except ValueError:
+    return (FROM_SCALY_STATUS[ScalySolveStatus(code)] if scaly else Status(code)).name.lower()
+  except (KeyError, ValueError):
     return str(code)
 
 
@@ -320,7 +323,7 @@ def report(names: list[str], work: Path, out: Path) -> None:
       v = _scaly_outputs(d)
       q = q or mm.load(name)
       res_s = residuals(q, v)
-      scaly_status, scaly_iter = _status(int(v["status"][0])), int(v["iter"][0])
+      scaly_status, scaly_iter = _status(int(v["status"][0]), scaly=True), int(v["iter"][0])
     if p and (d / "piqp.npz").exists():
       q = q or mm.load(name)
       with np.load(d / "piqp.npz") as z:
@@ -370,7 +373,7 @@ def main(argv: list[str]) -> None:
   sparse_subset = "--sparse" in args
   if sparse_subset:
     args.remove("--sparse")
-  jobs, core = int(option("--jobs", "2")), int(option("--core", "3"))
+  jobs, core = int(option("--jobs", "1")), int(option("--core", "3"))
   work = Path(option("--work", str(HERE / "build" / ("sparse" if sparse_subset else "small"))))
   out = Path(option("--out", str(work / "results.md")))
   names = args or mm.problems(sparse_subset)

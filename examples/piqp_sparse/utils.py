@@ -16,6 +16,7 @@ INF = 1e30
 
 F64 = sc.dtypes.float64
 BOOL = sc.dtypes.bool_
+I32 = sc.dtypes.int32
 I64 = sc.dtypes.int64
 
 
@@ -24,7 +25,8 @@ def const_bool(value: bool) -> sc.Expr:
 
 
 def const_int(value: int) -> sc.Expr:
-  return sc.const(np.array(value), dtype=I64)
+  """An int32 constant, the type of the status and of every counter."""
+  return sc.const(np.array(value, dtype=np.int32), dtype=I32)
 
 
 def index(values: Any) -> sc.Expr:
@@ -111,7 +113,7 @@ class Layout:
     declare = lambda name, type_: sc.arg(self.prefix + name, type_, layout="csr" if type_.pattern is not None else None)
     return _nest([declare(name, type_) for name, type_ in zip(self.names, self.types, strict=True)], sc.group)
 
-  def pack(self, values: Mapping[str, sc.Expr]) -> Any:
+  def pack(self, values: Mapping[str, Any]) -> Any:
     return _nest([values[name] for name in self.names], lambda *parts: parts)
 
   def unpack(self, tree: Any) -> dict[str, sc.Expr]:
