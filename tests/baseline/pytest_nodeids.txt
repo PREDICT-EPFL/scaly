@@ -4401,7 +4401,8 @@ tests/passes/lowering/test_batched_matmul.py::test_numpy[shapes8]
 tests/passes/lowering/test_batched_matmul.py::test_numpy[shapes9]
 tests/passes/lowering/test_batched_matmul.py::test_reference_summation_order
 tests/passes/lowering/test_calls.py::test_a_value_stored_into_many_results_costs_each_store
-tests/passes/lowering/test_calls.py::test_an_expression_nested_in_one_store_costs_each_operation
+tests/passes/lowering/test_calls.py::test_an_expression_nested_in_one_store_costs_each_operation[fixed-trip]
+tests/passes/lowering/test_calls.py::test_an_expression_nested_in_one_store_costs_each_operation[step-dependent]
 tests/passes/lowering/test_calls.py::test_budget_counts_all_solve_rhs_and_nested_loop_iterations
 tests/passes/lowering/test_calls.py::test_condition_and_narrow_store_prevent_expansion
 tests/passes/lowering/test_calls.py::test_custom_rule_residual_shares_its_primal_invocation[False]

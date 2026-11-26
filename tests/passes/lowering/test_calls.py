@@ -527,7 +527,8 @@ def test_step_dependent_expansion_charges_trips_and_constant_results() -> None:
     assert _has_carried_loop(ConcreteFunction._from_exprs("constant_results", [i], [ys], ["i"], ["ys"])) == rolled
 
 
-def test_an_expression_nested_in_one_store_costs_each_operation() -> None:
+@pytest.mark.parametrize("step_dependent", [True, False], ids=["step-dependent", "fixed-trip"])
+def test_an_expression_nested_in_one_store_costs_each_operation(step_dependent: bool) -> None:
   """A step that stores one value costs every operation of it: 90 steps of 20 sines each stay a loop."""
 
   @sc.function(sc.arg("c", ()))
@@ -536,7 +537,8 @@ def test_an_expression_nested_in_one_store_costs_each_operation() -> None:
 
   @sc.function(sc.arg("x", ()), sc.arg("j", sc.TensorType((), sc.dtypes.int64)))
   def step(x, j):
-    x, _ = sc.scan(keep, x, length=2, trip=j % 2)
+    if step_dependent:
+      x, _ = sc.scan(keep, x, length=2, trip=j % 2)
     for _ in range(20):
       x = x.sin()
     return x
