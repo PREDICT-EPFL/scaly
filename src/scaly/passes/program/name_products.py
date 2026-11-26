@@ -6,8 +6,8 @@ from collections import Counter
 
 from ...ir import program as p
 from ...ir.program import ProgramNode, ProgramOp, walk_program
-from ...utils.names import c_ident
 from ..arith import CONSTANTS
+from ._common import name_scope
 from .scheduling import ScalarNameAllocator
 
 _STATEMENTS = {ProgramOp.ASSIGN, ProgramOp.STORE, ProgramOp.STORE_PAIR}
@@ -21,29 +21,15 @@ def name_products(prog: ProgramNode) -> ProgramNode:
   done: outside a widened range the product is named before the first statement that repeats it.
   A group ends where a statement assigns one of its operands, so every use reads the same value.
   """
+  # One scope for the whole program: a local must not shadow a procedure or an external function.
+  names = ScalarNameAllocator(name_scope(prog))
   args: list[ProgramNode] = []
   for node in prog.args:
     if node.op == ProgramOp.PROC:
       pc = node.attrs["param_count"]
-      body = node.args[pc:]
-      names = ScalarNameAllocator({c_ident(name) for name in _reserved(node.args[:pc], body)})
-      node = ProgramNode(node.op, (*node.args[:pc], *_rewrite(body, names)), node.attrs, dtype=node.dtype)
+      node = ProgramNode(node.op, (*node.args[:pc], *_rewrite(node.args[pc:], names)), node.attrs, dtype=node.dtype)
     args.append(node)
   return ProgramNode(prog.op, tuple(args), prog.attrs, dtype=prog.dtype)
-
-
-def _reserved(params: tuple[ProgramNode, ...], body: tuple[ProgramNode, ...]) -> set[str]:
-  reserved = {param.attrs["name"] for param in params}
-  for node in walk_program(p.block(*body)):
-    if node.op == ProgramOp.BUFFER:
-      reserved.add(node.attrs["name"])
-    elif node.op == ProgramOp.ASSIGN:
-      reserved.add(node.attrs["target"])
-    elif node.op == ProgramOp.FOR:
-      reserved.add(node.args[0].attrs["name"])
-    elif node.op == ProgramOp.VAR:
-      reserved.add(node.attrs["name"])
-  return reserved
 
 
 def _is_product(node: ProgramNode) -> bool:
